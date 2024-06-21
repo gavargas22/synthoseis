@@ -1,0 +1,17 @@
+bruges
+h5py
+matplotlib
+noise
+numba
+numpy
+Pillow
+Pillow
+plotly
+scipy
+skimage
+tables
+tqdm
+xarray[complete]
+dask[distributed]
+bottleneck
+zarr
