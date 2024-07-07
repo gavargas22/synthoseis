@@ -11,6 +11,7 @@ from dask.diagnostics import ProgressBar
 import dask
 import zarr
 
+
 class Horizons:
     def __init__(self, parameters):
         self.cfg = parameters
@@ -347,56 +348,63 @@ class RandomHorizonStack(Horizons):
         self.azimuths = None
         self.facies = None
 
-    def _generate_lookup_tables(self):
+    def generate_lookup_tables(self, cfg):
         # Thicknesses
-        self.thicknesses = stats.gamma.rvs(4.0, 2, size=self.cfg.num_lyr_lut)
+        thicknesses = stats.gamma.rvs(4.0, 2, size=cfg.num_lyr_lut)
+
         # Onlaps
         onlap_layer_list = np.sort(
             np.random.uniform(
                 low=5, high=200, size=int(np.random.triangular(1, 4, 7) + 0.5)
             ).astype("int")
         )
+
         # Dips
-        self.dips = (
-            (1.0 - np.random.power(100, self.cfg.num_lyr_lut))
+        dips = (
+            (1.0 - np.random.power(100, cfg.num_lyr_lut))
             * 7.0
-            * self.cfg.dip_factor_max
+            * cfg.dip_factor_max
         )
+
         # Azimuths
-        self.azimuths = np.random.uniform(
-            low=0.0, high=360.0, size=(self.cfg.num_lyr_lut,)
+        azimuths = np.random.uniform(
+            low=0.0, high=360.0, size=(cfg.num_lyr_lut,)
         )
+
         # Channels
-        self.channels = np.random.binomial(1, 3.0 / 100.0, self.cfg.num_lyr_lut)
+        channels = np.random.binomial(1, 3.0 / 100.0, cfg.num_lyr_lut)
 
-        if self.cfg.verbose:
-            print("self.cfg.num_lyr_lut = ", self.cfg.num_lyr_lut)
+        if cfg.verbose:
+            print("cfg.num_lyr_lut = ", cfg.num_lyr_lut)
             print("onlap_layer_list = ", onlap_layer_list)
-        onlap_array_dim = int(500 / 1250 * self.cfg.cube_shape[2])
-        self.onlaps = np.zeros(onlap_array_dim, "int")
-        self.onlaps[onlap_layer_list] = 1
 
-        if not self.cfg.include_channels:
-            self.channels *= 0
+        onlap_array_dim = int(500 / 1250 * cfg.cube_shape[2])
+        onlaps = np.zeros(onlap_array_dim, "int")
+        onlaps[onlap_layer_list] = 1
+
+        if not cfg.include_channels:
+            channels *= 0
         else:
             # Make sure channel episodes don't overlap too much
-            for i in range(len(self.channels)):
-                if self.channels[i] == 1:
-                    self.channels[i + 1 : i + 6] *= 0
+            for i in range(len(channels)):
+                if channels[i] == 1:
+                    channels[i + 1:i + 6] *= 0
 
-        if self.cfg.verbose:
+        if cfg.verbose:
             print(
-                f"Number of onlapping flags: {self.onlaps[self.onlaps == 1].shape[0]}"
+                f"Number of onlapping flags: {onlaps[onlaps == 1].shape[0]}"
             )
             print(
-                f" ... horizon number for first onlap episode = {np.argmax(self.onlaps)}"
+                f" ... horizon number for first onlap episode = {np.argmax(onlaps)}"
             )
             print(
-                f" ... number of channelFlags: {self.channels[:250][self.channels[:250] == 1].shape[0]}"
+                f" ... number of channelFlags: {channels[:250][channels[:250] == 1].shape[0]}"
             )
             print(
-                f" ... horizon number for first channel episode: {np.argmax(self.channels)}"
+                f" ... horizon number for first channel episode: {np.argmax(channels)}"
             )
+
+        return thicknesses, onlaps, dips, azimuths, channels
 
     def _random_layer_thickness(self):
         rand_oct = int(np.random.triangular(left=1.3, mode=2.65, right=5.25))
@@ -455,6 +463,7 @@ class RandomHorizonStack(Horizons):
         )
         z = np.random.rand(number_random_points)
         z -= z.mean()
+
         if initial:
             elevation_std = self.cfg.initial_layer_stdev
         z *= elevation_std / z.std()
@@ -606,9 +615,12 @@ class RandomHorizonStack(Horizons):
         -------
         random_thickness_factor_map : ndarray - a random thickness factor map for the initial layer at base
         """
-        _, random_thickness_factor_map = self._generate_random_depth_structure_map(
-            dip_range=[0.0, 0.0], num_points_range=(25, 100), elevation_std=0.45
-        )
+        _, random_thickness_factor_map = \
+            self._generate_random_depth_structure_map(
+                dip_range=[0.0, 0.0],
+                num_points_range=(25, 100),
+                elevation_std=0.45
+            )
         random_thickness_factor_map -= random_thickness_factor_map.mean() - 1
         #
         return random_thickness_factor_map
@@ -706,7 +718,15 @@ class RandomHorizonStack(Horizons):
 
         Each layer has random residual dip and pseudo-random residual thickness
         """
-        self._generate_lookup_tables()
+        thicknesses, onlaps, dips, azimuths, channels = \
+            self.generate_lookup_tables(self.cfg)
+
+        self.thicknesses = thicknesses
+        self.onlaps = onlaps
+        self.dips = dips
+        self.azimuths = azimuths
+        self.channels = channels
+
         # Create initial depth map at base of model using initial=True
         _, previous_depth_map = self._generate_random_depth_structure_map(
             dip_range=[0.0, 75],
@@ -793,7 +813,8 @@ class Onlaps(Horizons):
         self.thicknesses = thicknesses
         self.max_layers = max_layers
         self.onlap_horizon_list = list()
-        self._generate_onlap_lookup_table()
+        
+        onlap_lookup_table = self._generate_onlap_lookup_table()
 
     def _generate_onlap_lookup_table(self):
         # Onlaps
@@ -807,7 +828,8 @@ class Onlaps(Horizons):
         if self.cfg.verbose:
             print("self.cfg.num_lyr_lut = ", self.cfg.num_lyr_lut)
             print("onlap_layer_list = ", onlap_layer_list)
-        onlap_array_dim = int(500 / 1250 * self.cfg.cube_shape[2])
+        onlap_array_dim = int(
+            500 / self.cfg.cube_shape[2] * self.cfg.cube_shape[2])
         self.onlaps = np.zeros(onlap_array_dim, "int")
         self.onlaps[onlap_layer_list] = 1
 
@@ -1577,6 +1599,7 @@ def build_unfaulted_depth_maps(parameters: Parameters):
     """
     horizons = RandomHorizonStack(parameters)
     horizons.create_depth_maps()
+
     # Insert onlap episodes
     onlaps = Onlaps(
         parameters, horizons.depth_maps, horizons.thicknesses, horizons.max_layers
