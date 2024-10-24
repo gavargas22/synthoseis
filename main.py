@@ -17,12 +17,12 @@ from datagenerator.util import plot_3D_closure_plot
 def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None):
     """Build model from config file."""
     # Set up model parameters
-    p = Parameters(user_json, runid=run_id, test_mode=test_mode)
-    p.setup_model(rpm_factors=rpm_factors)
-
-    # TODO No need to do hd5
-    # p.hdf_setup(os.path.join(p.temp_folder, "model_data.hdf"))
-    p.zarr_setup(zarr_name="model_data.zarr")
+    p = Parameters(
+        user_config=user_json,
+        runid=run_id,
+        test_mode=test_mode
+    )
+    
     # Build un-faulted depth maps and facies array
     depth_maps, onlap_list, fan_list, fan_thicknesses = \
         build_unfaulted_depth_maps(p)

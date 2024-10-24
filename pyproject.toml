@@ -2,9 +2,10 @@
 name = "synthoseis"
 version = "1.0.0"
 description = "Generating seismic data and associated labels to train deep neural networks."
-authors = ["Your Name <you@example.com>"]
+authors = ["Donald Griffith", "Tom Merrifield"]
 license = "MIT"
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.13"
@@ -18,6 +19,8 @@ tables = "^3.8.0"
 plotly = "^5.16.1"
 bruges = "^0.5.4"
 noise = "^1.2.2"
+dask = { extras = ["complete"], version = "^2024.1.0" }
+zarr = "^2.18.2"
 
 
 [build-system]
