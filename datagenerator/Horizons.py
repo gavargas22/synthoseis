@@ -1602,7 +1602,10 @@ def build_unfaulted_depth_maps(parameters: Parameters):
 
     # Insert onlap episodes
     onlaps = Onlaps(
-        parameters, horizons.depth_maps, horizons.thicknesses, horizons.max_layers
+        parameters=parameters,
+        depth_maps=horizons.depth_maps,
+        thicknesses=horizons.thicknesses,
+        max_layers=horizons.max_layers
     )
     onlap_horizon_list = onlaps.insert_tilting_episodes()
     # Insert seafloor
