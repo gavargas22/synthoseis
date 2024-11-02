@@ -4,6 +4,7 @@ import json
 import multiprocessing as mp
 import os
 import pathlib
+from typing import Tuple, Union
 import glob
 import sqlite3
 from subprocess import CalledProcessError
@@ -70,7 +71,13 @@ class Parameters(_Borg):
         Method that writes to the logfile
     """
 
-    def __init__(self, user_config: str = CONFIG_PATH, test_mode=None, runid=None):
+    def __init__(
+        self,
+        user_config: str = CONFIG_PATH,
+        test_mode=None,
+        runid=None,
+        rpm_factors=None
+    ):
         """
         Initialize the Parameters object.
 
@@ -94,6 +101,9 @@ class Parameters(_Borg):
         self.runid = runid
         self.rpm_scaling_factors = dict()
         self.sqldict = defaultdict(dict)
+        
+        self.setup_model(rpm_factors=rpm_factors)
+        self.zarr_store, self.zarr_filename = self.zarr_setup(zarr_name="model_data.zarr")
 
     def __repr__(self):
         """
@@ -989,24 +999,18 @@ class Parameters(_Borg):
         self.h5file = tables.open_file(self.hdf_filename, "w")
         self.h5file.create_group("/", "ModelData")
 
-    def zarr_setup(self, zarr_name: str) -> None:
+    def zarr_setup(self, zarr_name: str) -> Tuple[Union[zarr.Array, zarr.Group], str]:
         """
-        Setup Zarr files
-        ---------------
-
-        This method sets up the Zarr structures
-
-        Parameters
-        ----------
-        zarr_name : str
-            The name of the Zarr file to be created
+        Sets up a Zarr store for the given zarr_name.
+        Parameters:
+            zarr_name (str): The name of the Zarr store.
+        Returns:
+            Tuple[Union[zarr.Array, zarr.Group], str]: A tuple containing the Zarr store object and the filename of the Zarr store.
+        """
+        zarr_filename = os.path.join(self.temp_folder, zarr_name)
+        zarr_store = zarr.open(zarr_filename, mode='w')
         
-        Returns
-        -------
-        None
-        """
-        self.zarr_filename = os.path.join(self.temp_folder, zarr_name)
-        self.zarr_store = zarr.open(self.zarr_filename, mode='w')
+        return zarr_store, zarr_filename
 
     def hdf_init(self, dset_name, shape: tuple, dtype: str = "float64") -> tables.CArray:
 
@@ -1050,6 +1054,34 @@ class Parameters(_Borg):
         except:
             pass
         self.hdf_node_list
+
+    def zarr_init(self, dset_name: str, shape: tuple, dtype: str = "float32") -> zarr.Array:
+        """
+        Zarr Initialize
+        ----------------------------------------
+
+        Method that initializes the Zarr chunked
+        array
+
+        Parameters
+        ----------
+        dset_name : str
+            The name of the dataset to be created
+        shape : tuple
+            The shape of the dataset
+        dtype : str, optional
+            The data type of the dataset (default is "float64")
+
+        Returns
+        -------
+        new_array: zarr.Array
+        """
+
+        # Create the Zarr array
+        new_array = self.zarr_file.create_dataset(
+            dset_name, shape=shape, dtype=dtype, chunks=True, compressor=zarr.Blosc()
+        )
+        return new_array
 
 
 def triangle_distribution_fix(left, mode, right, random_seed=None):

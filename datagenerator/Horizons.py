@@ -145,6 +145,19 @@ class Horizons:
         return temp
 
     def _fit_plane_strike_dip(self, azimuth, dip, grid_shape, verbose=False):
+        """
+        Fits a plane to a given azimuth and dip.
+
+        Parameters:
+            azimuth (float): The azimuth angle in degrees.
+            dip (float): The dip angle in degrees.
+            grid_shape (tuple): The shape of the grid.
+            verbose (bool, optional): Whether to print additional information and generate a plot. Defaults to False.
+
+        Returns:
+            numpy.ndarray: The elevation values for all grids on the surface.
+
+        """
         # Fits a plane given dip and max dip direction (azimuth)
         # - create a point at the center of the grid, elevation is zero
         xyz1 = np.array([grid_shape[0] / 2.0, grid_shape[1] / 2.0, 0.0])
@@ -716,7 +729,9 @@ class RandomHorizonStack(Horizons):
     def create_depth_maps(self):
         """Building layers in reverse order - starting at bottom and depositing new layers on top.
 
-        Each layer has random residual dip and pseudo-random residual thickness
+        Each layer has random residual dip and pseudo-random residual thickness.
+        
+        The data is stored as a zarr
         """
         thicknesses, onlaps, dips, azimuths, channels = \
             self.generate_lookup_tables(self.cfg)
@@ -754,49 +769,29 @@ class RandomHorizonStack(Horizons):
             dtype=previous_depth_map.dtype,
         )
         depth_maps_zarr[0, :, :] = previous_depth_map
-
-        @delayed
-        def build_layer(i, previous_depth_map):
+        
+        for i in range(20000):
             if i == 0:
                 random_thickness_factor_map = self._create_initial_thickness_factor_map()
             else:
                 random_thickness_factor_map = self._random_layer_thickness()
+            # Create the layer's thickness map using the random_thickness_factor_map
             thickness_map = self._create_thickness_map(random_thickness_factor_map, i)
             current_depth_map = previous_depth_map - thickness_map
-            return current_depth_map
-
-        tasks = []
-        for i in range(2000):
-            if self.cfg.verbose:
-                print(f"Building Layer {i}")
-
-            # Create a delayed task for building the current layer
-            current_depth_map = build_layer(i, previous_depth_map)
-            tasks.append(current_depth_map)
-
-            # break out of loop when minimum depth is reached
-            # if current_depth_map.min().compute() <= shallowest_depth_to_build:
-            #     break
-
-            # replace previous depth map for next iteration
-            previous_depth_map = current_depth_map
-
-        # Execute all tasks in parallel using Dask
-        with ProgressBar():
-            depth_maps = dask.compute(*tasks)
-
-        # Store each depth map into the Zarr array
-        for i, depth_map in enumerate(depth_maps):
-            depth_maps_zarr.append(depth_map[np.newaxis, :, :])
-
-            if self.cfg.verbose:
-                print(f"Layer {i}, depth_maps.shape = {depth_maps_zarr.shape}")
+            # Breat out of th eloop when minimum depth is reached
+            if current_depth_map.min() <= shallowest_depth_to_build:
+                break
+            # Replace previous depth map for next iteration
+            previous_depth_map = current_depth_map.copy()
+            # Resize the Zarr array to accomodate the new slice
+            depth_maps_zarr.resize(
+                depth_maps_zarr.shape[0] + 1,
+                depth_maps_zarr.shape[1],
+                depth_maps_zarr.shape[2],
+            )
+            # Save depth map.
+            depth_maps_zarr[-1, :, :] = current_depth_map
             self.max_layers = i + 1
-
-        if self.cfg.verbose:
-            print("\n ... finished creating horizon layers ...")
-
-        self.depth_maps = depth_maps_zarr
 
         self.cfg.write_to_logfile(
             f"number_layers: {self.max_layers}",
@@ -1621,6 +1616,7 @@ def build_unfaulted_depth_maps(parameters: Parameters):
             bff.fan_qc_plot(depth_maps, layer, thickness)
         fan_list = bff.fan_layers
         fan_thicknesses = bff.fan_thicknesses
+
     return depth_maps, onlap_horizon_list, fan_list, fan_thicknesses
 
 

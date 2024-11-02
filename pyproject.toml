@@ -2,7 +2,7 @@
 name = "synthoseis"
 version = "1.0.0"
 description = "Generating seismic data and associated labels to train deep neural networks."
-authors = ["Your Name <you@example.com>"]
+authors = ["Donald Griffith", "Tom Merrifield"]
 license = "MIT"
 readme = "README.md"
 package-mode = false
