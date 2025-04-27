@@ -1,7 +1,7 @@
 [project]
 name = "synthoseis"
-version = "0.1.0"
-description = "Add your description here"
+version = "2.5.1"
+description = "Generating seismic data and associated labels to train deep learning networks."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
