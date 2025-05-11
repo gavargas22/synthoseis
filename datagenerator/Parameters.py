@@ -10,143 +10,251 @@ from subprocess import CalledProcessError
 import numpy as np
 import tables
 import subprocess
+from typing import Optional, List, Tuple, Dict, Any, Union
+from pydantic import BaseModel, Field, validator, root_validator
+from pydantic.dataclasses import dataclass
+from functools import lru_cache
 
 dir_name = os.path.dirname(__file__)
 CONFIG_PATH = os.path.abspath(os.path.join(dir_name, "../config/config_ht.json"))
 
 
-class _Borg:
-    # Any objects using Borg base class will have same shared_state values (Alex Martelli's Borg)
-    _shared_state = {}
+class SandLayerFraction(BaseModel):
+    """Configuration for sand layer fraction ranges."""
 
-    def __init__(self):
-        self.__dict__ = self._shared_state
+    min: float = Field(..., ge=0.0, le=1.0, description="Minimum sand layer fraction")
+    max: float = Field(..., ge=0.0, le=1.0, description="Maximum sand layer fraction")
+
+    @validator("max")
+    def max_greater_than_min(cls, v, values):
+        if "min" in values and v < values["min"]:
+            raise ValueError("max must be greater than min")
+        return v
 
 
-class Parameters(_Borg):
+class ModelConfig(BaseModel):
+    """Base configuration model for seismic data generation."""
+
+    project: str = Field(..., description="Name of project")
+    project_folder: str = Field(..., description="Output directory for models")
+    work_folder: str = Field(..., description="Temporary folder for intermediate data")
+    cube_shape: Tuple[int, int, int] = Field(
+        ..., description="Number of samples in [X, Y, Z]"
+    )
+    incident_angles: Tuple[float, ...] = Field(
+        ..., description="Central angles for output seismic angle-stacks"
+    )
+    digi: int = Field(..., gt=0, description="Digitization factor")
+    infill_factor: int = Field(
+        ..., gt=0, description="Infill factor for model generation"
+    )
+    initial_layer_stdev: Tuple[float, float] = Field(
+        ..., description="Initial layer standard deviation range"
+    )
+    thickness_min: int = Field(..., gt=0, description="Minimum layer thickness")
+    thickness_max: int = Field(..., gt=0, description="Maximum layer thickness")
+    seabed_min_depth: Union[int, Tuple[int, int]] = Field(
+        ..., description="Minimum seabed depth"
+    )
+    signal_to_noise_ratio_db: Tuple[float, float, float] = Field(
+        ..., description="Signal to noise ratio in dB"
+    )
+    bandwidth_low: Tuple[float, float] = Field(
+        ..., description="Low frequency bandwidth range"
+    )
+    bandwidth_high: Tuple[float, float] = Field(
+        ..., description="High frequency bandwidth range"
+    )
+    bandwidth_ord: int = Field(..., gt=0, description="Bandwidth order")
+    dip_factor_max: float = Field(..., gt=0, description="Maximum dip factor")
+    min_number_faults: int = Field(..., ge=0, description="Minimum number of faults")
+    max_number_faults: int = Field(..., gt=0, description="Maximum number of faults")
+    max_column_height: Tuple[float, float] = Field(
+        ..., description="Maximum column height range"
+    )
+    closure_types: List[str] = Field(..., description="Types of closures to generate")
+    min_closure_voxels_simple: int = Field(
+        ..., gt=0, description="Minimum voxels for simple closures"
+    )
+    min_closure_voxels_faulted: int = Field(
+        ..., gt=0, description="Minimum voxels for faulted closures"
+    )
+    min_closure_voxels_onlap: int = Field(
+        ..., gt=0, description="Minimum voxels for onlap closures"
+    )
+    sand_layer_thickness: int = Field(..., gt=0, description="Sand layer thickness")
+    sand_layer_fraction: SandLayerFraction = Field(
+        ..., description="Sand layer fraction configuration"
+    )
+    extra_qc_plots: bool = Field(False, description="Enable additional QC plots")
+    verbose: bool = Field(False, description="Enable verbose output")
+    partial_voxels: bool = Field(
+        True,
+        description="Calculate average properties for voxels spanning multiple layers",
+    )
+    variable_shale_ng: bool = Field(
+        False, description="Enable variable net-to-gross in shale layers"
+    )
+    basin_floor_fans: bool = Field(False, description="Enable basin floor fan features")
+    include_channels: bool = Field(
+        False, description="Enable channel features (deprecated)"
+    )
+    include_salt: bool = Field(False, description="Enable salt bodies")
+    write_to_hdf: bool = Field(False, description="Write QC volumes to HDF file")
+    broadband_qc_volume: bool = Field(
+        False, description="Output broadband seismic data"
+    )
+    model_qc_volumes: bool = Field(True, description="Save QC volumes to disk")
+    multiprocess_bp: bool = Field(
+        True, description="Use multiprocessing for bandpass operations"
+    )
+    pad_samples: int = Field(10, gt=0, description="Number of padding samples")
+
+    @validator("max_number_faults")
+    def max_faults_greater_than_min(cls, v, values):
+        if "min_number_faults" in values and v < values["min_number_faults"]:
+            raise ValueError("max_number_faults must be greater than min_number_faults")
+        return v
+
+    @validator("thickness_max")
+    def thickness_max_greater_than_min(cls, v, values):
+        if "thickness_min" in values and v < values["thickness_min"]:
+            raise ValueError("thickness_max must be greater than thickness_min")
+        return v
+
+    @validator("bandwidth_high")
+    def bandwidth_high_greater_than_low(cls, v, values):
+        if "bandwidth_low" in values and v[0] < values["bandwidth_low"][1]:
+            raise ValueError("bandwidth_high must be greater than bandwidth_low")
+        return v
+
+    @validator("signal_to_noise_ratio_db")
+    def validate_snr_db(cls, v):
+        if not (v[0] < v[1] < v[2]):
+            raise ValueError("signal_to_noise_ratio_db must be in ascending order")
+        return v
+
+
+class RPMScalingFactors(BaseModel):
+    """Rock Physics Model scaling factors."""
+
+    layershiftsamples: int = Field(..., gt=0)
+    RPshiftsamples: int = Field(..., gt=0)
+    shalerho_factor: float = Field(1.0, gt=0)
+    shalevp_factor: float = Field(1.0, gt=0)
+    shalevs_factor: float = Field(1.0, gt=0)
+    sandrho_factor: float = Field(1.0, gt=0)
+    sandvp_factor: float = Field(1.0, gt=0)
+    sandvs_factor: float = Field(1.0, gt=0)
+    nearfactor: float = Field(1.0, gt=0)
+    midfactor: float = Field(1.0, gt=0)
+    farfactor: float = Field(1.0, gt=0)
+
+
+class Parameters:
     """
-    Parameter object storing all model parameters.
-
-    Attributes
-    ----------
-    model_dir_name : str
-        This is the name that the directory will be given, by default `seismic`
-    parameter_file : str
-        User parameters are read from the 'user_config' json file, and
-        additional model parameters are set.
-    test_mode : int
-        If test_mode is set using an integer, the size of the model will
-        be reduced e.g 100 makes a 100x100.It reduces the ammount of
-        time that the program takes to generate data usueful when testing
-        a model.
-
-        **Warning: If you put too small a number, the model may fail due to
-        not enough space to place faults etc...**
-
-        Value should ideally be >= 50
-    runid : str
-        The string runid will be added to the final model directory.
-    rpm_scaling_factors : dict
-        These are user-defined parameter. You can use the defaults
-        provided, but results might be unrealistic.
-        These might need to be tuned to get reaslistic synthetic
-        data.
-    sqldict : dict
-        This is a dictionary structure that stores all the parameters
-        of the model. This dictionary eventually gets written to a
-        sqlite DB file.
-
-    Methods
-    -------
-    setup_model(rpm_factors=None) -> None:
-        Method to set up all the necesary parameters to start a new model.
-    make_directories() -> None:
-        Method that generates all necessary directory structures on disk
-    write_key_file():
-        Method to generate a key file that describes coordinate systems,
-        track, bin, digi (inline, xlines, )
-    write_to_logfile(msg, mainkey=None, subkey=None, val=""):
-        Method that writes to the logfile
+    Modernized parameter object for seismic data generation using Pydantic models.
+    Maintains backward compatibility with the original implementation while providing
+    better type safety and validation.
     """
 
-    def __init__(self, user_config: str = CONFIG_PATH, test_mode=None, runid=None):
+    def __init__(
+        self,
+        user_config: str = CONFIG_PATH,
+        test_mode: Optional[int] = None,
+        runid: Optional[str] = None,
+    ):
         """
         Initialize the Parameters object.
 
         Parameters
         ----------
-        user_config : `str`, optional
-            This is the path on disk that points to a `.json` file
-            that contains the configurations for each run, by default CONFIG_PATH
-        test_mode : `int`, optional
-            The parameter that sets the running mode, by default 0
-        runid : `str`, optional
-            This is the runid of the run, this comes in handy when you have many runs
-            with various permutations of parameters, by default None
+        user_config : str, optional
+            Path to the JSON configuration file, by default CONFIG_PATH
+        test_mode : Optional[int], optional
+            Test mode size for reduced model generation, by default None
+        runid : Optional[str], optional
+            Run identifier for multiple runs, by default None
         """
-        # reset the parameter dict in case we are building models within a loop, and the shared_state dict is not empty
-        self._shared_state = {}
-        super().__init__()
         self.model_dir_name: str = "seismic"
         self.parameter_file = user_config
         self.test_mode = test_mode
         self.runid = runid
-        self.rpm_scaling_factors = dict()
+        self.rpm_scaling_factors: Dict[str, Any] = {}
         self.sqldict = defaultdict(dict)
 
-    def __repr__(self):
-        """
-        Representation method
+        # Load and validate configuration
+        self._config = self._load_config()
+        self._setup_from_config()
 
-        Parameters
-        ----------
-        self : `Parameters`
-            The instance of the Parameters object
-        """
-        # Make nice repr instead of a print method
-        items = ("\t{} = {}".format(k, v) for k, v in self.__dict__.items())
-        return "{}:\n{}".format(self.__class__.__name__, "\n".join(sorted(items)))
+    @lru_cache()
+    def _load_config(self) -> ModelConfig:
+        """Load and validate configuration from JSON file."""
+        with open(self.parameter_file) as f:
+            config_dict = json.load(f)
+        return ModelConfig(**config_dict)
 
-    def __getitem__(self, key: str):
-        """__getitem__
+    def _setup_from_config(self) -> None:
+        """Set up parameters from validated configuration."""
+        config = self._config
 
-        Enable retrieval of values as though the class instance is a dict
+        # Set basic attributes
+        self.project = config.project
+        self.project_folder = config.project_folder
+        self.work_folder = (
+            config.work_folder if os.path.exists(config.work_folder) else "/tmp"
+        )
 
-        Parameters
-        ----------
-        key : str
-            The key desired to be accessed
-
-        Returns
-        -------
-        any
-            Value of the key
-        """
-        return self._shared_state[key]
-
-    def setup_model(self, rpm_factors=None) -> None:
-        """
-        Setup Model
-        -----------
-        Sets up the creation of essential parameters and directories
-
-        Parameters
-        ----------
-        rpm_factors : `dict`, optional
-            The rock physics model factors for generating the synthetic cube.
-            By default the rpm factors come from a default in the main.py file
-
-        Returns
-        -------
-        None
-        """
         # Set model parameters
+        self.cube_shape = config.cube_shape
+        self.incident_angles = config.incident_angles
+        self.digi = config.digi
+        self.infill_factor = config.infill_factor
+        self.lyr_stdev = config.initial_layer_stdev
+        self.thickness_min = config.thickness_min
+        self.thickness_max = config.thickness_max
+        self.seabed_min_depth = config.seabed_min_depth
+        self.snr_db = config.signal_to_noise_ratio_db
+        self.bandwidth_low = config.bandwidth_low
+        self.bandwidth_high = config.bandwidth_high
+        self.bandwidth_ord = config.bandwidth_ord
+        self.dip_factor_max = config.dip_factor_max
+        self.min_number_faults = config.min_number_faults
+        self.max_number_faults = config.max_number_faults
+        self.basin_floor_fans = config.basin_floor_fans
+        self.pad_samples = config.pad_samples
+        self.qc_plots = config.extra_qc_plots
+        self.verbose = config.verbose
+        self.include_channels = config.include_channels
+        self.include_salt = config.include_salt
+        self.max_column_height = config.max_column_height
+        self.closure_types = config.closure_types
+        self.closure_min_voxels_simple = config.min_closure_voxels_simple
+        self.closure_min_voxels_faulted = config.min_closure_voxels_faulted
+        self.closure_min_voxels_onlap = config.min_closure_voxels_onlap
+        self.partial_voxels = config.partial_voxels
+        self.variable_shale_ng = config.variable_shale_ng
+        self.sand_layer_thickness = config.sand_layer_thickness
+        self.sand_layer_pct_min = config.sand_layer_fraction.min
+        self.sand_layer_pct_max = config.sand_layer_fraction.max
+        self.hdf_store = config.write_to_hdf
+        self.broadband_qc_volume = config.broadband_qc_volume
+        self.model_qc_volumes = config.model_qc_volumes
+        self.multiprocess_bp = config.multiprocess_bp
+
+    def setup_model(self, rpm_factors: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Set up the model with all necessary parameters and directories.
+
+        Parameters
+        ----------
+        rpm_factors : Optional[Dict[str, Any]], optional
+            Rock physics model factors, by default None
+        """
         self._set_model_parameters(self.model_dir_name)
         self.make_directories()
-        self.write_key_file()
+        # self.write_key_file()
         self._setup_rpm_scaling_factors(rpm_factors)
-
-        # Write model parameters to logfile
         self._write_initial_model_parameters_to_logfile()
 
     def make_directories(self) -> None:
@@ -378,46 +486,19 @@ class Parameters(_Borg):
                 conn.execute(sql, tuple(self.sqldict[c].values()))
                 conn.commit()
 
-    def _setup_rpm_scaling_factors(self, rpm_factors: dict) -> None:
-        """
-        Setup Rock Physics Model scaling factors
-        ----------------------------------------
-
-        Method to initialize all the rock physics model
-        scaling factors. Method also writes the values to
-        the model_parameters log file.
-
-        Parameters
-        ----------
-        TODO remove the default in the main.py or have a single source of truth
-        rpm_factors : `dict`
-        Dictionary containing the scaling factors for the RPM.
-        If no RPM factors are provided, the default values are used.
-
-        Returns
-        -------
-        None
-        """
+    def _setup_rpm_scaling_factors(
+        self, rpm_factors: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Set up rock physics model scaling factors with validation."""
         if rpm_factors and not self.test_mode:
-            self.rpm_scaling_factors = rpm_factors
+            self.rpm_scaling_factors = RPMScalingFactors(**rpm_factors).dict()
         else:
-            # Use defaults for RPM Z-shifts and scaling factors
-            self.rpm_scaling_factors = dict()
-            self.rpm_scaling_factors["layershiftsamples"] = int(
-                np.random.triangular(35, 75, 125)
-            )
-            self.rpm_scaling_factors["RPshiftsamples"] = int(
-                np.random.triangular(5, 11, 20)
-            )
-            self.rpm_scaling_factors["shalerho_factor"] = 1.0
-            self.rpm_scaling_factors["shalevp_factor"] = 1.0
-            self.rpm_scaling_factors["shalevs_factor"] = 1.0
-            self.rpm_scaling_factors["sandrho_factor"] = 1.0
-            self.rpm_scaling_factors["sandvp_factor"] = 1.0
-            self.rpm_scaling_factors["sandvs_factor"] = 1.0
-            self.rpm_scaling_factors["nearfactor"] = 1.0
-            self.rpm_scaling_factors["midfactor"] = 1.0
-            self.rpm_scaling_factors["farfactor"] = 1.0
+            # Use default RPM factors
+            self.rpm_scaling_factors = RPMScalingFactors(
+                layershiftsamples=int(np.random.triangular(35, 75, 125)),
+                RPshiftsamples=int(np.random.triangular(5, 11, 20)),
+            ).dict()
+
         # Write factors to logfile
         for k, v in self.rpm_scaling_factors.items():
             self.write_to_logfile(

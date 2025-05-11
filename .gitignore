@@ -12,3 +12,5 @@ tags
 /multvt2vds.freq.log
 wip*
 *.code-workspace
+.env
+.python-version
