@@ -8,12 +8,13 @@ import glob
 import sqlite3
 from subprocess import CalledProcessError
 import numpy as np
-import tables
-import subprocess
+import zarr
+import numcodecs
 from typing import Optional, List, Tuple, Dict, Any, Union
 from pydantic import BaseModel, Field, validator, root_validator
 from pydantic.dataclasses import dataclass
 from functools import lru_cache
+import subprocess
 
 dir_name = os.path.dirname(__file__)
 CONFIG_PATH = os.path.abspath(os.path.join(dir_name, "../config/config_ht.json"))
@@ -1031,74 +1032,78 @@ class Parameters:
         ).total_seconds() / secs_in_year
         return format(year + fraction_of_year, "14.8f").replace(" ", "")
 
-    def hdf_setup(self, hdf_name: str) -> None:
+    def zarr_setup(self, zarr_name: str) -> None:
         """
-        Setup HDF files
+        Setup Zarr storage
         ---------------
 
-        This method sets up the HDF structures
+        This method sets up the Zarr storage structures
 
         Parameters
         ----------
-        hdf_name : str
-            The name of the HDF file to be created
+        zarr_name : str
+            The name of the Zarr store to be created
 
         Returns
         -------
         None
         """
         num_threads = min(8, mp.cpu_count() - 1)
-        tables.set_blosc_max_threads(num_threads)
-        self.hdf_filename = os.path.join(self.temp_folder, hdf_name)
-        self.filters = tables.Filters(
-            complevel=5, complib="blosc"
-        )  # compression with fast write speed
-        self.h5file = tables.open_file(self.hdf_filename, "w")
-        self.h5file.create_group("/", "ModelData")
+        self.zarr_filename = os.path.join(self.temp_folder, zarr_name)
+        # Configure compression similar to HDF5 setup
+        self.compressor = numcodecs.Blosc(
+            cname="blosclz",
+            clevel=5,
+            shuffle=numcodecs.Blosc.SHUFFLE,
+        )
+        # Create root group
+        self.zarr_store = zarr.open_group(store=self.zarr_filename, mode="w")
+        # Create ModelData group
+        self.zarr_group = self.zarr_store.create_group("ModelData")
 
-    def hdf_init(
-        self, dset_name, shape: tuple, dtype: str = "float64"
-    ) -> tables.CArray:
+    def zarr_init(
+        self, dset_name: str, shape: tuple, dtype: str = "float16"
+    ) -> zarr.Array:
         """
-        HDF Initialize
+        Zarr Initialize
         ----------------------------------------
 
-        Method that initializes the HDF chunked
-        array
+        Method that initializes a Zarr array
 
         Parameters
         ----------
         dset_name : str
             The name of the dataset to be created
         shape : tuple
-
+            Shape of the array
+        dtype : str, optional
+            Data type of the array, by default "float64"
 
         Returns
         -------
-        new_array: tables.CArray
+        zarr.Array
+            The created Zarr array
         """
-        if "float" in dtype:
-            atom = tables.FloatAtom()
-        elif "uint8" in dtype:
-            atom = tables.UInt8Atom()
-        else:
-            atom = tables.IntAtom()
-        group = self.h5file.root.ModelData
-        new_array = self.h5file.create_carray(
-            group, dset_name, atom, shape, filters=self.filters
+        return self.zarr_group.create_dataset(
+            name=dset_name, shape=shape, dtype=dtype, compressor=self.compressor
         )
-        return new_array
 
-    def hdf_node_list(self):
-        return [x.name for x in self.h5file.list_nodes("ModelData")]
+    def zarr_node_list(self):
+        """Get list of arrays in the ModelData group"""
+        return list(self.zarr_group.keys())
 
-    def hdf_remove_node_list(self, dset_name):
-        group = self.h5file.root.ModelData
+    def zarr_remove_node(self, dset_name: str):
+        """Remove an array from the ModelData group"""
         try:
-            self.h5file.remove_node(group, dset_name)
-        except:
+            del self.zarr_group[dset_name]
+        except KeyError:
             pass
-        self.hdf_node_list
+
+    # Replace old HDF methods with Zarr equivalents for backward compatibility
+    hdf_setup = zarr_setup
+    hdf_init = zarr_init
+    hdf_node_list = zarr_node_list
+    hdf_remove_node_list = zarr_remove_node
 
 
 def triangle_distribution_fix(left, mode, right, random_seed=None):
