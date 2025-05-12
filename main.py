@@ -21,7 +21,7 @@ def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None)
     p = Parameters(user_json, runid=run_id, test_mode=test_mode)
     p.setup_model(rpm_factors=rpm_factors)
 
-    p.hdf_setup(os.path.join(p.temp_folder, "model_data.hdf"))
+    p.zarr_setup(os.path.join(p.temp_folder, "model_data.zarr"))
     # Build un-faulted depth maps and facies array
     depth_maps, onlap_list, fan_list, fan_thicknesses = build_unfaulted_depth_maps(p)
     facies = create_facies_array(p, depth_maps, onlap_list, fan_list)

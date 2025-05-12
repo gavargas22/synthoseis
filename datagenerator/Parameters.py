@@ -16,8 +16,8 @@ from pydantic.dataclasses import dataclass
 from functools import lru_cache
 import subprocess
 
-dir_name = os.path.dirname(__file__)
-CONFIG_PATH = os.path.abspath(os.path.join(dir_name, "../config/config_ht.json"))
+dir_name = pathlib.Path(__file__).parent
+CONFIG_PATH = (dir_name / "../config/config_ht.json").resolve()
 
 
 class SandLayerFraction(BaseModel):
@@ -202,8 +202,9 @@ class Parameters:
         # Set basic attributes
         self.project = config.project
         self.project_folder = config.project_folder
-        self.work_folder = (
-            config.work_folder if os.path.exists(config.work_folder) else "/tmp"
+        work_folder_path = pathlib.Path(config.work_folder)
+        self.work_folder = str(
+            work_folder_path if work_folder_path.exists() else pathlib.Path("/tmp")
         )
 
         # Set model parameters
@@ -279,13 +280,11 @@ class Parameters:
         print(f"\nModel folder: {self.work_subfolder}")
         self.sqldict["model_id"] = pathlib.Path(self.work_subfolder).name
         for folder in [self.project_folder, self.work_subfolder, self.temp_folder]:
-            try:
-                os.stat(folder)
-            except OSError:
+            folder_path = pathlib.Path(folder)
+            if not folder_path.exists():
                 print(f"Creating directory: {folder}")
-                # Try making folders (can fail if multiple models are being built simultaneously in a new dir)
                 try:
-                    os.mkdir(folder)
+                    folder_path.mkdir(parents=True, exist_ok=True)
                 except OSError:
                     pass
         try:
@@ -299,7 +298,7 @@ class Parameters:
         Write key file
         --------------
 
-        Writes a file that ocntains important parameters about the cube.
+        Writes a file that contains important parameters about the cube.
 
         Method that writes important parameters about the synthetic cube
         such as coordinate transforms and sizes.
@@ -340,8 +339,8 @@ class Parameters:
         geom_expand["ZERO_TIME"] = 0
 
         # Write the keyfile
-        outputkey = os.path.join(
-            self.work_subfolder, "seismicCube_" + self.date_stamp + ".key"
+        outputkey = (
+            pathlib.Path(self.work_subfolder) / f"seismicCube_{self.date_stamp}.key"
         )
         with open(outputkey, "w") as key:
             key.write(
@@ -449,7 +448,8 @@ class Parameters:
         fault_keys = [k for k in self.sqldict.keys() if "fault" in k]
         closure_keys = [k for k in self.sqldict.keys() if "closure" in k]
 
-        conn = sqlite3.connect(os.path.join(self.work_subfolder, "parameters.db"))
+        db_path = pathlib.Path(self.work_subfolder) / "parameters.db"
+        conn = sqlite3.connect(str(db_path))
         # tables = ["model_parameters", "fault_parameters", "closure_parameters"]
         # create tables
         sql = f"CREATE TABLE model_parameters (model_id string primary key, {','.join(model_parameters.keys())})"
@@ -524,7 +524,7 @@ class Parameters:
         -------
         None
         """
-        self.current_dir = os.getcwd()
+        self.current_dir = pathlib.Path.cwd()
         self.start_time = datetime.datetime.now()
         self.date_stamp = self.year_plus_fraction()
 
@@ -534,16 +534,14 @@ class Parameters:
 
         # Directories
         model_dir = f"{dname}__{self.date_stamp}"
-        temp_dir = f"temp_folder__{self.date_stamp}"
-        self.work_subfolder = os.path.abspath(
-            os.path.join(self.project_folder, model_dir)
+        self.work_subfolder = pathlib.Path(self.project_folder) / model_dir
+        self.temp_folder = (
+            pathlib.Path(self.work_folder) / f"temp_folder__{self.date_stamp}"
         )
-        self.temp_folder = os.path.abspath(
-            os.path.join(self.work_folder, f"temp_folder__{self.date_stamp}")
-        )
+
         if self.runid:
-            self.work_subfolder = f"{self.work_subfolder}_{self.runid}"
-            self.temp_folder = f"{self.temp_folder}_{self.runid}"
+            self.work_subfolder = pathlib.Path(f"{self.work_subfolder}_{self.runid}")
+            self.temp_folder = pathlib.Path(f"{self.temp_folder}_{self.runid}")
 
         # Various model parameters, not in config
         self.num_lyr_lut = self.cube_shape[2] * 2 * self.infill_factor
@@ -565,13 +563,14 @@ class Parameters:
         self._fault_settings()
 
         # Logfile
-        self.logfile = os.path.join(
-            self.work_subfolder, f"model_parameters_{self.date_stamp}.txt"
+        self.logfile = (
+            pathlib.Path(self.work_subfolder)
+            / f"model_parameters_{self.date_stamp}.txt"
         )
 
         # HDF file to store various model data
-        self.hdf_master = os.path.join(
-            self.work_subfolder, f"seismicCube__{self.date_stamp}.hdf"
+        self.hdf_master = (
+            pathlib.Path(self.work_subfolder) / f"seismicCube__{self.date_stamp}.hdf"
         )
 
     def _calculate_snr_after_lateral_filter(self, sn_db: float) -> float:
@@ -768,7 +767,7 @@ class Parameters:
         Set test mode
         -------------
 
-        Sets whether the parameters for testinf mode. If no size integer
+        Sets whether the parameters for testing mode. If no size integer
         is provided is defaults to 50.
 
         This value is a good minimum because it allows for the 3D model
@@ -785,25 +784,27 @@ class Parameters:
         -------
         None
         """
-
         # Set output model folder in work_folder location but with same directory name as project_folder
-        normpath = (
-            os.path.normpath(self.project_folder) + "_test_mode_"
-        )  # strip trailing / if added
-        new_project_folder = os.path.join(self.work_folder, os.path.basename(normpath))
+        normpath = pathlib.Path(self.project_folder).name + "_test_mode_"
+        new_project_folder = pathlib.Path(self.work_folder) / normpath
+
         # Put all folders inside project folder for easy deleting
-        self.work_folder = new_project_folder
-        self.project_folder = new_project_folder
-        self.work_subfolder = os.path.join(
-            new_project_folder, os.path.basename(self.work_subfolder)
+        self.work_folder = str(new_project_folder)
+        self.project_folder = str(new_project_folder)
+        self.work_subfolder = (
+            new_project_folder / pathlib.Path(self.work_subfolder).name
         )
+
         if self.runid:
             # Append runid if provided
-            self.temp_folder = f"{self.temp_folder}_{self.runid}__{self.date_stamp}"
-        else:
-            self.temp_folder = os.path.abspath(
-                os.path.join(self.work_folder, f"temp_folder__{self.date_stamp}")
+            self.temp_folder = pathlib.Path(
+                f"{self.temp_folder}_{self.runid}__{self.date_stamp}"
             )
+        else:
+            self.temp_folder = (
+                pathlib.Path(self.work_folder) / f"temp_folder__{self.date_stamp}"
+            )
+
         # Set smaller sized model
         self.cube_shape = tuple([size_x, size_y, self.cube_shape[-1]])
         # Print message to user
@@ -1049,7 +1050,7 @@ class Parameters:
         None
         """
         num_threads = min(8, mp.cpu_count() - 1)
-        self.zarr_filename = os.path.join(self.temp_folder, zarr_name)
+        self.zarr_filename = pathlib.Path(self.temp_folder) / zarr_name
         # Configure compression similar to HDF5 setup
         self.compressor = numcodecs.Blosc(
             cname="blosclz",
@@ -1057,7 +1058,7 @@ class Parameters:
             shuffle=numcodecs.Blosc.SHUFFLE,
         )
         # Create root group
-        self.zarr_store = zarr.open_group(store=self.zarr_filename, mode="w")
+        self.zarr_store = zarr.open_group(store=str(self.zarr_filename), mode="w")
         # Create ModelData group
         self.zarr_group = self.zarr_store.create_group("ModelData")
 
