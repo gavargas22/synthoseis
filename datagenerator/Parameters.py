@@ -570,7 +570,7 @@ class Parameters:
 
         # HDF file to store various model data
         self.hdf_master = (
-            pathlib.Path(self.work_subfolder) / f"seismicCube__{self.date_stamp}.hdf"
+            pathlib.Path(self.work_subfolder) / f"seismicCube__{self.date_stamp}.zarr"
         )
 
     def _calculate_snr_after_lateral_filter(self, sn_db: float) -> float:

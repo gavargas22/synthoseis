@@ -5,6 +5,10 @@ from scipy import stats
 from scipy.interpolate import griddata
 from datagenerator.Parameters import Parameters
 from itertools import groupby
+from datagenerator.util import import_matplotlib
+import noise
+from datagenerator.util import write_data_to_hdf
+from scipy.ndimage import gaussian_filter, grey_closing
 
 
 class Horizons:
@@ -97,7 +101,6 @@ class Horizons:
         return random_net_over_gross_map
 
     def _perlin(self, base=None, octave=1, lac=1.9, do_rotate=True):
-        import noise
 
         xsize = self.cfg.cube_shape[0]
         ysize = self.cfg.cube_shape[1]
@@ -181,8 +184,6 @@ class Horizons:
         z = self.eval_plane(range(grid_shape[0]), range(grid_shape[1]), a, b, c)
         # - make plot if not quiet
         if verbose:
-            import os
-            from datagenerator.util import import_matplotlib
 
             plt = import_matplotlib()
             print(f"strike angle = {strike_angle}")
@@ -226,8 +227,6 @@ class Horizons:
 
     @staticmethod
     def halton(dim, nbpts):
-        import math
-
         h = np.empty(nbpts * dim)
         h.fill(np.nan)
         p = np.empty(nbpts)
@@ -307,8 +306,6 @@ class Horizons:
 
         if self.cfg.hdf_store:
             # Write onlap maps to hdf
-            from datagenerator.util import write_data_to_hdf
-
             write_data_to_hdf(
                 "depth_maps_onlaps", onlaps * self.cfg.digi, self.cfg.hdf_master
             )
@@ -334,7 +331,6 @@ class RandomHorizonStack(Horizons):
         self.depth_maps = None
         self.depth_maps_gaps = None
         self.max_layers = 0
-
         # Look up tables
         self.thicknesses = None
         self.onlaps = None
@@ -342,26 +338,22 @@ class RandomHorizonStack(Horizons):
         self.dips = None
         self.azimuths = None
         self.facies = None
+        # Start the process of creating depth maps
+        self.create_depth_maps()
 
     def _generate_lookup_tables(self):
         # Thicknesses
         self.thicknesses = stats.gamma.rvs(4.0, 2, size=self.cfg.num_lyr_lut)
+
         # Onlaps
-        onlap_layer_list = np.sort(
-            np.random.uniform(
-                low=5, high=200, size=int(np.random.triangular(1, 4, 7) + 0.5)
-            ).astype("int")
-        )
+        onlap_layer_list = self._get_onlap_layer_list()
+
         # Dips
-        self.dips = (
-            (1.0 - np.random.power(100, self.cfg.num_lyr_lut))
-            * 7.0
-            * self.cfg.dip_factor_max
-        )
+        self.dips = self._get_dips()
+
         # Azimuths
-        self.azimuths = np.random.uniform(
-            low=0.0, high=360.0, size=(self.cfg.num_lyr_lut,)
-        )
+        self._get_azimuths()
+
         # Channels
         self.channels = np.random.binomial(1, 3.0 / 100.0, self.cfg.num_lyr_lut)
 
@@ -393,6 +385,189 @@ class RandomHorizonStack(Horizons):
             print(
                 f" ... horizon number for first channel episode: {np.argmax(self.channels)}"
             )
+
+    def _get_azimuths(self):
+        """Generate random azimuth angles (in degrees) for each geological horizon in a synthetic seismic model.
+
+        This method is a crucial component of the synthetic seismic model generation process,
+        specifically responsible for creating realistic azimuth angles (compass bearings) for
+        each geological horizon in the model. These azimuth angles determine the direction
+        of maximum dip (steepest slope) for each layer, which is essential for creating
+        geologically realistic structures that mimic real-world sedimentary basins.
+
+        In geological terms, azimuth represents the compass direction (0-360 degrees) in which
+        a layer dips most steeply. For example:
+        - An azimuth of 0° means the layer dips most steeply to the North
+        - An azimuth of 90° means the layer dips most steeply to the East
+        - An azimuth of 180° means the layer dips most steeply to the South
+        - An azimuth of 270° means the layer dips most steeply to the West
+
+        The method works by:
+        1. Generating random values uniformly distributed between 0 and 360 degrees
+        2. Creating one value for each layer in the model (determined by self.cfg.num_lyr_lut)
+        3. Returning these values as a numpy array
+
+        The resulting array of azimuth angles is used throughout the model generation process to:
+        - Create realistic geological structures by orienting horizons appropriately
+        - Generate synthetic seismic data that accurately represents the geological structure
+        - Model potential hydrocarbon traps and migration pathways
+        - Create realistic structural features like anticlines and synclines
+
+        Parameters
+        ----------
+        None
+            Uses self.cfg.num_lyr_lut from the class configuration to determine how many
+            azimuth angles to generate
+
+        Returns
+        -------
+        numpy.ndarray
+            An array of azimuth angles in degrees, with length equal to num_lyr_lut.
+            Each value represents the azimuth (compass bearing) of maximum dip for a
+            specific horizon in the model. Values range from 0 to 360 degrees.
+
+        Notes
+        -----
+        The uniform distribution was chosen because in real sedimentary basins, the
+        direction of maximum dip can occur in any direction with equal probability.
+        This is different from the dip angles themselves (generated separately), which
+        tend to be skewed towards small angles.
+
+        The azimuth angles generated by this method are used in conjunction with dip
+        angles (generated separately) to create the full 3D orientation of each horizon.
+
+        Example
+        -------
+        If num_lyr_lut = 5, the resulting azimuths might look like:
+        [45.2, 178.9, 267.3, 92.1, 315.7]
+        where each value represents the compass bearing of maximum dip for a layer
+        """
+        azimuths = np.random.uniform(low=0.0, high=360.0, size=(self.cfg.num_lyr_lut,))
+
+        return azimuths
+
+    def _get_dips(self) -> np.ndarray:
+        """Generate realistic dip angles for geological horizons in a synthetic seismic model.
+
+        This method is a crucial component of the synthetic seismic model generation process,
+        specifically responsible for creating realistic dip angles (angles of inclination) for
+        each geological horizon in the model. These dip angles determine how sedimentary layers
+        are tilted relative to horizontal, which is essential for creating geologically realistic
+        structures that mimic real-world sedimentary basins.
+
+        In geological terms, dip angles represent the maximum angle of inclination of a layer
+        relative to horizontal. In real sedimentary basins, most layers have relatively shallow
+        dips (close to horizontal), while occasional steeper dips occur in areas of tectonic
+        activity or structural deformation. This method replicates this natural distribution
+        using a power law distribution.
+
+        The method works by:
+        1. Generating random values using a power law distribution (np.random.power) with
+           exponent 100. This creates a distribution where:
+           - ~90% of values are very close to 0 (representing near-horizontal layers)
+           - ~9% of values are moderate (representing gently dipping layers)
+           - ~1% of values are higher (representing steeply dipping layers)
+        2. Inverting the distribution (1.0 - power_law_values) to get the desired skew
+        3. Scaling the values by 7.0 to create a reasonable range for sedimentary basin dips
+        4. Applying dip_factor_max from the configuration to allow model customization
+
+        The resulting array of dip angles is used throughout the model generation process to:
+        - Create realistic geological structures by tilting horizons appropriately
+        - Generate synthetic seismic data that accurately represents the geological structure
+        - Model potential hydrocarbon traps and migration pathways
+        - Create realistic structural features like anticlines and synclines
+
+        Parameters
+        ----------
+        None
+            Uses self.cfg.num_lyr_lut and self.cfg.dip_factor_max from the class configuration
+
+        Returns
+        -------
+        numpy.ndarray
+            An array of dip angles in degrees, with length equal to num_lyr_lut.
+            Each value represents the dip angle for a specific horizon in the model.
+            The distribution is heavily skewed towards small angles (< 1 degree) with
+            occasional steeper dips up to 7.0 * dip_factor_max degrees.
+
+        Notes
+        -----
+        The power law distribution (exponent 100) was chosen because it creates a very
+        steep distribution that closely matches real-world observations of dip angles
+        in sedimentary basins. The multiplication by 7.0 creates a reasonable range
+        for sedimentary basin dips, while dip_factor_max allows for model customization
+        to simulate different geological settings (e.g., passive margins vs. active
+        tectonic regions).
+
+        The dip angles generated by this method are used in conjunction with azimuths
+        (generated separately) to create the full 3D orientation of each horizon.
+
+        Example
+        -------
+        If dip_factor_max = 1.0, the resulting dips might look like:
+        [0.1, 0.3, 0.05, 1.2, 0.2, 0.4, 0.15, 2.1, ...]
+        where most values are small (< 1 degree) with occasional steeper dips
+        """
+        dips = (
+            (1.0 - np.random.power(100, self.cfg.num_lyr_lut))
+            * 7.0
+            * self.cfg.dip_factor_max
+        )
+
+        return dips
+
+    def _get_onlap_layer_list(self, low: int = 5, high: int = 200):
+        """Generate a list of layer numbers where onlap (tilting) episodes will occur in the geological model.
+
+        This method is crucial for simulating realistic geological sequences where layers of sediment
+        progressively onlap (overlap) onto older layers due to changes in depositional conditions or
+        tectonic tilting. Onlap episodes are important geological features that indicate changes in
+        relative sea level, basin subsidence, or sediment supply.
+
+        The method works by:
+        1. Randomly determining how many onlap episodes to create using a triangular distribution
+           centered around 4 episodes (range 1-7)
+        2. Randomly selecting layer numbers between 5 and 200 where these onlap episodes will occur
+        3. Sorting these layer numbers to ensure they occur in chronological order
+
+        The specific parameters used:
+        - Minimum layer (low=5): Ensures onlaps don't occur too close to the base of the model
+        - Maximum layer (high=200): Prevents onlaps from occurring too close to the top
+        - Number of episodes: Uses triangular distribution with:
+          * Minimum: 1 episode
+          * Mode: 4 episodes
+          * Maximum: 7 episodes
+
+        Returns
+        -------
+        numpy.ndarray
+            A sorted array of integers representing the layer numbers where onlap episodes
+            will be simulated. Each number corresponds to a specific horizon in the model
+            where a tilting event will occur, causing subsequent layers to onlap onto it.
+
+        Notes
+        -----
+        - The method is called during model initialization to set up the basic structure
+          of the geological model
+        - These onlap layers are later used by the Onlaps class to modify the depth maps
+          and create realistic geological sequences
+        - The actual onlap simulation involves tilting the layers above each onlap surface
+          to create the characteristic overlapping pattern seen in real geological sequences
+
+        Example
+        -------
+        >>> horizons = RandomHorizonStack(parameters)
+        >>> onlap_layers = horizons._get_onlap_layer_list()
+        >>> print(onlap_layers)
+        array([ 23,  45,  78, 156])  # Example output showing 4 onlap episodes
+        """
+        onlap_layer_list = np.sort(
+            np.random.uniform(
+                low=low, high=high, size=int(np.random.triangular(1, 4, 7) + 0.5)
+            ).astype("int")
+        )
+
+        return onlap_layer_list
 
     def _random_layer_thickness(self):
         rand_oct = int(np.random.triangular(left=1.3, mode=2.65, right=5.25))
@@ -598,9 +773,17 @@ class RandomHorizonStack(Horizons):
         """
         Create the thickness_factor map for the layer at the base of the model
 
+        The thickness factor map is a 2D array that controls the relative
+        thickness variations across a layer in the geological model.
+
+        It's essentially a multiplier that determines how thick or thin different
+        parts of a layer will be. A value of 1.0 means normal thickness,
+        values > 1.0 mean thicker than normal, and values < 1.0 mean thinner than normal
+
         Returns
         -------
-        random_thickness_factor_map : ndarray - a random thickness factor map for the initial layer at base
+        random_thickness_factor_map : ndarray
+            A random thickness factor map for the initial layer at base
         """
         _, random_thickness_factor_map = self._generate_random_depth_structure_map(
             dip_range=[0.0, 0.0], num_points_range=(25, 100), elevation_std=0.45
@@ -905,7 +1088,6 @@ class BasinFloorFans(Horizons):
 
         # Plot the fan
         if self.cfg.qc_plots:
-            from datagenerator.util import import_matplotlib
 
             plt = import_matplotlib()
             plt.figure(1)
@@ -1034,8 +1216,6 @@ class BasinFloorFans(Horizons):
         _z = _z[point_indices]
 
         if self.cfg.qc_plots:
-            from datagenerator.util import import_matplotlib
-
             plt = import_matplotlib()
             plt.clf()
             plt.grid()
@@ -1082,7 +1262,6 @@ class BasinFloorFans(Horizons):
         zi = _zi + 0.0
         zi[zi_mask <= 0.0] = 0.0
         zi[zi <= 0.0] = 0.0
-        from scipy.ndimage import gaussian_filter, grey_closing
 
         zi = gaussian_filter(zi, smoothing_size)
         # For cube_shape 300, 300, use closing size of (10, 10)
@@ -1174,8 +1353,6 @@ class BasinFloorFans(Horizons):
         Display an inline and crossline with the basin floor fan in red in cross-section
         Inlay a map of the fan in each subplot
         """
-        from datagenerator.util import import_matplotlib
-
         plt = import_matplotlib()
         plt.close()
         fig, axs = plt.subplots(nrows=2, ncols=1, figsize=(20, 15), sharey=True)
@@ -1475,7 +1652,7 @@ def build_unfaulted_depth_maps(parameters: Parameters):
         Generated fan thicknesses
     """
     horizons = RandomHorizonStack(parameters)
-    horizons.create_depth_maps()
+
     # Insert onlap episodes
     onlaps = Onlaps(
         parameters, horizons.depth_maps, horizons.thicknesses, horizons.max_layers
