@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, validator, root_validator
 from pydantic.dataclasses import dataclass
 from functools import lru_cache
 import subprocess
+from ..logging_config import setup_global_logging, get_logger
 
 dir_name = pathlib.Path(__file__).parent
 CONFIG_PATH = (dir_name / "../config/config_ht.json").resolve()
@@ -110,6 +111,12 @@ class ModelConfig(BaseModel):
         True, description="Use multiprocessing for bandpass operations"
     )
     pad_samples: int = Field(10, gt=0, description="Number of padding samples")
+    onlap_ratio: float = Field(
+        default=0.4,
+        gt=0.0,
+        lt=1.0,
+        description="Ratio of cube depth to allocate for onlap episodes (default: 0.4)",
+    )
 
     @validator("max_number_faults")
     def max_faults_greater_than_min(cls, v, values):
@@ -187,6 +194,12 @@ class Parameters:
         # Load and validate configuration
         self._config = self._load_config()
         self._setup_from_config()
+
+        # Initialize global logging based on verbose flag
+        setup_global_logging(verbose=self.verbose)
+
+        # Get logger for this module
+        self.logger = get_logger(__name__)
 
     @lru_cache()
     def _load_config(self) -> ModelConfig:
@@ -726,6 +739,7 @@ class Parameters:
         self.incident_angles = tuple(d["incident_angles"])
         self.digi = d["digi"]
         self.infill_factor = d["infill_factor"]
+        self.onlap_ratio = d.get("onlap_ratio", 0.4)  # Default to 0.4 if not specified
         self.lyr_stdev = d["initial_layer_stdev"]
         self.thickness_min = d["thickness_min"]
         self.thickness_max = d["thickness_max"]

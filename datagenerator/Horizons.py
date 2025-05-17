@@ -9,6 +9,7 @@ from datagenerator.util import import_matplotlib
 import noise
 from datagenerator.util import write_data_to_hdf
 from scipy.ndimage import gaussian_filter, grey_closing
+from ..logging_config import setup_global_logging, get_logger
 
 
 class Horizons:
@@ -327,7 +328,14 @@ class Horizons:
 
 class RandomHorizonStack(Horizons):
     def __init__(self, parameters):
-        self.cfg = parameters
+        self.cfg: Parameters = parameters
+        # Initialize global logging based on verbose flag
+        setup_global_logging(verbose=self.cfg.verbose)
+        # Get logger for this module
+        self.logger = get_logger(__name__)
+        self.logger.debug(
+            "Initializing RandomHorizonStack with parameters: %s", self.cfg
+        )
         self.depth_maps = None
         self.depth_maps_gaps = None
         self.max_layers = 0
@@ -342,49 +350,83 @@ class RandomHorizonStack(Horizons):
         self.create_depth_maps()
 
     def _generate_lookup_tables(self):
+        self.logger.debug("Generating lookup tables for horizons")
         # Thicknesses
-        self.thicknesses = stats.gamma.rvs(4.0, 2, size=self.cfg.num_lyr_lut)
-
+        self.thicknesses = self._get_thicknesses()
+        self.logger.debug(
+            "Generated thicknesses with shape: %s", self.thicknesses.shape
+        )
         # Onlaps
         onlap_layer_list = self._get_onlap_layer_list()
-
+        self.logger.debug("Generated onlap layer list: %s", onlap_layer_list)
         # Dips
         self.dips = self._get_dips()
-
+        self.logger.debug(
+            "Generated dips with mean: %.2f, max: %.2f",
+            np.mean(self.dips),
+            np.max(self.dips),
+        )
         # Azimuths
-        self._get_azimuths()
-
+        self.azimuths = self._get_azimuths()
+        self.logger.debug("Generated azimuths with mean: %.2f", np.mean(self.azimuths))
         # Channels
         self.channels = np.random.binomial(1, 3.0 / 100.0, self.cfg.num_lyr_lut)
+        self.logger.debug(
+            "Generated channels with %d active channels", np.sum(self.channels)
+        )
 
-        if self.cfg.verbose:
-            print("self.cfg.num_lyr_lut = ", self.cfg.num_lyr_lut)
-            print("onlap_layer_list = ", onlap_layer_list)
         onlap_array_dim = int(500 / 1250 * self.cfg.cube_shape[2])
         self.onlaps = np.zeros(onlap_array_dim, "int")
         self.onlaps[onlap_layer_list] = 1
+        self.logger.debug(
+            "Created onlap flags array with dimension: %d", onlap_array_dim
+        )
 
         if not self.cfg.include_channels:
             self.channels *= 0
+            self.logger.debug("Channels disabled in configuration")
         else:
             # Make sure channel episodes don't overlap too much
             for i in range(len(self.channels)):
                 if self.channels[i] == 1:
                     self.channels[i + 1 : i + 6] *= 0
+            self.logger.debug("Channel overlap prevention applied")
 
-        if self.cfg.verbose:
-            print(
-                f"Number of onlapping flags: {self.onlaps[self.onlaps == 1].shape[0]}"
-            )
-            print(
-                f" ... horizon number for first onlap episode = {np.argmax(self.onlaps)}"
-            )
-            print(
-                f" ... number of channelFlags: {self.channels[:250][self.channels[:250] == 1].shape[0]}"
-            )
-            print(
-                f" ... horizon number for first channel episode: {np.argmax(self.channels)}"
-            )
+    def _get_thicknesses(self):
+        """Generate random layer thicknesses using a Gamma distribution.
+
+        This method generates realistic geological layer thicknesses for a synthetic seismic model.
+        It uses a Gamma distribution with shape parameter 4.0 and scale parameter 2.0 to create
+        thicknesses that mimic natural sedimentary layers.
+
+        The Gamma distribution is chosen because:
+        1. It only generates positive values (layer thicknesses cannot be negative)
+        2. It creates a right-skewed distribution (many thin layers, fewer thick layers)
+        3. The parameters (4.0, 2.0) are tuned to create geologically realistic thicknesses
+
+        Parameters
+        ----------
+        None
+            Uses self.cfg.num_lyr_lut from the class configuration to determine how many
+            thicknesses to generate
+
+        Returns
+        -------
+        numpy.ndarray
+            An array of layer thicknesses with length equal to num_lyr_lut.
+            Each value represents the thickness of a geological layer in the model.
+            Values are always positive and follow a Gamma distribution.
+
+        Notes
+        -----
+        The Gamma distribution parameters (4.0, 2.0) were chosen to create a distribution
+        that matches typical sedimentary layer thicknesses, where:
+        - Most layers are relatively thin
+        - Some layers are thicker
+        - Very thick layers are rare
+        - No layers can have zero or negative thickness
+        """
+        return stats.gamma.rvs(4.0, 2, size=self.cfg.num_lyr_lut)
 
     def _get_azimuths(self):
         """Generate random azimuth angles (in degrees) for each geological horizon in a synthetic seismic model.
@@ -797,6 +839,7 @@ class RandomHorizonStack(Horizons):
 
         Each layer has random residual dip and pseudo-random residual thickness
         """
+        self.logger.debug("Starting creation of depth maps")
         self._generate_lookup_tables()
         # Create initial depth map at base of model using initial=True
         _, previous_depth_map = self._generate_random_depth_structure_map(
@@ -804,6 +847,9 @@ class RandomHorizonStack(Horizons):
             num_points_range=(3, 5),
             initial=True,
             elevation_std=self.cfg.initial_layer_stdev,
+        )
+        self.logger.debug(
+            "Created initial depth map with shape: %s", previous_depth_map.shape
         )
 
         # Build layers while minimum depth is less than the seabed_min_depth as set in config (given in metres).
@@ -876,10 +922,51 @@ class Onlaps(Horizons):
         self.thicknesses = thicknesses
         self.max_layers = max_layers
         self.onlap_horizon_list = list()
+        self.logger = setup_logger(parameters)
         self._generate_onlap_lookup_table()
 
+    def _calculate_onlap_array_dimension(self) -> int:
+        """Calculate the dimension of the onlap array based on the cube shape and onlap ratio.
+
+        The onlap array dimension determines how much of the total depth (cube_shape[2])
+        should be allocated for onlap episodes. This is calculated using the onlap_ratio
+        from the configuration.
+
+        Returns
+        -------
+        int
+            The dimension of the onlap array, representing the number of depth samples
+            that can potentially contain onlap episodes.
+        """
+        return int(self.cfg.onlap_ratio * self.cfg.cube_shape[2])
+
+    def _create_onlap_flags_array(self, onlap_layer_list: np.ndarray) -> np.ndarray:
+        """Create a binary array indicating where onlap episodes occur.
+
+        Parameters
+        ----------
+        onlap_layer_list : np.ndarray
+            Array of layer indices where onlap episodes should occur
+
+        Returns
+        -------
+        np.ndarray
+            Binary array where 1 indicates an onlap episode and 0 indicates no onlap
+        """
+        array_dim = self._calculate_onlap_array_dimension()
+        onlap_flags = np.zeros(array_dim, dtype="int")
+        onlap_flags[onlap_layer_list] = 1
+        return onlap_flags
+
     def _generate_onlap_lookup_table(self):
-        # Onlaps
+        """Generate a lookup table for onlap episodes in the geological model.
+
+        This method:
+        1. Generates a list of layer numbers where onlap episodes will occur
+        2. Creates a binary array marking these layers
+        3. Logs information about the onlap episodes at DEBUG level
+        """
+        # Generate list of layers where onlaps will occur
         onlap_layer_list = np.sort(
             np.random.uniform(
                 low=5,
@@ -887,17 +974,22 @@ class Onlaps(Horizons):
                 size=int(np.random.triangular(1, 4, 7) + 0.5),
             ).astype("int")
         )
-        if self.cfg.verbose:
-            print("self.cfg.num_lyr_lut = ", self.cfg.num_lyr_lut)
-            print("onlap_layer_list = ", onlap_layer_list)
-        onlap_array_dim = int(500 / 1250 * self.cfg.cube_shape[2])
-        self.onlaps = np.zeros(onlap_array_dim, "int")
-        self.onlaps[onlap_layer_list] = 1
 
-        if self.cfg.verbose:
-            print(
-                f"Number of onlapping flags: {self.onlaps[self.onlaps == 1].shape[0]}"
-            )
+        self.logger.debug(
+            "Onlap configuration: num_lyr_lut=%d, onlap_layer_list=%s",
+            self.cfg.num_lyr_lut,
+            onlap_layer_list,
+        )
+
+        # Create binary array marking onlap layers
+        self.onlaps = self._create_onlap_flags_array(onlap_layer_list)
+
+        self.logger.debug(
+            "Onlap statistics: flags=%d, ratio=%.2f, array_dim=%d",
+            self.onlaps[self.onlaps == 1].shape[0],
+            self.cfg.onlap_ratio,
+            len(self.onlaps),
+        )
 
     def insert_tilting_episodes(self):
         ############################################################################
