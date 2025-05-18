@@ -12,7 +12,7 @@
     15,
     24
   ],
-  "onlap_ratio": 0.4, // Optional, defaults to 0.4 if not specified
+  "onlap_ratio": 0.4,
   "digi": 4,
   "infill_factor": 10,
   "initial_layer_stdev": [

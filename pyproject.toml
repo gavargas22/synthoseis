@@ -5,19 +5,18 @@ description = "Generating seismic data and associated labels to train deep learn
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "bruges>=0.5.4",
+    "bruges",
     "matplotlib",
-    "noise>=1.2.2",
+    "noise",
     "numpy<2",
     "plotly",
-    "pydantic>=2.11.4",
-    "pytest>=8.3.5",
-    "ruff>=0.10.0",
+    "pydantic",
+    "ruff",
     "scikit-image",
     "scipy",
-    "setuptools>=76.0.0",
-    "tables>=3.9.2",
+    "setuptools>=80.7.1",
     "tqdm",
+    "zarr>=2.18.2",
 ]
 
 [dependency-groups]

@@ -9,7 +9,7 @@ from datagenerator.util import import_matplotlib
 import noise
 from datagenerator.util import write_data_to_hdf
 from scipy.ndimage import gaussian_filter, grey_closing
-from ..logging_config import setup_global_logging, get_logger
+from .logging_config import setup_global_logging, get_logger
 
 
 class Horizons:
@@ -863,26 +863,30 @@ class RandomHorizonStack(Horizons):
             # Do the special case for the random_thickness_factor_map for the initial layer (at base)
             if i == 0:
                 if self.cfg.verbose:
-                    print("Building random depth map at base of model")
+                    self.logger.info("Building random depth map at base of model")
                 random_thickness_factor_map = (
                     self._create_initial_thickness_factor_map()
                 )
             else:  # Otherwise create standard random thickness factor map
                 if self.cfg.verbose:
-                    print(f"Building Layer {i}")
+                    self.logger.info("Building Layer %d", i)
                 random_thickness_factor_map = self._random_layer_thickness()
             # Create the layer's thickness map using the random_thickness_factor_map
             thickness_map = self._create_thickness_map(random_thickness_factor_map, i)
             current_depth_map = previous_depth_map - thickness_map
 
             if self.cfg.verbose:
-                print(
-                    f"current_depth_map min/mean/max = {current_depth_map.min():.2f}, {current_depth_map.mean():.2f},"
-                    f" {current_depth_map.max():.2f}"
+                self.logger.debug(
+                    "current_depth_map min/mean/max = %.2f, %.2f, %.2f",
+                    current_depth_map.min(),
+                    current_depth_map.mean(),
+                    current_depth_map.max(),
                 )
-                print(
-                    f"thickness_map min/mean/max = {thickness_map.min():.2f}, {thickness_map.mean():.2f},"
-                    f" {thickness_map.max():.2f}"
+                self.logger.debug(
+                    "thickness_map min/mean/max = %.2f, %.2f, %.2f",
+                    thickness_map.min(),
+                    thickness_map.mean(),
+                    thickness_map.max(),
                 )
 
             # break out of loop when minimum depth is reached
@@ -898,21 +902,23 @@ class RandomHorizonStack(Horizons):
                 # There is no stack of horizons yet - write the base.
                 depth_maps = current_depth_map.copy()
             if self.cfg.verbose:
-                print(f"Layer {i}, depth_maps.shape = {depth_maps.shape}")
+                self.logger.debug(
+                    "Layer %d, depth_maps.shape = %s", i, depth_maps.shape
+                )
             self.max_layers = i + 1
 
         if self.cfg.verbose:
-            print("\n ... finished creating horizon layers ...")
-        # Store maps in hdf file
-        self.depth_maps = self.cfg.hdf_init("depth_maps", shape=depth_maps.shape)
+            self.logger.info("Finished creating horizon layers")
+        # Store maps in zarr file
+        self.depth_maps = self.cfg.zarr_init("depth_maps", shape=depth_maps.shape)
         self.depth_maps[:] = depth_maps
 
-        self.cfg.write_to_logfile(
-            f"number_layers: {self.max_layers}",
-            mainkey="model_parameters",
-            subkey="number_layers",
-            val=self.max_layers,
-        )
+        # self.cfg.write_to_logfile(
+        #     f"number_layers: {self.max_layers}",
+        #     mainkey="model_parameters",
+        #     subkey="number_layers",
+        #     val=self.max_layers,
+        # )
 
 
 class Onlaps(Horizons):

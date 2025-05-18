@@ -14,3 +14,4 @@ wip*
 *.code-workspace
 .env
 .python-version
+uv.lock

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, validator, root_validator
 from pydantic.dataclasses import dataclass
 from functools import lru_cache
 import subprocess
-from ..logging_config import setup_global_logging, get_logger
+from datagenerator.logging_config import setup_global_logging, get_logger
 from datagenerator.RPMConfig import RPMConfig
 
 dir_name = pathlib.Path(__file__).parent
@@ -202,6 +202,8 @@ class Parameters:
         # Get logger for this module
         self.logger = get_logger(__name__)
         self.setup_model()
+        # Create the zarr storage
+        self.zarr_setup(zarr_name="model_data")
 
     @lru_cache()
     def _load_config(self) -> ModelConfig:
@@ -1062,14 +1064,15 @@ class Parameters:
         -------
         None
         """
-        num_threads = min(8, mp.cpu_count() - 1)
-        self.zarr_filename = pathlib.Path(self.temp_folder) / zarr_name
-        # Configure compression similar to HDF5 setup
+        self.zarr_filename = pathlib.Path(self.temp_folder) / f"{zarr_name}.zarr"
+        # Configure compression using Blosc codec
         self.compressor = numcodecs.Blosc(
             cname="blosclz",
             clevel=5,
             shuffle=numcodecs.Blosc.SHUFFLE,
-        )
+            blocksize=0,  # Auto block size
+        )  # Get the codec configuration
+
         # Create root group
         self.zarr_store = zarr.open_group(store=str(self.zarr_filename), mode="w")
         # Create ModelData group
@@ -1091,15 +1094,20 @@ class Parameters:
         shape : tuple
             Shape of the array
         dtype : str, optional
-            Data type of the array, by default "float64"
+            Data type of the array, by default "float16"
 
         Returns
         -------
         zarr.Array
             The created Zarr array
         """
-        return self.zarr_group.create_dataset(
-            name=dset_name, shape=shape, dtype=dtype, compressor=self.compressor
+        return self.zarr_group.create_array(
+            name=dset_name,
+            shape=shape,
+            dtype=dtype,
+            compressor=numcodecs.Blosc(
+                **self.compressor
+            ),  # Create new Blosc instance from config
         )
 
     def zarr_node_list(self):
