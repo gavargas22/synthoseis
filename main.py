@@ -12,6 +12,7 @@ from datagenerator.Geomodels import Geomodel
 from datagenerator.Horizons import build_unfaulted_depth_maps, create_facies_array
 from datagenerator.Parameters import Parameters
 from datagenerator.Seismic import SeismicVolume
+from datagenerator.RPMConfig import RPMConfig
 from datagenerator.util import plot_3D_closure_plot
 
 
@@ -95,35 +96,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "-c", "--config_file", help="Provide model parameter file", required=True
     )
-    parser.add_argument(
-        "-n", "--num_runs", help="Number of models to create", default=1, type=int
-    )
+
     parser.add_argument("-r", "--run_id", help="Run ID", default=None)
 
     args = parser.parse_args()
 
-    # Print args
-    print("Input arguments used:")
-    for arg in vars(args):
-        print(f"\t* {arg}: {getattr(args, arg)}")
-
-    for iRun in range(args.num_runs):
-        # TODO Create a separate class to handle rpm randomization do these things need to be added to the config file?
-        # Apply randomisation to the rock properties
-        factor_dict = dict()
-        factor_dict["layershiftsamples"] = int(np.random.triangular(35, 75, 125))
-        factor_dict["RPshiftsamples"] = int(np.random.triangular(5, 11, 20))
-        factor_dict["shalerho_factor"] = 1.0
-        factor_dict["shalevp_factor"] = 1.0
-        factor_dict["shalevs_factor"] = 1.0
-        factor_dict["sandrho_factor"] = 1.0
-        factor_dict["sandvp_factor"] = 1.0
-        factor_dict["sandvs_factor"] = 1.0
-        # Amplitude scaling factors for n, m ,f volumes
-        factor_dict["nearfactor"] = 1.0
-        factor_dict["midfactor"] = 1.0
-        factor_dict["farfactor"] = 1.0
-        # Build model using the selected rpm factors
-        build_model(
-            args.config_file, args.run_id, args.test_mode, rpm_factors=factor_dict
-        )
+    # Create RPM configuration with randomized parameters
+    rpm_config = RPMConfig.create_random()
+    # Build model using the selected rpm factors
+    build_model(
+        args.config_file,
+        args.run_id,
+        args.test_mode,
+        rpm_factors=rpm_config.to_dict(),
+    )

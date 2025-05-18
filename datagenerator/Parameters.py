@@ -16,6 +16,7 @@ from pydantic.dataclasses import dataclass
 from functools import lru_cache
 import subprocess
 from ..logging_config import setup_global_logging, get_logger
+from datagenerator.RPMConfig import RPMConfig
 
 dir_name = pathlib.Path(__file__).parent
 CONFIG_PATH = (dir_name / "../config/config_ht.json").resolve()
@@ -200,6 +201,7 @@ class Parameters:
 
         # Get logger for this module
         self.logger = get_logger(__name__)
+        self.setup_model()
 
     @lru_cache()
     def _load_config(self) -> ModelConfig:
@@ -505,18 +507,15 @@ class Parameters:
     ) -> None:
         """Set up rock physics model scaling factors with validation."""
         if rpm_factors and not self.test_mode:
-            self.rpm_scaling_factors = RPMScalingFactors(**rpm_factors).dict()
+            self.rpm_scaling_factors = RPMConfig.from_dict(rpm_factors).to_dict()
         else:
-            # Use default RPM factors
-            self.rpm_scaling_factors = RPMScalingFactors(
-                layershiftsamples=int(np.random.triangular(35, 75, 125)),
-                RPshiftsamples=int(np.random.triangular(5, 11, 20)),
-            ).dict()
+            # Use default RPM factors with randomization
+            self.rpm_scaling_factors = RPMConfig.create_random().to_dict()
 
         # Write factors to logfile
         for k, v in self.rpm_scaling_factors.items():
             self.write_to_logfile(
-                msg=f"{k}: {v}", mainkey="model_parameters", subkey=k, val=v
+                msg=f"{k}: {v}", mainkey="model_parameters", subkey=k, val=str(v)
             )
 
     def _set_model_parameters(self, dname: str) -> None:
