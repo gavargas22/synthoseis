@@ -837,7 +837,8 @@ class RandomHorizonStack(Horizons):
     def create_depth_maps(self):
         """Building layers in reverse order - starting at bottom and depositing new layers on top.
 
-        Each layer has random residual dip and pseudo-random residual thickness
+        Each layer has random residual dip and pseudo-random residual thickness.
+        Layers are written directly to zarr storage to minimize memory usage.
         """
         self.logger.debug("Starting creation of depth maps")
         self._generate_lookup_tables()
@@ -858,6 +859,13 @@ class RandomHorizonStack(Horizons):
             self.cfg.seabed_min_depth / float(self.cfg.digi)
         ) * self.cfg.infill_factor
 
+        # Initialize zarr array with a single layer - we'll resize as needed
+        self.depth_maps = self.cfg.zarr_init(
+            "depth_maps", shape=(*previous_depth_map.shape, 1)
+        )
+        self.depth_maps[:, :, 0] = previous_depth_map
+        self.max_layers = 1
+
         # Build layers in a loop from deep to shallow until the minimum depth is reached and then break out.
         for i in range(20000):
             # Do the special case for the random_thickness_factor_map for the initial layer (at base)
@@ -871,6 +879,7 @@ class RandomHorizonStack(Horizons):
                 if self.cfg.verbose:
                     self.logger.info("Building Layer %d", i)
                 random_thickness_factor_map = self._random_layer_thickness()
+
             # Create the layer's thickness map using the random_thickness_factor_map
             thickness_map = self._create_thickness_map(random_thickness_factor_map, i)
             current_depth_map = previous_depth_map - thickness_map
@@ -893,32 +902,29 @@ class RandomHorizonStack(Horizons):
             if current_depth_map.min() <= shallowest_depth_to_build:
                 break
 
-            # replace previous depth map for next iteration
+            # Resize zarr array to accommodate new layer
+            self.depth_maps.resize(
+                (*self.depth_maps.shape[:-1], self.depth_maps.shape[-1] + 1)
+            )
+            # Write new layer to zarr array
+            self.depth_maps[:, :, self.max_layers] = current_depth_map
+            self.max_layers += 1
+
+            # Update previous depth map for next iteration
             previous_depth_map = current_depth_map.copy()
-            # save depth map in (top of) 3d array. Resulting order is shallow at top
-            try:
-                depth_maps = np.dstack((current_depth_map, depth_maps))
-            except UnboundLocalError:
-                # There is no stack of horizons yet - write the base.
-                depth_maps = current_depth_map.copy()
+
             if self.cfg.verbose:
                 self.logger.debug(
-                    "Layer %d, depth_maps.shape = %s", i, depth_maps.shape
+                    "Layer %d, depth_maps.shape = %s", i, self.depth_maps.shape
                 )
-            self.max_layers = i + 1
+
+            # Clear temporary arrays to free memory
+            del thickness_map
+            del current_depth_map
 
         if self.cfg.verbose:
             self.logger.info("Finished creating horizon layers")
-        # Store maps in zarr file
-        self.depth_maps = self.cfg.zarr_init("depth_maps", shape=depth_maps.shape)
-        self.depth_maps[:] = depth_maps
-
-        # self.cfg.write_to_logfile(
-        #     f"number_layers: {self.max_layers}",
-        #     mainkey="model_parameters",
-        #     subkey="number_layers",
-        #     val=self.max_layers,
-        # )
+            self.logger.info("Final depth maps shape: %s", self.depth_maps.shape)
 
 
 class Onlaps(Horizons):
@@ -928,7 +934,7 @@ class Onlaps(Horizons):
         self.thicknesses = thicknesses
         self.max_layers = max_layers
         self.onlap_horizon_list = list()
-        self.logger = setup_logger(parameters)
+        self.logger = get_logger(__name__)
         self._generate_onlap_lookup_table()
 
     def _calculate_onlap_array_dimension(self) -> int:
@@ -967,10 +973,38 @@ class Onlaps(Horizons):
     def _generate_onlap_lookup_table(self):
         """Generate a lookup table for onlap episodes in the geological model.
 
-        This method:
-        1. Generates a list of layer numbers where onlap episodes will occur
-        2. Creates a binary array marking these layers
-        3. Logs information about the onlap episodes at DEBUG level
+        An onlap is a geological feature where younger sedimentary layers overlap older ones,
+        typically occurring during marine transgression (rising sea levels). This method
+        creates a plan for where these onlap episodes will occur in the synthetic model.
+
+        Geological Context:
+        - Onlaps represent periods of rising sea level where new sediment is deposited
+          over existing layers
+        - They create important stratigraphic features that can trap hydrocarbons
+        - The distribution of onlaps affects the overall geometry of the reservoir
+
+        Technical Implementation:
+        1. Randomly selects between 1-7 locations in the model where onlaps will occur
+        2. Ensures onlaps don't occur in the first 5 layers (to avoid very shallow features)
+        3. Creates a binary array marking these locations
+        4. Logs configuration and statistics for model validation
+
+        The method uses a triangular distribution to determine the number of onlap episodes,
+        favoring 4 episodes (mode) but allowing for natural variation between 1-7 episodes.
+        This creates realistic geological models while maintaining computational efficiency.
+
+        Returns
+        -------
+        None
+            The method modifies the instance variables:
+            - self.onlap_layer_list: Array of layer numbers where onlaps occur
+            - self.onlaps: Binary array marking onlap locations
+            - Logs configuration and statistics at DEBUG level
+
+        Notes
+        -----
+        The onlap ratio (from configuration) determines what portion of the model
+        can contain onlaps, ensuring geologically plausible distributions.
         """
         # Generate list of layers where onlaps will occur
         onlap_layer_list = np.sort(

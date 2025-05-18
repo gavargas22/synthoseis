@@ -1101,14 +1101,12 @@ class Parameters:
         zarr.Array
             The created Zarr array
         """
-        return self.zarr_group.create_array(
+        zarr_store = self.zarr_group.create_array(
             name=dset_name,
             shape=shape,
-            dtype=dtype,
-            compressor=numcodecs.Blosc(
-                **self.compressor
-            ),  # Create new Blosc instance from config
+            dtype=dtype,  # Create new Blosc instance from config
         )
+        return zarr_store
 
     def zarr_node_list(self):
         """Get list of arrays in the ModelData group"""
