@@ -7,26 +7,85 @@ from scipy.ndimage import maximum_filter
 
 class Geomodel:
     """
-    Geomodel
-    --------------------------
-    The class of the Geomodel object.
+    Geomodel - A 3D Geological Model Generator
+    -----------------------------------------
 
-    This class contains all the items that make up the Geologic model.
+    This class creates and manages a 3D geological model that simulates subsurface structures
+    and properties. It's designed to generate realistic geological models that can be used
+    for reservoir simulation, seismic interpretation, and geological studies.
+
+    Geological Context:
+    ------------------
+    The model simulates a sedimentary basin with the following key geological elements:
+    - Stratigraphic layers (represented by depth maps)
+    - Onlap surfaces (unconformities where younger sediments overlap older ones)
+    - Facies distributions (different rock types and their properties)
+    - Optional channel systems (fluvial depositional environments)
+
+    The model preserves important geological relationships:
+    - Relative geologic age (younger rocks above older ones)
+    - Depositional sequences (through depth maps)
+    - Erosional surfaces (through onlap surfaces)
+    - Facies associations (through property cubes)
+
+    Technical Implementation:
+    ------------------------
+    The model is built in several key steps:
+    1. Initialization: Sets up the basic 3D grid and property cubes
+    2. Depth Maps: Uses input depth maps to define stratigraphic surfaces
+    3. Geologic Age: Creates a relative age model from the depth maps
+    4. Onlap Surfaces: Identifies and marks unconformity surfaces
+    5. Facies: Incorporates rock type distributions
+    6. Optional Channels: Can simulate fluvial channel systems with:
+       - Channel fills
+       - Levees
+       - Crevasse splays
+       - Floodplain deposits
+
+    Key Components:
+    --------------
+    - geologic_age: 3D cube showing relative geologic time
+    - onlap_segments: Marks unconformity surfaces
+    - faulted_lithology: Rock type distribution
+    - geomodel_ng: Net-to-gross ratio (reservoir quality)
+    - faulted_depth: Depth structure
+    - channel_system: Optional fluvial depositional elements
 
     Parameters
     ----------
     parameters : datagenerator.Parameters
-        Parameter object storing all model parameters.
+        Configuration object containing model parameters like grid size,
+        infill factor, and simulation settings.
     depth_maps : np.ndarray
-        A numpy array containing the depth maps.
+        3D array of depth values defining stratigraphic surfaces.
+        Shape: (nx, ny, n_horizons)
     onlap_horizon_list : list
-        A list of the onlap horizons.
+        List of horizon indices where onlap surfaces occur.
+        These represent unconformities in the geological record.
     facies : np.ndarray
-        The generated facies.
+        3D array containing facies codes for different rock types.
+        Shape: (nx, ny, nz)
 
     Returns
     -------
     None
+
+    Notes
+    -----
+    - The model uses an infill factor to increase vertical resolution
+    - Anti-aliasing filters are applied to prevent numerical artifacts
+    - Channel systems are optional and can be turned on/off
+    - The model can be faulted in a separate step (not shown in this class)
+    - All property cubes are stored in HDF5 format for efficient memory usage
+
+    Example
+    -------
+    >>> params = Parameters()
+    >>> depth_maps = np.load('depth_maps.npy')
+    >>> onlaps = [5, 10, 15]  # Onlap surfaces at horizons 5, 10, and 15
+    >>> facies = np.load('facies.npy')
+    >>> model = Geomodel(params, depth_maps, onlaps, facies)
+    >>> model.build_unfaulted_geomodels()
     """
 
     def __init__(
@@ -62,17 +121,29 @@ class Geomodel:
             self.cfg.cube_shape[1],
             self.cfg.cube_shape[2] + self.cfg.pad_samples,
         )
-        self.geologic_age = self.cfg.hdf_init("geologic_age_prefault", shape=cube_shape)
-        self.onlap_segments = self.cfg.hdf_init(
-            "onlap_segments_prefault", shape=cube_shape
+        # Create a geologic age zarr
+        self.geologic_age_store = self.cfg.zarr_init(
+            dset_name="geologic_age_prefault", shape=cube_shape
         )
-        self.faulted_lithology = self.cfg.hdf_init(
-            "lithology_prefault", shape=cube_shape
+        # Create an onlap segments zarr to store data into
+        self.onlap_segments_store = self.cfg.zarr_init(
+            dset_name="onlap_segments_prefault", shape=cube_shape
         )
-        self.geomodel_ng = self.cfg.hdf_init("net_to_gross_prefault", shape=cube_shape)
-        self.faulted_depth = self.cfg.hdf_init("depth_prefault", shape=cube_shape)
-        self.faulted_depth_randomised = self.cfg.hdf_init(
-            "depth_randomised_prefault", shape=cube_shape
+        # Create a faulted lithology zarr storage
+        self.faulted_lithology = self.cfg.zarr_init(
+            dset_name="lithology_prefault", shape=cube_shape
+        )
+        # Create a net 2 gross prefaulted storage
+        self.geomodel_ng = self.cfg.zarr_init(
+            dset_name="net_to_gross_prefault", shape=cube_shape
+        )
+        # Create a faulted depth storage
+        self.faulted_depth = self.cfg.zarr_init(
+            dset_name="depth_prefault", shape=cube_shape
+        )
+        # Create a faulted depth randomised store
+        self.faulted_depth_randomised = self.cfg.zarr_init(
+            dset_name="depth_randomised_prefault", shape=cube_shape
         )
 
         # Channel volumes
@@ -83,6 +154,8 @@ class Geomodel:
             self.levee = None
             self.crevasse = None
             self.channel_segments = None
+
+        self.build_unfaulted_geomodels()
 
     def build_unfaulted_geomodels(self):
         """
@@ -109,10 +182,10 @@ class Geomodel:
         -------
         None
         """
-        self.geologic_age[:] = self.create_geologic_age_3d_from_infilled_horizons(
+        self.geologic_age_store[:] = self.create_geologic_age_3d_from_infilled_horizons(
             self.depth_maps
         )
-        self.onlap_segments[:] = self.insert_onlap_surfaces()
+        self.onlap_segments_store[:] = self.insert_onlap_surfaces()
         # if self.cfg.include_channels:
         #     floodplain_shale, channel_fill, shale_channel_drape, levee, crevasse = self.build_channel_cubes()
         #     self.floodplain_shale = self.vertical_anti_alias_filter_simple(floodplain_shale)
@@ -326,7 +399,7 @@ class Geomodel:
             cmap="jet",
         )
         plt.colorbar()
-        plt.ylim((self.geologic_age.shape[-1], 0))
+        plt.ylim((self.geologic_age_store.shape[-1], 0))
         for i in range(0, self.depth_maps.shape[-1], 5):
             plt.plot(
                 range(self.cfg.cube_shape[0]),
@@ -350,7 +423,7 @@ class Geomodel:
         title = "Example Trav through 3D model\nhistogram of raw layer values\nShould NOT see channel facies"
         pname = "QC_plot__histogram_raw_Layers_2.png"
         plot_voxels_not_in_regular_layers(
-            self.geologic_age, 0.0, title, pname, self.cfg
+            self.geologic_age_store, 0.0, title, pname, self.cfg
         )
 
     def insert_onlap_surfaces(self):

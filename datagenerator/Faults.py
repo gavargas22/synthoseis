@@ -68,7 +68,7 @@ class Faults(Horizons, Geomodel):
             "faulted_depth_maps_gaps", shape=unfaulted_depth_maps.shape
         )
         # Volumes
-        cube_shape = geomodels.geologic_age[:].shape
+        cube_shape = geomodels.geologic_age_store[:].shape
         self.vols = geomodels
         self.faulted_age_volume = self.cfg.hdf_init(
             "faulted_age_volume", shape=cube_shape
@@ -144,10 +144,10 @@ class Faults(Horizons, Geomodel):
 
         # Apply faulting to age model, net_to_gross cube & onlap segments
         self.faulted_age_volume[:] = self.apply_xyz_displacement(
-            self.vols.geologic_age[:]
+            self.vols.geologic_age_store[:]
         ).astype("float")
         self.faulted_onlap_segments[:] = self.apply_xyz_displacement(
-            self.vols.onlap_segments[:]
+            self.vols.onlap_segments_store[:]
         )
 
         # Improve the depth maps post faulting by
@@ -156,7 +156,7 @@ class Faults(Horizons, Geomodel):
             self.faulted_depth_maps[:],
             self.faulted_depth_maps_gaps[:],
         ) = self.improve_depth_maps_post_faulting(
-            self.vols.geologic_age[:], self.faulted_age_volume[:], onlap_clip_dict
+            self.vols.geologic_age_store[:], self.faulted_age_volume[:], onlap_clip_dict
         )
 
         if self.cfg.include_salt:
@@ -226,9 +226,9 @@ class Faults(Horizons, Geomodel):
 
             (
                 self.vols.channel_segments,
-                self.vols.geologic_age,
+                self.vols.geologic_age_store,
             ) = self.reassign_channel_segment_encoding(
-                self.vols.geologic_age,
+                self.vols.geologic_age_store,
                 self.vols.floodplain_shale,
                 self.vols.channel_fill,
                 self.vols.shale_channel_drape,
@@ -426,7 +426,7 @@ class Faults(Horizons, Geomodel):
                         input_cube[input_cube != -1.0] += values[input_cube != -1.0]
                         work_cube_lith[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
-                        ] = input_cube * 1.0
+                        ] = (input_cube * 1.0)
                         del input_cube
                         del values
 
@@ -440,18 +440,18 @@ class Faults(Horizons, Geomodel):
                         input_cube[input_cube != -1.0] += values[input_cube != -1.0]
                         work_cube_sealed[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
-                        ] = input_cube * 1.0
+                        ] = (input_cube * 1.0)
                         del input_cube
                         del values
 
                         # Depth cube
                         work_cube_depth[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
-                        ] += sublayer_tvdml_map * sublayer_fraction
+                        ] += (sublayer_tvdml_map * sublayer_fraction)
                         # Net to Gross cube
                         work_cube_net_to_gross[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
-                        ] += sublayer_ng_map * sublayer_fraction
+                        ] += (sublayer_ng_map * sublayer_fraction)
 
                         # Randomised Depth Cube
                         # randomised_depth[sublayer_ii, sublayer_jj, sublayer_depth_map_int] += \
@@ -463,7 +463,7 @@ class Faults(Horizons, Geomodel):
                             + np.clip(
                                 previous_depth_map[thickness_map > k],
                                 0,
-                                self.vols.geologic_age.shape[2] - 1,
+                                self.vols.geologic_age_store.shape[2] - 1,
                             )
                         ).astype("int") - k
                         sublayer_tvdml_map = tvdml_map[thickness_map > k]
@@ -474,7 +474,7 @@ class Faults(Horizons, Geomodel):
                         ] = facies[i]
                         work_cube_sealed[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
-                        ] = 1 - facies[i - 1]
+                        ] = (1 - facies[i - 1])
 
                         work_cube_depth[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
@@ -830,13 +830,13 @@ class Faults(Horizons, Geomodel):
         print("   ... self.cfg.verbose = " + str(self.cfg.verbose))
         cube_shape = np.array(self.cfg.cube_shape)
         cube_shape[-1] += self.cfg.pad_samples
-        samples_in_cube = self.vols.geologic_age[:].size
+        samples_in_cube = self.vols.geologic_age_store[:].size
         wb = self.copy_and_divide_depth_maps_by_infill(
             self.unfaulted_depth_maps[..., 0]
         )
 
-        sum_displacements = np.zeros_like(self.vols.geologic_age[:])
-        displacements_class = np.zeros_like(self.vols.geologic_age[:])
+        sum_displacements = np.zeros_like(self.vols.geologic_age_store[:])
+        displacements_class = np.zeros_like(self.vols.geologic_age_store[:])
         hockey_sticks = []
         fault_voxel_count_list = []
         number_fault_intersections = 0
@@ -849,7 +849,7 @@ class Faults(Horizons, Geomodel):
         )
 
         # Create depth indices cube (moved from inside loop)
-        faulted_depths = np.zeros_like(self.vols.geologic_age[:])
+        faulted_depths = np.zeros_like(self.vols.geologic_age_store[:])
         for k in range(faulted_depths.shape[-1]):
             faulted_depths[:, :, k] = k
         unfaulted_depths = faulted_depths * 1.0
@@ -884,7 +884,7 @@ class Faults(Horizons, Geomodel):
             print(
                 f"   ...z for bottom of ellipsoid at depth (samples) = {np.around(z_base, 0)}"
             )
-            print(f"   ...shape of output_cube = {self.vols.geologic_age.shape}")
+            print(f"   ...shape of output_cube = {self.vols.geologic_age_store.shape}")
             print(
                 f"   ...infill_factor, pad_samples = {self.cfg.infill_factor}, {self.cfg.pad_samples}"
             )
@@ -1060,7 +1060,9 @@ class Faults(Horizons, Geomodel):
 
             print("   ... interpolation = " + str(interpolation))
 
-            if interpolation:  # i.e. if the fault should be considered, apply the displacements and append fault plane
+            if (
+                interpolation
+            ):  # i.e. if the fault should be considered, apply the displacements and append fault plane
                 faulted_depths2 = np.zeros(
                     (ellipsoid.shape[0], ellipsoid.shape[1], ellipsoid.shape[2], 2),
                     "float",
@@ -1661,7 +1663,7 @@ class Faults(Horizons, Geomodel):
 
         _dilated_fault_planes = grey_dilation(self.fault_planes, size=(3, 3, 1))
 
-        _onlap_segments = self.vols.onlap_segments[:]
+        _onlap_segments = self.vols.onlap_segments_store[:]
         for ihor in range(depth_maps_gaps.shape[-1] - 1, 2, -1):
             # filter upper horizon being used for thickness if shallower events onlap it, except at faults
             improved_zmap_thickness = merged[:, :, ihor] - merged[:, :, ihor - 1]
@@ -1834,9 +1836,10 @@ class Faults(Horizons, Geomodel):
         if self.cfg.verbose:
             print(f"   ...shear_zone_width (samples) = {random_shear_zone_width}")
             print(f"   ...gouge_pctile (percent*100) = {random_gouge_pctile}")
-            print(f"   .... output_cube.shape = {self.vols.geologic_age.shape}")
+            print(f"   .... output_cube.shape = {self.vols.geologic_age_store.shape}")
             _p = (
-                np.arange(self.vols.geologic_age.shape[2]) * self.cfg.infill_factor
+                np.arange(self.vols.geologic_age_store.shape[2])
+                * self.cfg.infill_factor
             ).shape
             print(
                 f"   .... (np.arange(output_cube.shape[2])*infill_factor).shape = {_p}"
@@ -1854,7 +1857,7 @@ class Faults(Horizons, Geomodel):
             print("    ... Computing fault depth at max displacement")
             print("    ... depth at max displacement  = {}".format(z_idx[2]))
             down = float(ellipsoid[ellipsoid < 1.0].size) / np.prod(
-                self.vols.geologic_age[:].shape
+                self.vols.geologic_age_store[:].shape
             )
             """
             down = np.int16(len(np.where(ellipsoid < 1.)[0]) / 1.0 * (self.vols.geologic_age.shape[2] *
@@ -1877,7 +1880,7 @@ class Faults(Horizons, Geomodel):
         else:
             print("  ... Ellipsoid larger than cube no fault inserted")
             stretch_times = np.ones_like(ellipsoid)
-            stretch_times_classification = np.ones_like(self.vols.geologic_age[:])
+            stretch_times_classification = np.ones_like(self.vols.geologic_age_store[:])
 
         max_fault_throw = self.max_fault_throw[:]
         max_fault_throw[ellipsoid < 1.0] += int(throw)
@@ -1981,9 +1984,9 @@ class Faults(Horizons, Geomodel):
                 ((x1 - x_0) ** 2) / a1 + ((y1 - y_0) ** 2) / b1 + ((z1 - z_0) ** 2) / c1
             )
 
-        x = np.arange(self.vols.geologic_age.shape[0]).astype("float")
-        y = np.arange(self.vols.geologic_age.shape[1]).astype("float")
-        z = np.arange(self.vols.geologic_age.shape[2]).astype("float")
+        x = np.arange(self.vols.geologic_age_store.shape[0]).astype("float")
+        y = np.arange(self.vols.geologic_age_store.shape[1]).astype("float")
+        z = np.arange(self.vols.geologic_age_store.shape[2]).astype("float")
 
         xx, yy, zz = np.meshgrid(x, y, z, indexing="ij", sparse=False)
 
@@ -1994,15 +1997,15 @@ class Faults(Horizons, Geomodel):
         )
 
         xyz_rotated = self.apply_3d_rotation(
-            xyz, self.vols.geologic_age.shape, x0, y0, fraction
+            xyz, self.vols.geologic_age_store.shape, x0, y0, fraction
         )
 
-        xx_rotated = xyz_rotated[:, 0].reshape(self.vols.geologic_age.shape)
-        yy_rotated = xyz_rotated[:, 1].reshape(self.vols.geologic_age.shape)
-        zz_rotated = xyz_rotated[:, 2].reshape(self.vols.geologic_age.shape)
+        xx_rotated = xyz_rotated[:, 0].reshape(self.vols.geologic_age_store.shape)
+        yy_rotated = xyz_rotated[:, 1].reshape(self.vols.geologic_age_store.shape)
+        zz_rotated = xyz_rotated[:, 2].reshape(self.vols.geologic_age_store.shape)
 
         ellipsoid = f(xx_rotated, yy_rotated, zz_rotated, x0, y0, z0, a, b, c).reshape(
-            self.vols.geologic_age.shape
+            self.vols.geologic_age_store.shape
         )
 
         return ellipsoid
@@ -2169,7 +2172,7 @@ class Faults(Horizons, Geomodel):
         from scipy.stats import multivariate_normal
         from scipy.ndimage.interpolation import rotate
 
-        cube_shape = self.vols.geologic_age.shape
+        cube_shape = self.vols.geologic_age_store.shape
 
         def u_gaussian(d_max, sig, shape, points):
             from scipy.signal.windows import general_gaussian
@@ -2385,7 +2388,7 @@ class Faults(Horizons, Geomodel):
                     / np.amax(fault_plane_classification_drag.flatten())
                 )
 
-        xy_dis = xy_dis * np.ones_like(self.vols.geologic_age)
+        xy_dis = xy_dis * np.ones_like(self.vols.geologic_age_store)
         xy_dis_classification = xy_dis.copy()
         interpolation = True
 
