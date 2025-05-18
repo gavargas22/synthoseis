@@ -1757,31 +1757,60 @@ class MarkovChainFacies:
 
 
 def build_unfaulted_depth_maps(parameters: Parameters):
-    """
-    Build Unfaulted Depth Maps
-    --------------------------
-    Generates unfaulted depth maps.
+    """Build a synthetic geological model by generating unfaulted depth maps representing sedimentary layers.
 
-    1. Build stack of horizons.
-    2. Generate a random stack of horizons.
-    3. Optionally insert basin floor fans
-    4. Insert onlap episodes
+    This function creates a synthetic geological model by building a stack of sedimentary layers
+    (horizons) from deep to shallow, simulating natural geological processes. The model includes
+    realistic features like onlap episodes (where younger layers overlap older ones) and optional
+    basin floor fans (sediment deposits at the base of slopes).
+
+    Geological Context:
+    - The model represents a sedimentary basin where layers are deposited over time
+    - Onlap episodes simulate rising sea levels where new sediment is deposited over existing layers
+    - Basin floor fans represent sediment deposits that form at the base of slopes
+    - The seafloor represents the top surface of the model
+    - All features are created before any faulting occurs (hence "unfaulted")
+
+    Technical Implementation:
+    1. Creates a RandomHorizonStack object that generates the base layer structure
+    2. Inserts onlap episodes using the Onlaps class to simulate rising sea levels
+    3. Adds a seafloor surface to cap the model
+    4. Optionally inserts basin floor fans if enabled in parameters
+    5. Returns the complete depth maps along with lists of special features
 
     Parameters
     ----------
-    parameters : str
-        The key desired to be accessed
+    parameters : Parameters
+        A Parameters object containing all configuration settings for the model, including:
+        - Model dimensions and resolution
+        - Geological parameters (layer thicknesses, onlap settings, etc.)
+        - Feature flags (e.g., basin_floor_fans)
+        - Other model-specific settings
 
     Returns
     -------
-    depth_maps : np.array
-        The generated depth maps
+    depth_maps : np.ndarray
+        A 3D array representing the depth maps of all layers in the model.
+        Shape is (x, y, z) where x,y are spatial dimensions and z represents layers.
+        Values represent depths in the model's units.
     onlap_horizon_list : list
-        Onlapping Horizon list
-    fan_list : np.array | None
-        List of generated fans
-    fan_thicknesses : np.array | None
-        Generated fan thicknesses
+        List of layer indices where onlap episodes occur. These represent
+        geological unconformities where younger layers overlap older ones.
+    fan_list : np.ndarray | None
+        Array of layer indices where basin floor fans are inserted, or None if
+        basin floor fans are disabled. Each fan represents a sediment deposit
+        at the base of a slope.
+    fan_thicknesses : np.ndarray | None
+        Array of thickness values for each basin floor fan, or None if
+        basin floor fans are disabled. Thicknesses are in the model's units.
+
+    Notes
+    -----
+    - The model is built from deep to shallow, simulating natural deposition
+    - All features are created before any faulting occurs
+    - The seafloor is added as the final step to cap the model
+    - Basin floor fans are optional and only inserted if enabled in parameters
+    - Quality control plots are generated for basin floor fans if they are enabled
     """
     horizons = RandomHorizonStack(parameters)
 
@@ -1803,6 +1832,7 @@ def build_unfaulted_depth_maps(parameters: Parameters):
             bff.fan_qc_plot(depth_maps, layer, thickness)
         fan_list = bff.fan_layers
         fan_thicknesses = bff.fan_thicknesses
+
     return depth_maps, onlap_horizon_list, fan_list, fan_thicknesses
 
 
