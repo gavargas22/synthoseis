@@ -10,7 +10,7 @@ from subprocess import CalledProcessError
 import numpy as np
 import zarr
 import numcodecs
-from typing import Optional, List, Tuple, Dict, Any, Union
+from typing import Optional, List, Tuple, Dict, Any, Union, Literal
 from pydantic import BaseModel, Field, validator, root_validator
 from pydantic.dataclasses import dataclass
 from functools import lru_cache
@@ -32,6 +32,100 @@ class SandLayerFraction(BaseModel):
     def max_greater_than_min(cls, v, values):
         if "min" in values and v < values["min"]:
             raise ValueError("max must be greater than min")
+        return v
+
+
+class FaultParameters(BaseModel):
+    """Configuration for fault parameters."""
+
+    mode: Literal[
+        "random", "self_branching", "stairs", "relay_ramps", "horst_graben"
+    ] = Field(default="random", description="Fault generation mode")
+    throw: Dict[str, float] = Field(
+        default_factory=lambda: {"min": 5.0, "max": 35.0},
+        description="Fault throw range in meters",
+    )
+    dip: Dict[str, float] = Field(
+        default_factory=lambda: {"min": 45.0, "max": 75.0},
+        description="Fault dip angle range in degrees",
+    )
+    strike: Dict[str, float] = Field(
+        default_factory=lambda: {"min": 0.0, "max": 360.0},
+        description="Fault strike angle range in degrees",
+    )
+    length: Dict[str, float] = Field(
+        default_factory=lambda: {"min": 100.0, "max": 500.0},
+        description="Fault length range in meters",
+    )
+    width: Dict[str, float] = Field(
+        default_factory=lambda: {"min": 50.0, "max": 200.0},
+        description="Fault width range in meters",
+    )
+    depth: Dict[str, float] = Field(
+        default_factory=lambda: {"min": 100.0, "max": 500.0},
+        description="Fault depth range in meters",
+    )
+    sigma: Dict[str, float] = Field(
+        default_factory=lambda: {"min": 0.1, "max": 0.5},
+        description="Standard deviation range for fault displacement",
+    )
+    tilt: Dict[str, float] = Field(
+        default_factory=lambda: {"min": -10.0, "max": 10.0},
+        description="Fault tilt angle range in degrees",
+    )
+    branching_probability: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Probability of fault branching (for self_branching mode)",
+    )
+    stairs_count: Dict[str, int] = Field(
+        default_factory=lambda: {"min": 3, "max": 7},
+        description="Number of stairs range (for stairs mode)",
+    )
+    relay_ramp_distance: Dict[str, float] = Field(
+        default_factory=lambda: {"min": 50.0, "max": 200.0},
+        description="Distance between relay ramps range in meters (for relay_ramps mode)",
+    )
+    horst_graben_width: Dict[str, float] = Field(
+        default_factory=lambda: {"min": 100.0, "max": 300.0},
+        description="Width of horst and graben structures range in meters (for horst_graben mode)",
+    )
+
+    @validator(
+        "throw",
+        "dip",
+        "strike",
+        "length",
+        "width",
+        "depth",
+        "sigma",
+        "tilt",
+        "stairs_count",
+        "relay_ramp_distance",
+        "horst_graben_width",
+    )
+    def validate_range(cls, v):
+        if v["min"] >= v["max"]:
+            raise ValueError("min must be less than max")
+        return v
+
+    @validator("dip")
+    def validate_dip(cls, v):
+        if v["min"] < 0 or v["max"] > 90:
+            raise ValueError("dip must be between 0 and 90 degrees")
+        return v
+
+    @validator("strike")
+    def validate_strike(cls, v):
+        if v["min"] < 0 or v["max"] > 360:
+            raise ValueError("strike must be between 0 and 360 degrees")
+        return v
+
+    @validator("tilt")
+    def validate_tilt(cls, v):
+        if v["min"] < -90 or v["max"] > 90:
+            raise ValueError("tilt must be between -90 and 90 degrees")
         return v
 
 
@@ -117,6 +211,14 @@ class ModelConfig(BaseModel):
         gt=0.0,
         lt=1.0,
         description="Ratio of cube depth to allocate for onlap episodes (default: 0.4)",
+    )
+    fault_mode: str = Field(
+        "random",
+        description="Fault generation mode",
+        pattern="^(random|self_branching|stairs|relay_ramps|horst_graben)$",
+    )
+    fault_parameters: FaultParameters = Field(
+        ..., description="Parameters for fault generation"
     )
 
     @validator("max_number_faults")
@@ -773,6 +875,8 @@ class Parameters:
         self.broadband_qc_volume = d["broadband_qc_volume"]
         self.model_qc_volumes = d["model_qc_volumes"]
         self.multiprocess_bp = d["multiprocess_bp"]
+        self.fault_mode = d["fault_mode"]
+        self.fault_parameters = FaultParameters(**d["fault_parameters"])
 
         # print em
         self.__repr__()
@@ -845,49 +949,196 @@ class Parameters:
         -------
         None
         """
-        # Fault parameters
-        self.low_fault_throw = 5.0 * self.infill_factor
-        self.high_fault_throw = 35.0 * self.infill_factor
+        # Get fault parameters from config
+        fault_params = self.fault_parameters
 
-        # mode & clustering are randomly chosen
-        self.mode = np.random.choice([0, 1, 2], 1)[0]
-        self.clustering = np.random.choice([0, 1, 2], 1)[0]
+        # Set fault mode
+        self.fault_mode = fault_params.mode
 
-        if self.mode == 0:
-            # As random as it can be
-            self.number_faults = np.random.randint(
-                self.min_number_faults, self.max_number_faults
-            )
+        # Set fault parameters based on mode
+        if self.fault_mode == "random":
             self.fmode = "random"
+            self.number_faults = np.random.randint(
+                self.min_number_faults, self.max_number_faults + 1
+            )
+            self.fault_throw = np.random.uniform(
+                fault_params.throw["min"], fault_params.throw["max"]
+            )
+            self.fault_dip = np.random.uniform(
+                fault_params.dip["min"], fault_params.dip["max"]
+            )
+            self.fault_strike = np.random.uniform(
+                fault_params.strike["min"], fault_params.strike["max"]
+            )
+            self.fault_length = np.random.uniform(
+                fault_params.length["min"], fault_params.length["max"]
+            )
+            self.fault_width = np.random.uniform(
+                fault_params.width["min"], fault_params.width["max"]
+            )
+            self.fault_depth = np.random.uniform(
+                fault_params.depth["min"], fault_params.depth["max"]
+            )
+            self.fault_sigma = np.random.uniform(
+                fault_params.sigma["min"], fault_params.sigma["max"]
+            )
+            self.fault_tilt = np.random.uniform(
+                fault_params.tilt["min"], fault_params.tilt["max"]
+            )
 
-        elif self.mode == 1:
-            if self.clustering == 0:
-                self.fmode = "self_branching"
-                # Self Branching. avoid large fault
-                self.number_faults = np.random.randint(3, 9)
-                self.low_fault_throw = 5.0 * self.infill_factor
-                self.high_fault_throw = 15.0 * self.infill_factor
-            if self.clustering == 1:
-                # Stair case
-                self.fmode = "stair_case"
-                self.number_faults = np.random.randint(5, self.max_number_faults)
-            if self.clustering == 2:
-                # Relay ramps
-                self.fmode = "relay_ramp"
-                self.number_faults = np.random.randint(3, 9)
-                self.low_fault_throw = 5.0 * self.infill_factor
-                self.high_fault_throw = 15.0 * self.infill_factor
-        elif self.mode == 2:
-            # Horst and graben
-            self.fmode = "horst_and_graben"
-            self.number_faults = np.random.randint(3, 7)
+        elif self.fault_mode == "self_branching":
+            self.fmode = "self_branching"
+            self.number_faults = np.random.randint(3, 9)
+            self.fault_throw = np.random.uniform(
+                fault_params.throw["min"], fault_params.throw["max"]
+            )
+            self.fault_dip = np.random.uniform(
+                fault_params.dip["min"], fault_params.dip["max"]
+            )
+            self.fault_strike = np.random.uniform(
+                fault_params.strike["min"], fault_params.strike["max"]
+            )
+            self.fault_length = np.random.uniform(
+                fault_params.length["min"], fault_params.length["max"]
+            )
+            self.fault_width = np.random.uniform(
+                fault_params.width["min"], fault_params.width["max"]
+            )
+            self.fault_depth = np.random.uniform(
+                fault_params.depth["min"], fault_params.depth["max"]
+            )
+            self.fault_sigma = np.random.uniform(
+                fault_params.sigma["min"], fault_params.sigma["max"]
+            )
+            self.fault_tilt = np.random.uniform(
+                fault_params.tilt["min"], fault_params.tilt["max"]
+            )
+            self.fault_branching_probability = fault_params.branching_probability
 
-        self.fault_param = [
-            str(self.mode) + str(self.clustering),
-            self.number_faults,
-            self.low_fault_throw,
-            self.high_fault_throw,
-        ]
+        elif self.fault_mode == "stairs":
+            self.fmode = "stairs"
+            self.number_faults = np.random.randint(3, 9)
+            self.fault_throw = np.random.uniform(
+                fault_params.throw["min"], fault_params.throw["max"]
+            )
+            self.fault_dip = np.random.uniform(
+                fault_params.dip["min"], fault_params.dip["max"]
+            )
+            self.fault_strike = np.random.uniform(
+                fault_params.strike["min"], fault_params.strike["max"]
+            )
+            self.fault_length = np.random.uniform(
+                fault_params.length["min"], fault_params.length["max"]
+            )
+            self.fault_width = np.random.uniform(
+                fault_params.width["min"], fault_params.width["max"]
+            )
+            self.fault_depth = np.random.uniform(
+                fault_params.depth["min"], fault_params.depth["max"]
+            )
+            self.fault_sigma = np.random.uniform(
+                fault_params.sigma["min"], fault_params.sigma["max"]
+            )
+            self.fault_tilt = np.random.uniform(
+                fault_params.tilt["min"], fault_params.tilt["max"]
+            )
+            self.fault_stairs_count = np.random.randint(
+                fault_params.stairs_count["min"], fault_params.stairs_count["max"] + 1
+            )
+
+        elif self.fault_mode == "relay_ramps":
+            self.fmode = "relay_ramp"
+            self.number_faults = np.random.randint(3, 9)
+            self.fault_throw = np.random.uniform(
+                fault_params.throw["min"], fault_params.throw["max"]
+            )
+            self.fault_dip = np.random.uniform(
+                fault_params.dip["min"], fault_params.dip["max"]
+            )
+            self.fault_strike = np.random.uniform(
+                fault_params.strike["min"], fault_params.strike["max"]
+            )
+            self.fault_length = np.random.uniform(
+                fault_params.length["min"], fault_params.length["max"]
+            )
+            self.fault_width = np.random.uniform(
+                fault_params.width["min"], fault_params.width["max"]
+            )
+            self.fault_depth = np.random.uniform(
+                fault_params.depth["min"], fault_params.depth["max"]
+            )
+            self.fault_sigma = np.random.uniform(
+                fault_params.sigma["min"], fault_params.sigma["max"]
+            )
+            self.fault_tilt = np.random.uniform(
+                fault_params.tilt["min"], fault_params.tilt["max"]
+            )
+            self.fault_relay_ramp_distance = np.random.uniform(
+                fault_params.relay_ramp_distance["min"],
+                fault_params.relay_ramp_distance["max"],
+            )
+
+        elif self.fault_mode == "horst_graben":
+            self.fmode = "horst_graben"
+            self.number_faults = np.random.randint(3, 9)
+            self.fault_throw = np.random.uniform(
+                fault_params.throw["min"], fault_params.throw["max"]
+            )
+            self.fault_dip = np.random.uniform(
+                fault_params.dip["min"], fault_params.dip["max"]
+            )
+            self.fault_strike = np.random.uniform(
+                fault_params.strike["min"], fault_params.strike["max"]
+            )
+            self.fault_length = np.random.uniform(
+                fault_params.length["min"], fault_params.length["max"]
+            )
+            self.fault_width = np.random.uniform(
+                fault_params.width["min"], fault_params.width["max"]
+            )
+            self.fault_depth = np.random.uniform(
+                fault_params.depth["min"], fault_params.depth["max"]
+            )
+            self.fault_sigma = np.random.uniform(
+                fault_params.sigma["min"], fault_params.sigma["max"]
+            )
+            self.fault_tilt = np.random.uniform(
+                fault_params.tilt["min"], fault_params.tilt["max"]
+            )
+            self.fault_horst_graben_width = np.random.uniform(
+                fault_params.horst_graben_width["min"],
+                fault_params.horst_graben_width["max"],
+            )
+
+        # Store fault parameters in sqldict for logging
+        self.sqldict["fault_parameters"] = {
+            "mode": self.fault_mode,
+            "throw": self.fault_throw,
+            "dip": self.fault_dip,
+            "strike": self.fault_strike,
+            "length": self.fault_length,
+            "width": self.fault_width,
+            "depth": self.fault_depth,
+            "sigma": self.fault_sigma,
+            "tilt": self.fault_tilt,
+            "number_faults": self.number_faults,
+        }
+
+        # Add mode-specific parameters
+        if self.fault_mode == "self_branching":
+            self.sqldict["fault_parameters"][
+                "branching_probability"
+            ] = self.fault_branching_probability
+        elif self.fault_mode == "stairs":
+            self.sqldict["fault_parameters"]["stairs_count"] = self.fault_stairs_count
+        elif self.fault_mode == "relay_ramps":
+            self.sqldict["fault_parameters"][
+                "relay_ramp_distance"
+            ] = self.fault_relay_ramp_distance
+        elif self.fault_mode == "horst_graben":
+            self.sqldict["fault_parameters"][
+                "horst_graben_width"
+            ] = self.fault_horst_graben_width
 
     def _get_commit_hash(self) -> str:
         """

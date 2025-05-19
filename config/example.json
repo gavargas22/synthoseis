@@ -70,5 +70,53 @@
   "write_to_hdf": false,
   "broadband_qc_volume": false,
   "model_qc_volumes": true,
-  "multiprocess_bp": true
+  "multiprocess_bp": true,
+  "fault_mode": "random",
+  "fault_parameters": {
+    "throw": {
+      "min": 5.0,
+      "max": 35.0
+    },
+    "dip": {
+      "min": 45.0,
+      "max": 75.0
+    },
+    "strike": {
+      "min": 0.0,
+      "max": 360.0
+    },
+    "length": {
+      "min": 100.0,
+      "max": 500.0
+    },
+    "width": {
+      "min": 50.0,
+      "max": 200.0
+    },
+    "depth": {
+      "min": 100.0,
+      "max": 500.0
+    },
+    "sigma": {
+      "min": 0.1,
+      "max": 0.5
+    },
+    "tilt": {
+      "min": -10.0,
+      "max": 10.0
+    },
+    "branching_probability": 0.3,
+    "stairs_count": {
+      "min": 3,
+      "max": 7
+    },
+    "relay_ramp_distance": {
+      "min": 50.0,
+      "max": 200.0
+    },
+    "horst_graben_width": {
+      "min": 100.0,
+      "max": 300.0
+    }
+  }
 }

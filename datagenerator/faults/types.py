@@ -1,4 +1,4 @@
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeAlias, Tuple, runtime_checkable
 import numpy as np
 
 
@@ -7,14 +7,14 @@ class GeomodelProtocol(Protocol):
     """Protocol defining the required interface for Geomodel."""
 
     geologic_age_store: np.ndarray
-    property_store: np.ndarray
+    property_store: dict[str, np.ndarray]
     shape: tuple[int, int, int]
 
-    def get_property(self, name: str) -> np.ndarray:
+    def get_property(self, property_name: str) -> np.ndarray:
         """Get a property from the geomodel."""
         ...
 
-    def set_property(self, name: str, value: np.ndarray) -> None:
+    def set_property(self, property_name: str, property_data: np.ndarray) -> None:
         """Set a property in the geomodel."""
         ...
 
@@ -44,7 +44,9 @@ class FaultQCError(FaultError):
 
 
 # Type aliases for common numpy array shapes
-DepthMap = np.ndarray  # Shape: (nx, ny, nz)
-FaultTrace = np.ndarray  # Shape: (nx, ny)
-DisplacementVector = tuple[np.ndarray, np.ndarray, np.ndarray]  # (dx, dy, dz)
-PropertyModel = np.ndarray  # Shape: (nx, ny, nz)
+DepthMap: TypeAlias = np.ndarray  # Shape: (ny, nx)
+FaultTrace: TypeAlias = np.ndarray  # Shape: (n_points, 2)
+DisplacementVector: TypeAlias = Tuple[
+    np.ndarray, np.ndarray, np.ndarray
+]  # Shape: ((ny, nx), (ny, nx), (ny, nx))
+PropertyModel: TypeAlias = np.ndarray  # Shape: (ny, nx)
