@@ -6,7 +6,6 @@ import numpy as np
 from tqdm import trange
 from datagenerator.histogram_equalizer import normalize_seismic
 from datagenerator.Geomodels import Geomodel
-from datagenerator.util import write_data_to_hdf
 from datagenerator.wavelets import generate_wavelet, plot_wavelets
 from rockphysics.RockPropertyModels import select_rpm, RockProperties, EndMemberMixing
 
@@ -351,17 +350,17 @@ class SeismicVolume(Geomodel):
         # Move the angle from last dimension to first
         self.rfc_raw[:] = np.moveaxis(zoep, -1, 0)
 
-        if self.cfg.hdf_store:
-            for n, d in zip(
-                [
-                    "qc_volume_rfc_raw_{}_degrees".format(
-                        str(self.angles[x]).replace(".", "_")
-                    )
-                    for x in range(self.rfc_raw.shape[0])
-                ],
-                [self.rfc_raw[x, ...] for x in range(self.rfc_raw.shape[0])],
-            ):
-                write_data_to_hdf(n, d, self.cfg.hdf_master)
+        for n, d in zip(
+            [
+                "qc_volume_rfc_raw_{}_degrees".format(
+                    str(self.angles[x]).replace(".", "_")
+                )
+                for x in range(self.rfc_raw.shape[0])
+            ],
+            [self.rfc_raw[x, ...] for x in range(self.rfc_raw.shape[0])],
+        ):
+            self.cfg.storage.create_dataset(n, d)
+
         if self.cfg.model_qc_volumes:
             # Write raw RFC values to disk
             _ = [

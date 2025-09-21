@@ -305,13 +305,10 @@ class Horizons:
         # Write to disk
         self.write_maps_to_disk(onlaps * self.cfg.digi, "depth_maps_onlaps")
 
-        if self.cfg.hdf_store:
-            # Write onlap maps to hdf
-            from datagenerator.util import write_data_to_hdf
-
-            write_data_to_hdf(
-                "depth_maps_onlaps", onlaps * self.cfg.digi, self.cfg.hdf_master
-            )
+        # Write onlap maps to storage
+        self.cfg.storage.create_dataset(
+            "depth_maps_onlaps", onlaps * self.cfg.digi
+        )
 
     def write_fan_horizons(self, fan_horizon_list, depth_maps):
         """Write fan layers to a separate file."""

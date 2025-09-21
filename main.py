@@ -68,7 +68,8 @@ def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None)
     p.write_sqldict_to_db()
 
     # Cleanup
-    p.h5file.close()
+    if hasattr(p, 'storage'):
+        p.storage.close()
     os.system("rm -rf " + p.temp_folder)
     try:
         os.system(f"chmod -R 777 {p.work_subfolder}")

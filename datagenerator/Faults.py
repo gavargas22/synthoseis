@@ -5,7 +5,7 @@ from scipy.ndimage import maximum_filter, binary_dilation
 from datagenerator.Horizons import Horizons
 from datagenerator.Geomodels import Geomodel
 from datagenerator.Parameters import Parameters
-from datagenerator.util import write_data_to_hdf, plot_3D_faults_plot
+from datagenerator.util import plot_3D_faults_plot
 from skimage import measure
 
 
@@ -112,7 +112,7 @@ class Faults(Horizons, Geomodel):
 
         The method does the following:
 
-        * Generate faults and sum the displacements
+        * Generate faults and apply the displacements
         * Apply faulting to horizons
         * Write faulted depth maps to disk
         * Write faulted depth maps with gaps at faults to disk
@@ -186,16 +186,15 @@ class Faults(Horizons, Geomodel):
                 self.fan_horizon_list, self.faulted_depth_maps[:] * 4.0
             )
 
-        if self.cfg.hdf_store:
-            # Write faulted maps to hdf
-            for n, d in zip(
-                ["depth_maps", "depth_maps_gaps"],
-                [
-                    self.faulted_depth_maps[:] * self.cfg.digi,
-                    self.faulted_depth_maps_gaps[:] * self.cfg.digi,
-                ],
-            ):
-                write_data_to_hdf(n, d, self.cfg.hdf_master)
+        # Write faulted maps to storage
+        for n, d in zip(
+            ["depth_maps", "depth_maps_gaps"],
+            [
+                self.faulted_depth_maps[:] * self.cfg.digi,
+                self.faulted_depth_maps_gaps[:] * self.cfg.digi,
+            ],
+        ):
+            self.cfg.storage.create_dataset(n, d)
 
         # Create faulted binary segmentation volumes
         _fault_planes = self.fault_planes[:]
@@ -257,27 +256,26 @@ class Faults(Horizons, Geomodel):
             self.vols.write_cube_to_disk(
                 self.fault_plane_azimuth[:], "fault_segments_azimuth"
             )
-        if self.cfg.hdf_store:
-            # Write faulted age, onlap and fault segment cubes to hdf
-            for n, d in zip(
-                [
-                    "geologic_age_faulted",
-                    "onlap_segments",
-                    "fault_segments",
-                    "fault_intersection_segments",
-                    "fault_segments_throw",
-                    "fault_segments_azimuth",
-                ],
-                [
-                    self.faulted_age_volume,
-                    self.faulted_onlap_segments,
-                    self.fault_planes,
-                    self.fault_intersections,
-                    self.fault_plane_throw,
-                    self.fault_plane_azimuth,
-                ],
-            ):
-                write_data_to_hdf(n, d, self.cfg.hdf_master)
+        # Write faulted age, onlap and fault segment cubes to storage
+        for n, d in zip(
+            [
+                "geologic_age_faulted",
+                "onlap_segments",
+                "fault_segments",
+                "fault_intersection_segments",
+                "fault_segments_throw",
+                "fault_segments_azimuth",
+            ],
+            [
+                self.faulted_age_volume,
+                self.faulted_onlap_segments,
+                self.fault_planes,
+                self.fault_intersections,
+                self.fault_plane_throw,
+                self.fault_plane_azimuth,
+            ],
+        ):
+            self.cfg.storage.create_dataset(n, d)
 
         if self.cfg.qc_plots:
             self.create_qc_plots()
@@ -563,17 +561,6 @@ class Faults(Horizons, Geomodel):
             subkey="sand_voxel_pct",
             val=100 * sand_fraction,
         )
-
-        if self.cfg.hdf_store:
-            for n, d in zip(
-                ["lithology", "net_to_gross", "depth"],
-                [
-                    self.faulted_lithology[:],
-                    self.faulted_net_to_gross[:],
-                    self.faulted_depth[:],
-                ],
-            ):
-                write_data_to_hdf(n, d, self.cfg.hdf_master)
 
         # Save out reservoir volume for XAI-NBDT
         reservoir = (work_cube_lith == 1) * 1.0
@@ -2053,7 +2040,6 @@ class Faults(Horizons, Geomodel):
         fault_segments = edge / edge_max
         fault_segments[np.isnan(fault_segments)] = 0.0
         fault_segments[fault_segments < 0.5] = 0.0
-        fault_segments[fault_segments > 0.5] = 1.0
         return fault_segments
 
     def get_fault_centre(self, ellipsoid, wb_time_map, z_on_ellipse, index):
@@ -2739,11 +2725,8 @@ class Faults(Horizons, Geomodel):
             _c1_ini = _c0_ini + self.cfg.cube_shape[2] * self.cfg.infill_factor / 4.0
             c_ini = np.array(np.random.uniform(_c0_ini, _c1_ini) ** 2)
             tilt_pct_ini = np.array(np.random.uniform(0.1, 0.75))
-            # direction = np.random.choice([-1, 1])
-            throw_lut_ini = np.array(
-                np.random.uniform(
-                    low=self.cfg.low_fault_throw, high=self.cfg.high_fault_throw
-                )
+            throw_lut_ini = np.random.uniform(
+                low=self.cfg.low_fault_throw, high=self.cfg.high_fault_throw
             )
             if i == 0:
                 # Initialize return parameters
@@ -2817,6 +2800,11 @@ class Faults(Horizons, Geomodel):
                 y0 = np.append(y0, y0_ramp)
                 z0 = np.append(z0, z0_ramp)
                 tilt_pct = np.append(tilt_pct, tilt_pct_ramp)
+                # Construct fault in branch
+                if i < number_of_branches - 1 or self.cfg.number_faults % 3 == 0:
+                    fault_in_branch = 2
+                else:
+                    fault_in_branch = self.cfg.number_faults % 3
                 move += 1
 
         fault_param_dict = {
@@ -2879,11 +2867,11 @@ class Faults(Horizons, Geomodel):
             b_ramp = b_ini.copy() * np.random.uniform(0.8, 1.2)
             c_ramp = c_ini.copy() * np.random.uniform(0.8, 1.2)
             direction = np.random.choice([-1, 1])
-            x0_ramp = (
-                x0_prec + separation_x * direction * x0_ini / self.cfg.number_faults
+            x0_ramp = x0_prec * np.random.uniform(0.8, 1.2) + direction * x0_ini / (
+                separation_x
             )
-            y0_ramp = (
-                y0_prec + separation_y * direction * y0_ini / self.cfg.number_faults
+            y0_ramp = y0_prec * np.random.uniform(0.8, 1.2) + direction * y0_ini / (
+                separation_y
             )
             z0_ramp = z0_ini.copy()
             tilt_pct_ramp = tilt_pct_ini * np.random.uniform(0.85, 1.15)
@@ -2946,7 +2934,7 @@ class Faults(Horizons, Geomodel):
                     self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - z0_ini,
                     self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0
                     - z0_ini
-                    + self.cfg.cube_shape[2] * self.cfg.infill_factor / 4.0,
+                    + self.cfg.cube_shape[2] * self.cfg.infill_factor / 2.0,
                 )
                 ** 2
             )
@@ -2965,6 +2953,7 @@ class Faults(Horizons, Geomodel):
                 y0 = y0_ini.copy()
                 z0 = z0_ini.copy()
                 tilt_pct = tilt_pct_ini.copy()
+                throw_lut = throw_lut_ini.copy()
             else:
                 a = np.append(a, a_ini)
                 b = np.append(b, b_ini)
@@ -2973,6 +2962,7 @@ class Faults(Horizons, Geomodel):
                 y0 = np.append(y0, y0_ini)
                 z0 = np.append(z0, z0_ini)
                 tilt_pct = np.append(tilt_pct, tilt_pct_ini)
+                throw_lut = np.append(throw_lut, throw_lut_ini)
                 # Construct fault in branch
             if i < number_of_branches - 1 or self.cfg.number_faults % 3 == 0:
                 fault_in_branche = 2
@@ -3192,8 +3182,6 @@ class Faults(Horizons, Geomodel):
             "throw": throw_lut,
         }
         return fault_param_dict
-
-
 def find_zero_thickness_onlapping_layers(z, onlap_list):
     onlap_zero_z = dict()
     for layer in onlap_list:

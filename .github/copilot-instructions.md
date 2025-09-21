@@ -20,7 +20,7 @@ Why: Modular design allows independent feature development; shared state simplif
 - **Storage Access**: Read/write arrays via `self.cfg.storage.get_dataset(name)` or `self.cfg.storage.create_dataset(name, data)`.
 - **File Structure**: Config in `config/`, outputs in `project_folder/work_subfolder/`, temp data in `temp_folder/`.
 - **Error Handling**: Use try/except for file ops; log via `self.cfg.write_to_logfile()`.
-- **Imports**: Standard libs first, then local (e.g., `from datagenerator.util import write_data_to_hdf`).
+- **Imports**: Standard libs first, then local.
 
 ## Integration Points
 - **Dependencies**: numpy/scipy for arrays, mdio/zarr for storage, matplotlib for plots. Rock physics via custom models in `rockphysics/`.
