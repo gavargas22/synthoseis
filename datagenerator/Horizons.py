@@ -267,8 +267,8 @@ class Horizons:
 
     def write_maps_to_disk(self, horizons, name):
         """Write horizons to disk."""
-        fname = os.path.join(self.cfg.work_subfolder, name)
-        np.save(fname, horizons)
+        dataset_name = name.replace('.npy', '').replace('/', '_')
+        self.cfg.storage.create_dataset(dataset_name, horizons)
 
     def write_onlap_episodes(
         self, onlap_horizon_list, depth_maps_gaps, depth_maps_infilled, n=35

@@ -53,32 +53,34 @@ class SeismicVolume(Geomodel):
 
         self.first_random_lyr = 20  # do not randomise shallow layers
 
-        self.rho = self.cfg.hdf_init(
-            "rho", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        faulted_depth_shape = self.cfg.storage.get_dataset("faulted_depth").shape
+
+        self.rho = self.cfg.storage_init(
+            "rho", shape=faulted_depth_shape
         )
-        self.vp = self.cfg.hdf_init(
-            "vp", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vp = self.cfg.storage_init(
+            "vp", shape=faulted_depth_shape
         )
-        self.vs = self.cfg.hdf_init(
-            "vs", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vs = self.cfg.storage_init(
+            "vs", shape=faulted_depth_shape
         )
-        self.rho_ff = self.cfg.hdf_init(
-            "rho_ff", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.rho_ff = self.cfg.storage_init(
+            "rho_ff", shape=faulted_depth_shape
         )
-        self.vp_ff = self.cfg.hdf_init(
-            "vp_ff", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vp_ff = self.cfg.storage_init(
+            "vp_ff", shape=faulted_depth_shape
         )
-        self.vs_ff = self.cfg.hdf_init(
-            "vs_ff", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vs_ff = self.cfg.storage_init(
+            "vs_ff", shape=faulted_depth_shape
         )
 
         seis_shape = (
             len(self.angles),
-            *self.cfg.h5file.root.ModelData.faulted_depth.shape,
+            *faulted_depth_shape,
         )
         rfc_shape = (seis_shape[0], seis_shape[1], seis_shape[2], seis_shape[3] - 1)
-        self.rfc_raw = self.cfg.hdf_init("rfc_raw", shape=rfc_shape)
-        self.rfc_noise_added = self.cfg.hdf_init("rfc_noise_added", shape=rfc_shape)
+        self.rfc_raw = self.cfg.storage_init("rfc_raw", shape=rfc_shape)
+        self.rfc_noise_added = self.cfg.storage_init("rfc_noise_added", shape=rfc_shape)
 
     def build_elastic_properties(self, mixing_method="inv_vel"):
         """
@@ -551,7 +553,7 @@ class SeismicVolume(Geomodel):
     def augment_data_and_labels(self, normalised_seismic, seabed):
         from datagenerator.Augmentation import tz_stretch, uniform_stretch
 
-        hc_labels = self.cfg.h5file.root.ModelData.hc_labels[:]
+        hc_labels = self.cfg.storage.get_dataset("hc_labels")
         data, labels = tz_stretch(
             normalised_seismic,
             hc_labels[..., : self.cfg.cube_shape[2] + self.cfg.pad_samples - 1],
@@ -713,15 +715,15 @@ class SeismicVolume(Geomodel):
         layer_half_range = self.cfg.rpm_scaling_factors["layershiftsamples"]
         property_half_range = self.cfg.rpm_scaling_factors["RPshiftsamples"]
 
-        depth = self.cfg.h5file.root.ModelData.faulted_depth[:]
+        depth = self.cfg.storage.get_dataset("faulted_depth")
         lith = self.faults.faulted_lithology[:]
         net_to_gross = self.faults.faulted_net_to_gross[:]
 
-        oil_closures = self.cfg.h5file.root.ModelData.oil_closures[:]
-        gas_closures = self.cfg.h5file.root.ModelData.gas_closures[:]
+        oil_closures = self.cfg.storage.get_dataset("oil_closures")
+        gas_closures = self.cfg.storage.get_dataset("gas_closures")
 
         integer_faulted_age = (
-            self.cfg.h5file.root.ModelData.faulted_age_volume[:] + 0.00001
+            self.cfg.storage.get_dataset("faulted_age_volume") + 0.00001
         ).astype(int)
 
         # Use empty class object to store all Rho, Vp, Vs volumes (randomised, fluid factor and non randomised)

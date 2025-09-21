@@ -487,7 +487,5 @@ class Geomodel:
         It generates a `.npy` file on disk.
         """
         """Write 3D array to npy format."""
-        fname = os.path.join(
-            self.cfg.work_subfolder, f"{fname}_{self.cfg.date_stamp}.npy"
-        )
-        np.save(fname, data)
+        dataset_name = f"{fname}_{self.cfg.date_stamp}".replace('/', '_')
+        self.cfg.storage.create_dataset(dataset_name, data)
