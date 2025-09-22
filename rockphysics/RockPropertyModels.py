@@ -182,8 +182,12 @@ def rpm_qc_plots(cfg, rpm):
     rho = cfg.storage.get_dataset("rho")[::4, ::4, ::2]
     vp = cfg.storage.get_dataset("vp")[::4, ::4, ::2]
     vs = cfg.storage.get_dataset("vs")[::4, ::4, ::2]
-    oil = cfg.storage.get_dataset("oil_closures")[::4, ::4, ::2]
-    gas = cfg.storage.get_dataset("gas_closures")[::4, ::4, ::2]
+    oil = cfg.storage.get_dataset(
+        f"oil_closures_{cfg.date_stamp}".replace('/', '_')
+    )[::4, ::4, ::2]
+    gas = cfg.storage.get_dataset(
+        f"gas_closures_{cfg.date_stamp}".replace('/', '_')
+    )[::4, ::4, ::2]
     if cfg.include_salt:
         salt = cfg.storage.get_dataset("salt_segments")[::4, ::4, ::2]
         rho_salt = rho[salt > 0]

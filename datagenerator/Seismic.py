@@ -52,7 +52,7 @@ class SeismicVolume(Geomodel):
 
         self.first_random_lyr = 20  # do not randomise shallow layers
 
-        faulted_depth_shape = self.cfg.storage.get_dataset("faulted_depth").shape
+        faulted_depth_shape = self.cfg.cube_shape
 
         self.rho = self.cfg.storage_init(
             "rho", shape=faulted_depth_shape
@@ -711,12 +711,17 @@ class SeismicVolume(Geomodel):
         layer_half_range = self.cfg.rpm_scaling_factors["layershiftsamples"]
         property_half_range = self.cfg.rpm_scaling_factors["RPshiftsamples"]
 
-        depth = self.cfg.storage.get_dataset("faulted_depth")
+        depth = self.faults.faulted_depth[:]
         lith = self.faults.faulted_lithology[:]
         net_to_gross = self.faults.faulted_net_to_gross[:]
 
-        oil_closures = self.cfg.storage.get_dataset("oil_closures")
-        gas_closures = self.cfg.storage.get_dataset("gas_closures")
+        oil_closures = self.cfg.storage.get_dataset(
+            f"oil_closures_{self.cfg.date_stamp}".replace('/', '_')
+        )
+        print(f"Available datasets: {list(self.cfg.storage.store.keys())}")
+        gas_closures = self.cfg.storage.get_dataset(
+            f"gas_closures_{self.cfg.date_stamp}".replace('/', '_')
+        )
 
         integer_faulted_age = (
             self.cfg.storage.get_dataset("faulted_age_volume") + 0.00001
