@@ -17,57 +17,27 @@ class Closures(Horizons, Geomodel, Parameters):
         self.onlap_list = onlap_horizon_list
         self.top_lith_facies = None
         self.closure_vol_shape = self.faults.faulted_age_volume.shape
-        self.closure_segments = self.cfg.hdf_init(
-            "closure_segments", shape=self.closure_vol_shape
-        )
-        self.oil_closures = self.cfg.hdf_init(
-            "oil_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.gas_closures = self.cfg.hdf_init(
-            "gas_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.brine_closures = self.cfg.hdf_init(
-            "brine_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.simple_closures = self.cfg.hdf_init(
-            "simple_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.strat_closures = self.cfg.hdf_init(
-            "strat_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.fault_closures = self.cfg.hdf_init(
-            "fault_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.hc_labels = self.cfg.hdf_init(
-            "hc_labels", shape=self.closure_vol_shape, dtype="uint8"
-        )
+        self.closure_segments = np.zeros(self.closure_vol_shape)
+        self.oil_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.gas_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.brine_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.simple_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.strat_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.fault_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.hc_labels = np.zeros(self.closure_vol_shape, dtype="uint8")
 
-        self.all_closure_segments = self.cfg.hdf_init(
-            "all_closure_segments", shape=self.closure_vol_shape
-        )
+        self.all_closure_segments = np.zeros(self.closure_vol_shape)
 
         # Class attributes added from Intersect3D
-        self.wide_faults = self.cfg.hdf_init(
-            "wide_faults", shape=self.closure_vol_shape
-        )
-        self.fat_faults = self.cfg.hdf_init("fat_faults", shape=self.closure_vol_shape)
-        self.onlaps_upward = self.cfg.hdf_init(
-            "onlaps_upward", shape=self.closure_vol_shape
-        )
-        self.onlaps_downward = self.cfg.hdf_init(
-            "onlaps_downward", shape=self.closure_vol_shape
-        )
+        self.wide_faults = np.zeros(self.closure_vol_shape)
+        self.fat_faults = np.zeros(self.closure_vol_shape)
+        self.onlaps_upward = np.zeros(self.closure_vol_shape)
+        self.onlaps_downward = np.zeros(self.closure_vol_shape)
 
         # Faulted closures
-        self.faulted_closures_oil = self.cfg.hdf_init(
-            "faulted_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.faulted_closures_gas = self.cfg.hdf_init(
-            "faulted_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.faulted_closures_brine = self.cfg.hdf_init(
-            "faulted_closures_brine", shape=self.closure_vol_shape, dtype="uint8"
-        )
+        self.faulted_closures_oil = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.faulted_closures_gas = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.faulted_closures_brine = np.zeros(self.closure_vol_shape, dtype="uint8")
         self.fault_closures_oil_segment_list = list()
         self.fault_closures_gas_segment_list = list()
         self.fault_closures_brine_segment_list = list()
@@ -75,22 +45,14 @@ class Closures(Horizons, Geomodel, Parameters):
         self.n_fault_closures_gas = 0
         self.n_fault_closures_brine = 0
 
-        self.faulted_all_closures = self.cfg.hdf_init(
-            "faulted_all_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
+        self.faulted_all_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
         self.fault_all_closures_segment_list = list()
         self.n_fault_all_closures = 0
 
         # Onlap closures
-        self.onlap_closures_oil = self.cfg.hdf_init(
-            "onlap_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.onlap_closures_gas = self.cfg.hdf_init(
-            "onlap_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.onlap_closures_brine = self.cfg.hdf_init(
-            "onlap_closures_brine", shape=self.closure_vol_shape, dtype="uint8"
-        )
+        self.onlap_closures_oil = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.onlap_closures_gas = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.onlap_closures_brine = np.zeros(self.closure_vol_shape, dtype="uint8")
         self.onlap_closures_oil_segment_list = list()
         self.onlap_closures_gas_segment_list = list()
         self.onlap_closures_brine_segment_list = list()
@@ -98,22 +60,14 @@ class Closures(Horizons, Geomodel, Parameters):
         self.n_onlap_closures_gas = 0
         self.n_onlap_closures_brine = 0
 
-        self.onlap_all_closures = self.cfg.hdf_init(
-            "onlap_all_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
+        self.onlap_all_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
         self.onlap_all_closures_segment_list = list()
         self.n_onlap_all_closures_oil = 0
 
         # Simple closures
-        self.simple_closures_oil = self.cfg.hdf_init(
-            "simple_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.simple_closures_gas = self.cfg.hdf_init(
-            "simple_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.simple_closures_brine = self.cfg.hdf_init(
-            "simple_closures_brine", shape=self.closure_vol_shape, dtype="uint8"
-        )
+        self.simple_closures_oil = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.simple_closures_gas = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.simple_closures_brine = np.zeros(self.closure_vol_shape, dtype="uint8")
         self.simple_closures_oil_segment_list = list()
         self.simple_closures_gas_segment_list = list()
         self.simple_closures_brine_segment_list = list()
@@ -121,49 +75,27 @@ class Closures(Horizons, Geomodel, Parameters):
         self.n_4way_closures_gas = 0
         self.n_4way_closures_brine = 0
 
-        self.simple_all_closures = self.cfg.hdf_init(
-            "simple_all_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
+        self.simple_all_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
         self.simple_all_closures_segment_list = list()
         self.n_4way_all_closures = 0
 
         # False closures
-        self.false_closures_oil = self.cfg.hdf_init(
-            "false_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.false_closures_gas = self.cfg.hdf_init(
-            "false_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
-        )
-        self.false_closures_brine = self.cfg.hdf_init(
-            "false_closures_brine", shape=self.closure_vol_shape, dtype="uint8"
-        )
+        self.false_closures_oil = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.false_closures_gas = np.zeros(self.closure_vol_shape, dtype="uint8")
+        self.false_closures_brine = np.zeros(self.closure_vol_shape, dtype="uint8")
         self.n_false_closures_oil = 0
         self.n_false_closures_gas = 0
         self.n_false_closures_brine = 0
 
-        self.false_all_closures = self.cfg.hdf_init(
-            "false_all_closures", shape=self.closure_vol_shape, dtype="uint8"
-        )
+        self.false_all_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
         self.n_false_all_closures = 0
 
         if self.cfg.include_salt:
-            self.salt_closures = self.cfg.hdf_init(
-                "salt_closures", shape=self.closure_vol_shape, dtype="uint8"
-            )
-            self.wide_salt = self.cfg.hdf_init(
-                "wide_salt", shape=self.closure_vol_shape
-            )
-            self.salt_closures_oil = self.cfg.hdf_init(
-                "salt_bounded_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
-            )
-            self.salt_closures_gas = self.cfg.hdf_init(
-                "salt_bounded_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
-            )
-            self.salt_closures_brine = self.cfg.hdf_init(
-                "salt_bounded_closures_brine",
-                shape=self.closure_vol_shape,
-                dtype="uint8",
-            )
+            self.salt_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
+            self.wide_salt = np.zeros(self.closure_vol_shape)
+            self.salt_closures_oil = np.zeros(self.closure_vol_shape, dtype="uint8")
+            self.salt_closures_gas = np.zeros(self.closure_vol_shape, dtype="uint8")
+            self.salt_closures_brine = np.zeros(self.closure_vol_shape, dtype="uint8")
             self.salt_closures_oil_segment_list = list()
             self.salt_closures_gas_segment_list = list()
             self.salt_closures_brine_segment_list = list()
@@ -171,9 +103,7 @@ class Closures(Horizons, Geomodel, Parameters):
             self.n_salt_closures_gas = 0
             self.n_salt_closures_brine = 0
 
-            self.salt_all_closures = self.cfg.hdf_init(
-                "salt_bounded_all_closures", shape=self.closure_vol_shape, dtype="uint8"
-            )
+            self.salt_all_closures = np.zeros(self.closure_vol_shape, dtype="uint8")
             self.salt_all_closures_segment_list = list()
             self.n_salt_all_closures = 0
 
@@ -388,6 +318,10 @@ class Closures(Horizons, Geomodel, Parameters):
 
         if len(avg_sand_thickness) == 0:
             avg_sand_thickness = 0
+        if len(avg_shale_thickness) == 0:
+            avg_shale_thickness = 0
+        if len(avg_unit_thickness) == 0:
+            avg_unit_thickness = 0
         self.cfg.write_to_logfile(
             f"Sand Unit Thickness (m): mean: {np.mean(avg_sand_thickness):.2f}, "
             f"std: {np.std(avg_sand_thickness):.2f}, min: {np.nanmin(avg_sand_thickness):.2f}, "
@@ -692,15 +626,7 @@ class Closures(Horizons, Geomodel, Parameters):
 
                 else:
                     continue
-
-            if self.facies[ihorizon] == 1:
-                avg_sand_thickness.append(
-                    np.mean(
-                        depth_maps_infilled[..., ihorizon + 1]
-                        - depth_maps_infilled[..., ihorizon]
-                    )
-                )
-            elif self.facies[ihorizon] == 0:
+            else:
                 # Calculate shale unit thicknesses
                 avg_shale_thickness.append(
                     np.mean(
@@ -709,15 +635,17 @@ class Closures(Horizons, Geomodel, Parameters):
                     )
                 )
 
-        # TODO  handle case where avg_sand_thickness is zero-size array
-        try:
-            self.cfg.write_to_logfile(
-                f"Sand Unit Thickness (m): mean: {np.mean(avg_sand_thickness):.2f}, "
-                f"std: {np.std(avg_sand_thickness):.2f}, min: {np.nanmin(avg_sand_thickness):.2f}, "
-                f"max: {np.max(avg_sand_thickness):.2f}"
-            )
-        except:
-            print("No sands in model")
+        if len(avg_sand_thickness) == 0:
+            avg_sand_thickness = 0
+        if len(avg_shale_thickness) == 0:
+            avg_shale_thickness = 0
+        if len(avg_unit_thickness) == 0:
+            avg_unit_thickness = 0
+        self.cfg.write_to_logfile(
+            f"Sand Unit Thickness (m): mean: {np.mean(avg_sand_thickness):.2f}, "
+            f"std: {np.std(avg_sand_thickness):.2f}, min: {np.nanmin(avg_sand_thickness):.2f}, "
+            f"max: {np.max(avg_sand_thickness):.2f}"
+        )
         self.cfg.write_to_logfile(
             f"Shale Unit Thickness (m): mean: {np.mean(avg_shale_thickness):.2f}, "
             f"std: {np.std(avg_shale_thickness):.2f}, min: {np.min(avg_shale_thickness):.2f}, "
@@ -728,79 +656,78 @@ class Closures(Horizons, Geomodel, Parameters):
             f"std: {np.std(avg_unit_thickness):.2f}, min: {np.min(avg_unit_thickness):.2f}, "
             f"max: {np.max(avg_unit_thickness):.2f}"
         )
-
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="sand_unit_thickness_mean",
+            subkey="sand_unit_thickness_combined_mean",
             val=np.mean(avg_sand_thickness),
         )
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="sand_unit_thickness_std",
+            subkey="sand_unit_thickness_combined_std",
             val=np.std(avg_sand_thickness),
         )
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="sand_unit_thickness_min",
+            subkey="sand_unit_thickness_combined_min",
             val=np.min(avg_sand_thickness),
         )
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="sand_unit_thickness_max",
+            subkey="sand_unit_thickness_combined_max",
             val=np.max(avg_sand_thickness),
         )
         #
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="shale_unit_thickness_mean",
+            subkey="shale_unit_thickness_combined_mean",
             val=np.mean(avg_shale_thickness),
         )
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="shale_unit_thickness_std",
+            subkey="shale_unit_thickness_combined_std",
             val=np.std(avg_shale_thickness),
         )
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="shale_unit_thickness_min",
+            subkey="shale_unit_thickness_combined_min",
             val=np.min(avg_shale_thickness),
         )
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="shale_unit_thickness_max",
+            subkey="shale_unit_thickness_combined_max",
             val=np.max(avg_shale_thickness),
         )
 
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="overall_unit_thickness_mean",
+            subkey="overall_unit_thickness_combined_mean",
             val=np.mean(avg_unit_thickness),
         )
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="overall_unit_thickness_std",
+            subkey="overall_unit_thickness_combined_std",
             val=np.std(avg_unit_thickness),
         )
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="overall_unit_thickness_min",
+            subkey="overall_unit_thickness_combined_min",
             val=np.min(avg_unit_thickness),
         )
         self.cfg.write_to_logfile(
             msg=None,
             mainkey="model_parameters",
-            subkey="overall_unit_thickness_max",
+            subkey="overall_unit_thickness_combined_max",
             val=np.max(avg_unit_thickness),
         )
 
@@ -1658,7 +1585,8 @@ class Closures(Horizons, Geomodel, Parameters):
             msg=None,
             mainkey="model_parameters",
             subkey="closure_voxel_pct_brine",
-            val=_brine_voxels_pct * 100,
+                                                                                        
+                       val=_brine_voxels_pct * 100,
         )
         # Same for Oil
         _oil_voxels = o[o == 1].size
@@ -1735,77 +1663,6 @@ class Closures(Horizons, Geomodel, Parameters):
         label_values.remove(0)
         return label_values, labels_clean
 
-    def assign_fluid_types(self, label_values, labels_clean):
-        """randomly assign oil or gas to closure"""
-        print(
-            " labels_clean.min(), labels_clean.max() = ",
-            labels_clean.min(),
-            labels_clean.max(),
-        )
-        _brine_closures = (labels_clean * 0.0).astype("uint8")
-        _oil_closures = (labels_clean * 0.0).astype("uint8")
-        _gas_closures = (labels_clean * 0.0).astype("uint8")
-
-        fluid_type_code = np.random.randint(3, size=labels_clean.max() + 1)
-
-        _closure_segments = self.closure_segments[:]
-        for i in range(1, labels_clean.max() + 1):
-            voxel_count = labels_clean[labels_clean == i].size
-            if voxel_count > 0:
-                print(f"Voxel Count: {voxel_count}\tFluid type: {fluid_type_code[i]}")
-            # not in closure = 0
-            # closure with brine filled reservoir fluid_type_code = 1
-            # closure with oil filled reservoir fluid_type_code = 2
-            # closure with gas filled reservoir fluid_type_code = 3
-            if i in label_values:
-                if fluid_type_code[i] == 0:
-                    # brine: change labels_clean contents to fluid_type_code = 1 (same as background)
-                    _brine_closures[
-                        np.logical_and(labels_clean == i, _closure_segments > 0)
-                    ] = 1
-                elif fluid_type_code[i] == 1:
-                    # oil: change labels_clean contents to fluid_type_code = 2
-                    _oil_closures[labels_clean == i] = 1
-                elif fluid_type_code[i] == 2:
-                    # gas: change labels_clean contents to fluid_type_code = 3
-                    _gas_closures[labels_clean == i] = 1
-        return _oil_closures, _gas_closures, _brine_closures
-
-    def remove_small_objects(self, labels, min_filter=True):
-        try:
-            # Use the global minimum voxel size initially, before closure types are identified
-            labels_clean = morphology.remove_small_objects(
-                labels, self.cfg.closure_min_voxels
-            )
-            if self.cfg.verbose:
-                print("labels_clean succeeded.")
-                print(
-                    " labels.min:{}, labels.max: {}".format(labels.min(), labels.max())
-                )
-                print(
-                    " labels_clean min:{}, labels_clean max: {}".format(
-                        labels_clean.min(), labels_clean.max()
-                    )
-                )
-        except Exception as e:
-            print(
-                f"Closures/create_closures: labels_clean (remove_small_objects) did not succeed: {e}"
-            )
-            if min_filter:
-                labels_clean = minimum_filter(labels, size=(3, 3, 3))
-                if self.cfg.verbose:
-                    print(
-                        " labels.min:{}, labels.max: {}".format(
-                            labels.min(), labels.max()
-                        )
-                    )
-                    print(
-                        " labels_clean min:{}, labels_clean max: {}".format(
-                            labels_clean.min(), labels_clean.max()
-                        )
-                    )
-        return labels_clean
-
     def segment_closures(self, _closure_segments, remove_shale=True):
         """Segment the closures so that they can be randomly filled with hydrocarbons"""
 
@@ -1830,72 +1687,6 @@ class Closures(Horizons, Geomodel, Parameters):
 
         labels_clean = self.remove_small_objects(labels)
         return labels_clean, _closure_segments
-
-    def write_closure_volumes_to_disk(self):
-        # Create files for closure volumes
-        self.write_cube_to_disk(self.brine_closures[:], "closure_segments_brine")
-        self.write_cube_to_disk(self.oil_closures[:], "closure_segments_oil")
-        self.write_cube_to_disk(self.gas_closures[:], "closure_segments_gas")
-        # Create combined HC cube by adding oil and gas closures
-        self.hc_labels[:] = (self.oil_closures[:] + self.gas_closures[:]).astype(
-            "uint8"
-        )
-        self.write_cube_to_disk(self.hc_labels[:], "closure_segments_hc")
-
-        if self.cfg.model_qc_volumes:
-            self.write_cube_to_disk(self.closure_segments, "closure_segments_raw_all")
-            self.write_cube_to_disk(self.simple_closures, "closure_segments_simple")
-            self.write_cube_to_disk(self.strat_closures, "closure_segments_strat")
-            self.write_cube_to_disk(self.fault_closures, "closure_segments_fault")
-
-        # Triple check that no small closures exist in the final closure files
-        for i, c in enumerate(
-            [
-                self.oil_closures,
-                self.gas_closures,
-                self.simple_closures,
-                self.strat_closures,
-                self.fault_closures,
-            ]
-        ):
-            _t = measure.label(c, connectivity=2, background=0)
-            counts = [_t[_t == x].size for x in range(np.max(_t))]
-            print(f"Final closure volume voxels sizes: {counts}")
-            for n, x in enumerate(counts):
-                if x < self.cfg.closure_min_voxels:
-                    print(f"Voxel count: {x}\t Count:{i}, index: {n}")
-
-        # Return the hydrocarbon closure labels so that augmentation can be applied to the data & labels
-        # return self.oil_closures + self.gas_closures
-
-    def calculate_closure_statistics(self, in_array, closure_type):
-        """
-        Calculate the size and location of isolated features in an array
-
-        :param in_array: ndarray. Input array to be labelled, where non-zero values are counted as features
-        :param closure_type: string. Closure type label
-        :param digi: int or float. To convert depth values from samples to units
-        :return: string. Concatenated string of closure statistics to be written to log
-        """
-        labelled_array, max_labels = measure.label(
-            in_array, connectivity=2, return_num=True
-        )
-        msg = ""
-        for i in range(1, max_labels + 1):  # start at 1 to avoid counting 0's
-            trap = np.where(labelled_array == i)
-            ranges = [([np.min(trap[x]), np.max(trap[x])]) for x, _ in enumerate(trap)]
-            sizes = [x[1] - x[0] for x in ranges]
-            n_voxels = labelled_array[labelled_array == i].size
-            if sum(sizes) > 0:
-                msg += (
-                    f"{closure_type}\t"
-                    f"Num X,Y,Z Samples: {str(sizes).ljust(15)}\t"
-                    f"Num Voxels: {str(n_voxels).ljust(5)}\t"
-                    f"Track: {2000 + ranges[0][0]}-{2000 + ranges[0][1]}\t"
-                    f"Bin: {1000 + ranges[1][0]}-{1000 + ranges[1][1]}\t"
-                    f"Depth: {ranges[2][0] * self.cfg.digi}-{ranges[2][1] * self.cfg.digi + self.cfg.digi / 2}\n"
-                )
-        return msg
 
     def find_faulted_closures(self, closure_segment_list, closure_segments):
         self._dilate_faults()
@@ -2064,657 +1855,6 @@ class Closures(Horizons, Geomodel, Parameters):
             i, j, k = np.where(closure_segments == iclosure)
             faults_within_closure = self.fat_faults[i, j, k]
             onlaps_within_closure = self.onlaps_downward[i, j, k]
-            if onlaps_within_closure.max() > 0:
-                _faulted_closure_threshold = float(
-                    faults_within_closure[faults_within_closure > 0].size / i.size
-                )
-                _onlap_closure_threshold = float(
-                    onlaps_within_closure[onlaps_within_closure > 0].size / i.size
-                )
-                if (
-                    _faulted_closure_threshold > 0.65
-                    and _onlap_closure_threshold > 0.65
-                ):
-                    self.false_all_closures[i, j, k] = 1
-                    self.n_false_all_closures += 1
-
-    def find_salt_bounded_all_closures(self, closure_segment_list, closure_segments):
-        self._dilate_salt()
-        for iclosure in closure_segment_list:
-            i, j, k = np.where(closure_segments == iclosure)
-            salt_within_closure = self.wide_salt[i, j, k]
-            if salt_within_closure.max() > 0:
-                self.salt_all_closures[i, j, k] = 1.0
-                self.n_salt_all_closures += 1
-                self.salt_all_closures_segment_list.append(iclosure)
-
-    def _dilate_faults(self):
-        thresholded_faults = self._threshold_volumes(self.faults.fault_planes[:])
-        self.wide_faults[:] = self.grow_lateral(
-            thresholded_faults, iterations=9, dist=1
-        )
-        self.fat_faults[:] = self.grow_lateral(
-            thresholded_faults, iterations=21, dist=1
-        )
-        if self.cfg.include_salt:
-            # Treat the salt body as a fault to grow closures to boundary
-            thresholded_salt = self._threshold_volumes(
-                self.faults.salt_model.salt_segments[:]
-            )
-            wide_salt = self.grow_lateral(thresholded_salt, iterations=9, dist=1)
-            self.wide_salt[:] = wide_salt
-            # Add salt to faults to cehck if growing the closure works
-            self.wide_faults[:] += wide_salt
-
-    def _dilate_salt(self):
-        thresholded_salt = self._threshold_volumes(
-            self.faults.salt_model.salt_segments[:]
-        )
-        wide_salt = self.grow_lateral(thresholded_salt, iterations=9, dist=1)
-        self.wide_salt[:] = wide_salt
-
-    def _dilate_onlaps(self):
-        onlaps = self._threshold_volumes(self.faults.faulted_onlap_segments[:])
-        mask = np.zeros((1, 1, 3))
-        mask[0, 0, :2] = 1
-        self.onlaps_upward[:] = morphology.binary_dilation(onlaps, mask)
-        mask = np.zeros((1, 1, 3))
-        mask[0, 0, 1:] = 1
-        self.onlaps_downward[:] = onlaps.copy()
-        for _ in range(30):
-            try:
-                self.onlaps_downward[:] = morphology.binary_dilation(
-                    self.onlaps_downward[:], mask
-                )
-            except:
-                break
-
-    def grow_to_fault2(
-        self, closures, grow_only_sand_closures=True, remove_small_closures=True
-    ):
-        # - grow closures laterally and up within layer and within fault block
-        print(
-            "\n\n ... grow_to_fault2: grow closures laterally and up within layer and within fault block ..."
-        )
-        self.cfg.write_to_logfile("growing closures to fault plane: grow_to_fault2")
-
-        # dilated_fault_closures = closures.copy()
-        # n_faulted_closures = dilated_fault_closures.max()
-        labels_clean = self.closure_segments[:].copy()
-        labels_clean[closures == 0] = 0
-        labels_clean_list = list(set(labels_clean.flatten()))
-        labels_clean_list.remove(0)
-        initial_closures = labels_clean.copy()
-        print("\n    ... grow_to_fault2: n_faulted_closures = ", len(labels_clean_list))
-        print("    ... grow_to_fault2: faulted_closures = ", labels_clean_list)
-
-        # TODO remove this once small closures are found and fixed
-        voxel_sizes = [
-            self.closure_segments[self.closure_segments[:] == i].size
-            for i in labels_clean_list
-        ]
-        for _v in voxel_sizes:
-            print(f"Voxel_Sizes: {_v}")
-            if _v < self.cfg.closure_min_voxels:
-                print(_v)
-
-        depth_cube = np.zeros(self.faults.faulted_age_volume.shape, float)
-        _depths = np.arange(self.faults.faulted_age_volume.shape[2])
-        depth_cube += _depths.reshape(1, 1, self.faults.faulted_age_volume.shape[2])
-        _ng = self.faults.faulted_net_to_gross[:].copy()
-        # Cannot solely use NG anymore since shales may have variable net to gross
-        _lith = self.faults.faulted_lithology[:].copy()
-        _age = self.faults.faulted_age_volume[:].copy()
-        fault_throw = self.faults.max_fault_throw[:]
-
-        for il, i in enumerate(labels_clean_list):
-            fault_blocks_list = list(set(fault_throw[labels_clean == i].flatten()))
-            print("    ... grow_to_fault2: fault_blocks_list = ", fault_blocks_list)
-            for jl, j in enumerate(fault_blocks_list):
-                print(
-                    "\n\n    ... label, throw = ",
-                    i,
-                    j,
-                    list(set(fault_throw[labels_clean == i].flatten())),
-                    labels_clean[labels_clean == i].size,
-                    fault_throw[fault_throw == j].size,
-                    fault_throw[
-                        np.where((labels_clean == i) & (fault_throw[:] == j))
-                    ].size,
-                )
-                single_closure = labels_clean * 0.0
-                size = single_closure[
-                    np.where((labels_clean == i) & (np.abs(fault_throw - j) < 0.25))
-                ].size
-                if size >= self.cfg.closure_min_voxels:
-                    print(f"Label: {i}, fault_block: {j}, Voxel_Count: {size}")
-                    single_closure[
-                        np.where((labels_clean == i) & (np.abs(fault_throw - j) < 0.25))
-                    ] = 1
-                if single_closure[single_closure > 0].size == 0:
-                    # labels_clean[np.where((labels_clean == i) & (np.abs(self.fault_throw - j) < .25))] = 0
-                    labels_clean[np.where(labels_clean == i)] = 0
-                    continue
-                avg_ng = _ng[single_closure == 1].mean()
-                _geo_age_voxels = (_age[single_closure == 1] + 0.5).astype("int")
-                _ng_voxels = _ng[single_closure == 1]
-                _geo_age_voxels = _geo_age_voxels[_ng_voxels >= avg_ng / 2.0]
-                min_geo_age = _geo_age_voxels.min() - 0.5
-                avg_geo_age = int(_geo_age_voxels.mean())
-                max_geo_age = _geo_age_voxels.max() + 0.5
-                _depth_geobody_voxels = depth_cube[single_closure == 1]
-                min_depth = _depth_geobody_voxels.min()
-                max_depth = _depth_geobody_voxels.max()
-                avg_throw = np.median(fault_throw[single_closure == 1])
-
-                closure_boundary_cube = closures * 0.0
-                if grow_only_sand_closures:
-                    lith_flag = _lith > 0.0
-                else:
-                    lith_flag = _lith >= 0.0
-                closure_boundary_cube[
-                    np.where(
-                        lith_flag
-                        & (_age > min_geo_age)
-                        & (_age < max_geo_age)
-                        & (fault_throw == avg_throw)
-                        & (depth_cube <= max_depth)
-                    )
-                ] = 1.0
-                print(
-                    "\n    ... grow_to_fault2: closure_boundary_cube voxels = ",
-                    closure_boundary_cube[closure_boundary_cube == 1].size,
-                )
-
-                n_voxel = single_closure[single_closure == 1].size
-
-                original_voxels = n_voxel + 0
-                print(
-                    "\n    ... closure label number, avg_throw, geobody shape, geo_age min/mean/max, depth min/max, avg_ng = ",
-                    i,
-                    j,
-                    n_voxel,
-                    (min_geo_age, avg_geo_age, max_geo_age),
-                    (min_depth, max_depth),
-                    avg_ng,
-                    il,
-                    " / ",
-                    len(labels_clean_list),
-                )
-
-                grown_closure = single_closure.copy()
-                grown_closure[depth_cube >= max_depth] = 0
-                delta_voxel = 0
-                previous_delta_voxel = 1e9
-                converged = False
-                for ii in range(15):
-                    grown_closure = self.grow_lateral(grown_closure, 1, dist=2)
-                    grown_closure = self.grow_upward(grown_closure, 1, dist=1)
-                    # stay within layer, within age, within fault block, above HCWC
-                    grown_closure[closure_boundary_cube == 0.0] = 0.0
-                    single_closure = single_closure + grown_closure
-                    single_closure[single_closure > 0] = i
-                    new_n_voxel = single_closure[single_closure > 0].size
-                    previous_delta_voxel = delta_voxel + 0
-                    delta_voxel = new_n_voxel - n_voxel
-                    print(
-                        "    ... i, ii, closure label number, geobody shape, delta_voxel, previous_delta_voxel,"
-                        " delta_voxel>previous_delta_voxel = ",
-                        i,
-                        ii,
-                        new_n_voxel,
-                        delta_voxel,
-                        previous_delta_voxel,
-                        delta_voxel > previous_delta_voxel,
-                    )
-                    if n_voxel == new_n_voxel:
-                        # finish bottom voxel layer near "HCWC"
-                        grown_closure = self.grow_downward(
-                            grown_closure, 1, dist=1, verbose=False
-                        )
-                        # stay within layer, within age, within fault block, above HCWC
-                        grown_closure[closure_boundary_cube == 0.0] = 0.0
-                        single_closure = single_closure + grown_closure
-                        single_closure[single_closure > 0] = i
-                        converged = True
-                        break
-                    else:
-                        n_voxel = new_n_voxel
-                    previous_delta_voxel = delta_voxel + 0
-                if converged is True:
-                    labels_clean[single_closure > 0] = i
-                    msg_postscript = " converged"
-                else:
-                    labels_clean[labels_clean == i] = -i
-                    msg_postscript = " NOT converged"
-                msg = (
-                    f"closure_id: {int(i):04d}, fault_id: {int(j + 0.5):04d}, "
-                    + f"original_voxels: {original_voxels:11.0f}, new_n_voxel: {new_n_voxel:11.0f}, "
-                    + f"percent_growth: {float(new_n_voxel / original_voxels):6.2f}"
-                )
-                print(msg + msg_postscript)
-                self.cfg.write_to_logfile(msg + msg_postscript)
-
-        # Set small closures to 0 after growth
-        # _grown_labels = measure.label(labels_clean, connectivity=2, background=0)
-        # for x in np.unique(_grown_labels):
-        #     size = _grown_labels[_grown_labels == x].size
-        #     print(f'Size before editing: {size}')
-        #     if size < self.cfg.closure_min_voxels:
-        #         labels_clean[_grown_labels == x] = 0.
-        # for x in np.unique(labels_clean):
-        #     size = labels_clean[labels_clean == x].size
-        #     print(f'Size after editing: {size}')
-
-        if remove_small_closures:
-            _initial_labels = measure.label(
-                initial_closures, connectivity=2, background=0
-            )
-            _grown_labels = measure.label(labels_clean, connectivity=2, background=0)
-            for x in np.unique(_grown_labels):
-                size_initial = _initial_labels[_initial_labels == x].size
-                size_grown = _grown_labels[_grown_labels == x].size
-                print(f"Size before editing: {size_initial}")
-                print(f"Size after editing: {size_grown}")
-                if size_grown < self.cfg.closure_min_voxels:
-                    print(
-                        f"Closure below threshold of {self.cfg.closure_min_voxels} and will be removed"
-                    )
-                    labels_clean[_grown_labels == x] = 0.0
-        return labels_clean
-
-    def grow_to_salt(self, closures):
-        # - grow closures laterally and up within layer up to salt body
-        print("\n\n ... grow_to_salt: grow closures laterally and up within layer ...")
-        self.cfg.write_to_logfile("growing closures to salt body: grow_to_salt")
-
-        labels_clean = measure.label(
-            self.closure_segments[:], connectivity=2, background=0
-        )
-        labels_clean[closures == 0] = 0
-        # labels_clean = self.closure_segments[:].copy()
-        # labels_clean[closures == 0] = 0
-        labels_clean_list = list(set(labels_clean.flatten()))
-        labels_clean_list.remove(0)
-        initial_closures = labels_clean.copy()
-        print("\n    ... grow_to_salt: n_salt_closures = ", len(labels_clean_list))
-        print("    ... grow_to_salt: salt_closures = ", labels_clean_list)
-
-        depth_cube = np.zeros(self.faults.faulted_age_volume.shape, float)
-        _depths = np.arange(self.faults.faulted_age_volume.shape[2])
-        depth_cube += _depths.reshape(1, 1, self.faults.faulted_age_volume.shape[2])
-        _ng = self.faults.faulted_net_to_gross[:].copy()
-        _age = self.faults.faulted_age_volume[:].copy()
-        salt = self.faults.salt_model.salt_segments[:]
-
-        for il, i in enumerate(labels_clean_list):
-            salt_list = list(set(salt[labels_clean == i].flatten()))
-            print("    ... grow_to_fault2: salt_list = ", salt_list)
-            single_closure = labels_clean * 0.0
-            size = single_closure[np.where(labels_clean == i)].size
-            if size >= self.cfg.closure_min_voxels:
-                print(f"Label: {i}, Voxel_Count: {size}")
-                single_closure[np.where(labels_clean == i)] = 1
-            if single_closure[single_closure > 0].size == 0:
-                labels_clean[np.where(labels_clean == i)] = 0
-                continue
-            avg_ng = _ng[single_closure == 1].mean()
-            _geo_age_voxels = (_age[single_closure == 1] + 0.5).astype("int")
-            _ng_voxels = _ng[single_closure == 1]
-            _geo_age_voxels = _geo_age_voxels[_ng_voxels >= avg_ng / 2.0]
-            min_geo_age = _geo_age_voxels.min() - 0.5
-            avg_geo_age = int(_geo_age_voxels.mean())
-            max_geo_age = _geo_age_voxels.max() + 0.5
-            _depth_geobody_voxels = depth_cube[single_closure == 1]
-            min_depth = _depth_geobody_voxels.min()
-            max_depth = _depth_geobody_voxels.max()
-            # Define AOI where salt has been dilated
-            # close_to_salt = np.zeros_like(salt)
-            # close_to_salt[self.wide_salt[:] == 1] = 1.0
-            # close_to_salt[salt == 1] = 0.0
-
-            closure_boundary_cube = closures * 0.0
-            closure_boundary_cube[
-                np.where(
-                    (_ng > 0.3)
-                    & (_age > min_geo_age)  # account for partial voxels
-                    & (_age < max_geo_age)
-                    & (salt == 0.0)
-                    & (depth_cube <= max_depth)
-                )
-            ] = 1.0
-            print(
-                "\n    ... grow_to_fault2: closure_boundary_cube voxels = ",
-                closure_boundary_cube[closure_boundary_cube == 1].size,
-            )
-
-            n_voxel = single_closure[single_closure == 1].size
-
-            original_voxels = n_voxel + 0
-            print(
-                "\n    ... closure label number, avg_throw, geobody shape, geo_age min/mean/max, depth min/max, avg_ng = ",
-                i,
-                n_voxel,
-                (min_geo_age, avg_geo_age, max_geo_age),
-                (min_depth, max_depth),
-                avg_ng,
-                il,
-                " / ",
-                len(labels_clean_list),
-            )
-
-            grown_closure = single_closure.copy()
-            grown_closure[depth_cube >= max_depth] = 0
-            delta_voxel = 0
-            previous_delta_voxel = 1e9
-            converged = False
-            for ii in range(99):
-                grown_closure = self.grow_lateral(grown_closure, 1, dist=2)
-                grown_closure = self.grow_upward(grown_closure, 1, dist=1)
-                # stay within layer, within age, close to salt and above HCWC
-                grown_closure[closure_boundary_cube == 0.0] = 0.0
-                single_closure = single_closure + grown_closure
-                single_closure[single_closure > 0] = i
-                new_n_voxel = single_closure[single_closure > 0].size
-                previous_delta_voxel = delta_voxel + 0
-                delta_voxel = new_n_voxel - n_voxel
-                print(
-                    "    ... i, ii, closure label number, geobody shape, delta_voxel, previous_delta_voxel,"
-                    " delta_voxel>previous_delta_voxel = ",
-                    i,
-                    ii,
-                    new_n_voxel,
-                    delta_voxel,
-                    previous_delta_voxel,
-                    delta_voxel > previous_delta_voxel,
-                )
-
-                # If grown voxel is touching the egde of survey, stop and remove closure
-                _a, _b, _ = np.where(single_closure > 0)
-                max_boundary_i = self.cfg.cube_shape[0] - 1
-                max_boundary_j = self.cfg.cube_shape[1] - 1
-                if (
-                    np.min(_a) == 0
-                    or np.max(_a) == max_boundary_i
-                    or np.min(_b) == 0
-                    or np.max(_b) == max_boundary_j
-                ):
-                    print("Boundary reached, removing closure")
-                    converged = False
-                    break
-
-                if n_voxel == new_n_voxel:
-                    # finish bottom voxel layer near HCWC
-                    grown_closure = self.grow_downward(
-                        grown_closure, 1, dist=1, verbose=False
-                    )
-                    # stay within layer, within age, within fault block, above HCWC
-                    grown_closure[closure_boundary_cube == 0.0] = 0.0
-                    single_closure = single_closure + grown_closure
-                    single_closure[single_closure > 0] = i
-                    converged = True
-                    break
-                else:
-                    n_voxel = new_n_voxel
-                previous_delta_voxel = delta_voxel + 0
-            if converged is True:
-                labels_clean[single_closure > 0] = i
-                msg_postscript = " converged"
-            else:
-                labels_clean[labels_clean == i] = -i
-                msg_postscript = " NOT converged"
-            msg = (
-                f"closure_id: {int(i):04d}, "
-                + f"original_voxels: {original_voxels:11.0f}, new_n_voxel: {new_n_voxel:11.0f}, "
-                + f"percent_growth: {float(new_n_voxel / original_voxels):6.2f}"
-            )
-            print(msg + msg_postscript)
-            self.cfg.write_to_logfile(msg + msg_postscript)
-
-        # Set small closures to 0 after growth
-        _initial_labels = measure.label(initial_closures, connectivity=2, background=0)
-        _grown_labels = measure.label(labels_clean, connectivity=2, background=0)
-        for x in np.unique(_grown_labels)[
-            1:
-        ]:  # ignore the first label of 0 (closures only)
-            size_initial = _initial_labels[_initial_labels == x].size
-            size_grown = _grown_labels[_grown_labels == x].size
-            print(f"Size before editing: {size_initial}")
-            print(f"Size after editing: {size_grown}")
-            if size_grown < self.cfg.closure_min_voxels:
-                print(
-                    f"Closure below threshold of {self.cfg.closure_min_voxels} and will be removed"
-                )
-                labels_clean[_grown_labels == x] = 0.0
-
-        return labels_clean
-
-    @staticmethod
-    def grow_lateral(geobody, iterations, dist=1, verbose=False):
-        from scipy.ndimage.morphology import grey_dilation
-
-        dist_size = 2 * dist + 1
-        mask = np.zeros((dist_size, dist_size, 1))
-        mask[:, :, :] = 1
-        _geobody = geobody.copy()
-        if verbose:
-            print(" ...grow_lateral: _geobody.shape = ", _geobody[_geobody > 0].shape)
-        for k in range(iterations):
-            try:
-                _geobody = grey_dilation(_geobody, footprint=mask)
-                if verbose:
-                    print(
-                        " ...grow_lateral: k, _geobody.shape = ",
-                        k,
-                        _geobody[_geobody > 0].shape,
-                    )
-            except:
-                break
-        return _geobody
-
-    @staticmethod
-    def grow_upward(geobody, iterations, dist=1, verbose=False):
-        from scipy.ndimage.morphology import grey_dilation
-
-        dist_size = 2 * dist + 1
-        mask = np.zeros((1, 1, dist_size))
-        mask[0, 0, : dist + 1] = 1
-        _geobody = geobody.copy()
-        if verbose:
-            print(" ...grow_upward: _geobody.shape = ", _geobody[_geobody > 0].shape)
-        for k in range(iterations):
-            try:
-                _geobody = grey_dilation(_geobody, footprint=mask)
-                if verbose:
-                    print(
-                        " ...grow_upward: k, _geobody.shape = ",
-                        k,
-                        _geobody[_geobody > 0].shape,
-                    )
-            except:
-                break
-        return _geobody
-
-    @staticmethod
-    def grow_downward(geobody, iterations, dist=1, verbose=False):
-        from scipy.ndimage.morphology import grey_dilation
-
-        dist_size = 2 * dist + 1
-        mask = np.zeros((1, 1, dist_size))
-        mask[0, 0, dist:] = 1
-        _geobody = geobody.copy()
-        if verbose:
-            print(" ...grow_downward: _geobody.shape = ", _geobody[_geobody > 0].shape)
-        for k in range(iterations):
-            try:
-                _geobody = grey_dilation(_geobody, footprint=mask)
-                if verbose:
-                    print(
-                        " ...grow_downward: k, _geobody.shape = ",
-                        k,
-                        _geobody[_geobody > 0].shape,
-                    )
-            except:
-                break
-        return _geobody
-
-    @staticmethod
-    def _threshold_volumes(volume, threshold=0.5):
-        volume[volume >= threshold] = 1.0
-        volume[volume < threshold] = 0.0
-        return volume
-
-    def parse_closure_codes(self, hc_closure_codes, labels, num, code=0.1):
-        labels = labels.astype("float32")
-        if num > 0:
-            for x in range(1, num + 1):
-                y = code + labels[labels == x].size
-                labels[labels == x] = y
-            hc_closure_codes += labels
-        return hc_closure_codes
-
-
-class Intersect3D(Closures):
-    def __init__(
-        self,
-        faults,
-        onlaps,
-        oil_closures,
-        gas_closures,
-        brine_closures,
-        closure_segment_list,
-        closure_segments,
-        parameters,
-    ):
-        self.closure_segment_list = closure_segment_list
-        self.closure_segments = closure_segments
-        self.cfg = parameters
-
-        self.fault_throw = faults.max_fault_throw
-        self.geologic_age = faults.faulted_age_volume
-        self.geomodel_ng = faults.faulted_net_to_gross
-        self.faults = self._threshold_volumes(faults.fault_planes.copy())
-        self.onlaps = self._threshold_volumes(onlaps.copy())
-        self.oil_closures = self._threshold_volumes(oil_closures.copy())
-        self.gas_closures = self._threshold_volumes(gas_closures.copy())
-        self.brine_closures = self._threshold_volumes(brine_closures.copy())
-
-        self.wide_faults = None
-        self.fat_faults = None
-        self.onlaps_upward = None
-        self.onlaps_downward = None
-        self._dilate_faults_and_onlaps()
-
-        # Outputs
-        self.faulted_closures_oil = np.zeros_like(self.oil_closures)
-        self.faulted_closures_gas = np.zeros_like(self.gas_closures)
-        self.faulted_closures_brine = np.zeros_like(self.brine_closures)
-        self.fault_closures_oil_segment_list = list()
-        self.fault_closures_gas_segment_list = list()
-        self.fault_closures_brine_segment_list = list()
-        self.n_fault_closures_oil = 0
-        self.n_fault_closures_gas = 0
-        self.n_fault_closures_brine = 0
-
-        self.onlap_closures_oil = np.zeros_like(self.oil_closures)
-        self.onlap_closures_gas = np.zeros_like(self.gas_closures)
-        self.onlap_closures_brine = np.zeros_like(self.brine_closures)
-        self.onlap_closures_oil_segment_list = list()
-        self.onlap_closures_gas_segment_list = list()
-        self.onlap_closures_brine_segment_list = list()
-        self.n_onlap_closures_oil = 0
-        self.n_onlap_closures_gas = 0
-        self.n_onlap_closures_brine = 0
-
-        self.simple_closures_oil = np.zeros_like(self.oil_closures)
-        self.simple_closures_gas = np.zeros_like(self.gas_closures)
-        self.simple_closures_brine = np.zeros_like(self.brine_closures)
-        self.n_4way_closures_oil = 0
-        self.n_4way_closures_gas = 0
-        self.n_4way_closures_brine = 0
-
-        self.false_closures_oil = np.zeros_like(self.oil_closures)
-        self.false_closures_gas = np.zeros_like(self.gas_closures)
-        self.false_closures_brine = np.zeros_like(self.brine_closures)
-        self.n_false_closures_oil = 0
-        self.n_false_closures_gas = 0
-        self.n_false_closures_brine = 0
-
-    def find_faulted_closures(self):
-        for iclosure in self.closure_segment_list:
-            i, j, k = np.where(self.closure_segments == iclosure)
-            faults_within_closure = self.wide_faults[i, j, k]
-            if faults_within_closure.max() > 0:
-                if self.oil_closures[i, j, k].max() > 0:
-                    # Faulted oil closure
-                    self.faulted_closures_oil[i, j, k] = 1.0
-                    self.n_fault_closures_oil += 1
-                    self.fault_closures_oil_segment_list.append(iclosure)
-                elif self.gas_closures[i, j, k].max() > 0:
-                    # Faulted gas closure
-                    self.faulted_closures_gas[i, j, k] = 1.0
-                    self.n_fault_closures_gas += 1
-                    self.fault_closures_gas_segment_list.append(iclosure)
-                elif self.brine_closures[i, j, k].max() > 0:
-                    # Faulted brine closure
-                    self.faulted_closures_brine[i, j, k] = 1.0
-                    self.n_fault_closures_brine += 1
-                    self.fault_closures_brine_segment_list.append(iclosure)
-                else:
-                    print(
-                        "Closure is faulted but does not have oil, gas or brine assigned"
-                    )
-
-    def find_onlap_closures(self):
-        for iclosure in self.closure_segment_list:
-            i, j, k = np.where(self.closure_segments == iclosure)
-            onlaps_within_closure = self.onlaps_upward[i, j, k]
-            if onlaps_within_closure.max() > 0:
-                if self.oil_closures[i, j, k].max() > 0:
-                    self.onlap_closures_oil[i, j, k] = 1.0
-                    self.n_onlap_closures_oil += 1
-                    self.onlap_closures_oil_segment_list.append(iclosure)
-                elif self.gas_closures[i, j, k].max() > 0:
-                    self.onlap_closures_gas[i, j, k] = 1.0
-                    self.n_onlap_closures_gas += 1
-                    self.onlap_closures_gas_segment_list.append(iclosure)
-                elif self.brine_closures[i, j, k].max() > 0:
-                    self.onlap_closures_brine[i, j, k] = 1.0
-                    self.n_onlap_closures_brine += 1
-                    self.onlap_closures_brine_segment_list.append(iclosure)
-                else:
-                    print(
-                        "Closure is onlap but does not have oil, gas or brine assigned"
-                    )
-
-    def find_simple_closures(self):
-        for iclosure in self.closure_segment_list:
-            i, j, k = np.where(self.closure_segments == iclosure)
-            faults_within_closure = self.wide_faults[i, j, k]
-            onlaps_within_closure = self.onlaps[i, j, k]
-            oil_within_closure = self.oil_closures[i, j, k]
-            gas_within_closure = self.gas_closures[i, j, k]
-            brine_within_closure = self.brine_closures[i, j, k]
-            if faults_within_closure.max() == 0 and onlaps_within_closure.max() == 0:
-                if oil_within_closure.max() > 0:
-                    self.simple_closures_oil[i, j, k] = 1.0
-                    self.n_4way_closures_oil += 1
-                elif gas_within_closure.max() > 0:
-                    self.simple_closures_gas[i, j, k] = 1.0
-                    self.n_4way_closures_gas += 1
-                elif brine_within_closure.max() > 0:
-                    self.simple_closures_brine[i, j, k] = 1.0
-                    self.n_4way_closures_brine += 1
-                else:
-                    print(
-                        "Closure is not faulted or onlap but does not have oil, gas or brine assigned"
-                    )
-
-    def find_false_closures(self):
-        for iclosure in self.closure_segment_list:
-            i, j, k = np.where(self.closure_segments == iclosure)
-            faults_within_closure = self.fat_faults[i, j, k]
-            onlaps_within_closure = self.onlaps_downward[i, j, k]
             for fluid, false, num in zip(
                 [self.oil_closures, self.gas_closures, self.brine_closures],
                 [
@@ -2746,202 +1886,23 @@ class Intersect3D(Closures):
                             false[i, j, k] = 1
                             num += 1
 
-    def grow_to_fault2(self, closures):
-        # - grow closures laterally and up within layer and within fault block
-        print(
-            "\n\n ... grow_to_fault2: grow closures laterally and up within layer and within fault block ..."
+    def _dilate_faults(self):
+        thresholded_faults = self._threshold_volumes(self.faults.fault_planes[:])
+        self.wide_faults[:] = self.grow_lateral(
+            thresholded_faults, iterations=9, dist=1
         )
-        self.cfg.write_to_logfile("growing closures to fault plane: grow_to_fault2")
-
-        dilated_fault_closures = closures.copy()
-        n_faulted_closures = dilated_fault_closures.max()
-        labels_clean = self.closure_segments.copy()
-        labels_clean[closures == 0] = 0
-        labels_clean_list = list(set(labels_clean.flatten()))
-        labels_clean_list.remove(0)
-        print("\n    ... grow_to_fault2: n_faulted_closures = ", len(labels_clean_list))
-        print("    ... grow_to_fault2: faulted_closures = ", labels_clean_list)
-
-        # fixme remove this once small closures are found and fixed
-        voxel_sizes = [
-            self.closure_segments[self.closure_segments == i].size
-            for i in labels_clean_list
-        ]
-        for _v in voxel_sizes:
-            print(f"Voxel_Sizes: {_v}")
-            if _v < self.cfg.closure_min_voxels:
-                print(_v)
-
-        depth_cube = np.zeros(self.geologic_age.shape, float)
-        _depths = np.arange(self.geologic_age.shape[2])
-        depth_cube += _depths.reshape(1, 1, self.geologic_age.shape[2])
-        _ng = self.geomodel_ng.copy()
-        _age = self.geologic_age.copy()
-
-        for il, i in enumerate(labels_clean_list):
-            fault_blocks_list = list(set(self.fault_throw[labels_clean == i].flatten()))
-            print("    ... grow_to_fault2: fault_blocks_list = ", fault_blocks_list)
-            for jl, j in enumerate(fault_blocks_list):
-                print(
-                    "\n\n    ... label, throw = ",
-                    i,
-                    j,
-                    list(set(self.fault_throw[labels_clean == i].flatten())),
-                    labels_clean[labels_clean == i].size,
-                    self.fault_throw[self.fault_throw == j].size,
-                    self.fault_throw[
-                        np.where((labels_clean == i) & (self.fault_throw == j))
-                    ].size,
-                )
-                single_closure = labels_clean * 0.0
-                size = single_closure[
-                    np.where(
-                        (labels_clean == i) & (np.abs(self.fault_throw - j) < 0.25)
-                    )
-                ].size
-                if size >= self.cfg.closure_min_voxels:
-                    print(f"Label: {i}, fault_block: {j}, Voxel_Count: {size}")
-                    single_closure[
-                        np.where(
-                            (labels_clean == i) & (np.abs(self.fault_throw - j) < 0.25)
-                        )
-                    ] = 1
-                if single_closure[single_closure > 0].size == 0:
-                    # labels_clean[np.where((labels_clean == i) & (np.abs(self.fault_throw - j) < .25))] = 0
-                    labels_clean[np.where(labels_clean == i)] = 0
-                    continue
-                avg_ng = _ng[single_closure == 1].mean()
-                _geo_age_voxels = (_age[single_closure == 1] + 0.5).astype("int")
-                _ng_voxels = _ng[single_closure == 1]
-                _geo_age_voxels = _geo_age_voxels[_ng_voxels >= avg_ng / 2.0]
-                min_geo_age = _geo_age_voxels.min() - 0.5
-                avg_geo_age = int(_geo_age_voxels.mean())
-                max_geo_age = _geo_age_voxels.max() + 0.5
-                _depth_geobody_voxels = depth_cube[single_closure == 1]
-                min_depth = _depth_geobody_voxels.min()
-                max_depth = _depth_geobody_voxels.max()
-                avg_throw = np.median(self.fault_throw[single_closure == 1])
-
-                closure_boundary_cube = closures * 0.0
-                closure_boundary_cube[
-                    np.where(
-                        (_ng > 0.0)
-                        & (_age > min_geo_age)
-                        & (_age < max_geo_age)
-                        & (self.fault_throw == avg_throw)
-                        & (depth_cube <= max_depth)
-                    )
-                ] = 1.0
-                print(
-                    "\n    ... grow_to_fault2: closure_boundary_cube voxels = ",
-                    closure_boundary_cube[closure_boundary_cube == 1].size,
-                )
-
-                n_voxel = single_closure[single_closure == 1].size
-
-                original_voxels = n_voxel + 0
-                print(
-                    "\n    ... closure label number, avg_throw, geobody shape, geo_age min/mean/max, depth min/max, avg_ng = ",
-                    i,
-                    j,
-                    n_voxel,
-                    (min_geo_age, avg_geo_age, max_geo_age),
-                    (min_depth, max_depth),
-                    avg_ng,
-                    il,
-                    " / ",
-                    len(labels_clean_list),
-                )
-
-                grown_closure = single_closure.copy()
-                grown_closure[depth_cube >= max_depth] = 0
-                delta_voxel = 0
-                previous_delta_voxel = 1e9
-                converged = False
-                for ii in range(15):
-                    grown_closure = self.grow_lateral(grown_closure, 1, dist=2)
-                    grown_closure = self.grow_upward(grown_closure, 1, dist=1)
-                    # stay within layer, within age, within fault block, above HCWC
-                    grown_closure[closure_boundary_cube == 0.0] = 0.0
-                    single_closure = single_closure + grown_closure
-                    single_closure[single_closure > 0] = i
-                    new_n_voxel = single_closure[single_closure > 0].size
-                    previous_delta_voxel = delta_voxel + 0
-                    delta_voxel = new_n_voxel - n_voxel
-                    print(
-                        "    ... i, ii, closure label number, geobody shape, delta_voxel, previous_delta_voxel,"
-                        " delta_voxel>previous_delta_voxel = ",
-                        i,
-                        ii,
-                        new_n_voxel,
-                        delta_voxel,
-                        previous_delta_voxel,
-                        delta_voxel > previous_delta_voxel,
-                    )
-                    if n_voxel == new_n_voxel:
-                        # finish bottom voxel layer near "HCWC"
-                        grown_closure = self.grow_downward(
-                            grown_closure, 1, dist=1, verbose=False
-                        )
-                        # stay within layer, within age, within fault block, above HCWC
-                        grown_closure[closure_boundary_cube == 0.0] = 0.0
-                        single_closure = single_closure + grown_closure
-                        single_closure[single_closure > 0] = i
-                        converged = True
-                        break
-                    else:
-                        n_voxel = new_n_voxel
-                    previous_delta_voxel = delta_voxel + 0
-                if converged is True:
-                    labels_clean[single_closure > 0] = i
-                    msg_postscript = " converged"
-                else:
-                    labels_clean[labels_clean == i] = -i
-                    msg_postscript = " NOT converged"
-                msg = (
-                    "closure_id: "
-                    + format(i, "4d")
-                    + ", fault_id: "
-                    + format(int(j + 0.5), "4d")
-                    + ", original_voxels: "
-                    + format(original_voxels, "11,.0f")
-                    + ", new_n_voxel: "
-                    + format(new_n_voxel, "11,.0f")
-                    + ", percent_growth: "
-                    + format(float(new_n_voxel) / original_voxels, "6.2f")
-                )
-                print(msg + msg_postscript)
-                self.cfg.write_to_logfile(msg + msg_postscript)
-
-        # Set small closures to 0 after growth
-        _grown_labels = measure.label(labels_clean, connectivity=2, background=0)
-        for x in np.unique(_grown_labels):
-            size = _grown_labels[_grown_labels == x].size
-            print(f"Size before editing: {size}")
-            if size < self.cfg.closure_min_voxels:
-                labels_clean[_grown_labels == x] = 0.0
-        for x in np.unique(labels_clean):
-            size = labels_clean[labels_clean == x].size
-            print(f"Size after editing: {size}")
-
-        return labels_clean
-
-    def _dilate_faults_and_onlaps(self):
-        self.wide_faults = self.grow_lateral(self.faults, 9, dist=1, verbose=False)
-        self.fat_faults = self.grow_lateral(self.faults, 21, dist=1, verbose=False)
-        mask = np.zeros((1, 1, 3))
-        mask[0, 0, :2] = 1
-        self.onlaps_upward = morphology.binary_dilation(self.onlaps, mask)
-        mask = np.zeros((1, 1, 3))
-        mask[0, 0, 1:] = 1
-        self.onlaps_downward = self.onlaps.copy()
-        for k in range(30):
-            try:
-                self.onlaps_downward = morphology.binary_dilation(
-                    self.onlaps_downward, mask
-                )
-            except:
-                break
+        self.fat_faults[:] = self.grow_lateral(
+            thresholded_faults, iterations=21, dist=1
+        )
+        if self.cfg.include_salt:
+            # Treat the salt body as a fault to grow closures to boundary
+            thresholded_salt = self._threshold_volumes(
+                self.faults.salt_model.salt_segments[:]
+            )
+            wide_salt = self.grow_lateral(thresholded_salt, iterations=9, dist=1)
+            self.wide_salt[:] = wide_salt
+            # Add salt to faults to cehck if growing the closure works
+            self.wide_faults[:] += wide_salt
 
     @staticmethod
     def _threshold_volumes(volume, threshold=0.5):
@@ -2949,35 +1910,7 @@ class Intersect3D(Closures):
         volume[volume < threshold] = 0.0
         return volume
 
-    @staticmethod
-    def grow_up_and_lateral(geobody, iterations, vdist=1, hdist=1, verbose=False):
-        from scipy.ndimage import maximum_filter
-
-        hdist_size = 2 * hdist + 1
-        vdist_size = 2 * vdist + 1
-        mask = np.zeros((hdist_size, hdist_size, vdist_size))
-        mask[:, :, : vdist + 1] = 1
-        _geobody = geobody.copy()
-        if verbose:
-            print(
-                " ...grow_up_and_lateral: _geobody.shape = ",
-                _geobody[_geobody > 0].shape,
-            )
-        for k in range(iterations):
-            try:
-                _geobody = maximum_filter(_geobody, footprint=mask)
-                if verbose:
-                    print(
-                        " ...grow_up_and_lateral: k, _geobody.shape = ",
-                        k,
-                        _geobody[_geobody > 0].shape,
-                    )
-            except:
-                break
-        return _geobody
-
-    @staticmethod
-    def grow_lateral(geobody, iterations, dist=1, verbose=False):
+    def grow_lateral(self, geobody, iterations, dist=1, verbose=False):
         from scipy.ndimage.morphology import grey_dilation
 
         dist_size = 2 * dist + 1
@@ -2999,74 +1932,274 @@ class Intersect3D(Closures):
                 break
         return _geobody
 
-    @staticmethod
-    def grow_upward(geobody, iterations, dist=1, verbose=False):
-        from scipy.ndimage.morphology import grey_dilation
+    def write_closure_volumes_to_disk(self):
+        """Write the closure volumes to disk as separate cubes"""
+        if self.cfg.verbose:
+            print("\n   ... writing closure volumes to disk")
 
-        dist_size = 2 * dist + 1
-        mask = np.zeros((1, 1, dist_size))
-        mask[0, 0, : dist + 1] = 1
-        _geobody = geobody.copy()
-        if verbose:
-            print(" ...grow_upward: _geobody.shape = ", _geobody[_geobody > 0].shape)
-        for k in range(iterations):
-            try:
-                _geobody = grey_dilation(_geobody, footprint=mask)
-                if verbose:
-                    print(
-                        " ...grow_upward: k, _geobody.shape = ",
-                        k,
-                        _geobody[_geobody > 0].shape,
+        # Simple closures
+        if self.simple_closures is not None:
+            self.write_cube_to_disk(self.simple_closures[:], "simple_closures")
+        if self.simple_closures_oil is not None:
+            self.write_cube_to_disk(self.simple_closures_oil[:], "simple_closures_oil")
+        if self.simple_closures_gas is not None:
+            self.write_cube_to_disk(self.simple_closures_gas[:], "simple_closures_gas")
+        if self.simple_closures_brine is not None:
+            self.write_cube_to_disk(self.simple_closures_brine[:], "simple_closures_brine")
+        # Stratigraphic (onlap) closures
+        if self.strat_closures is not None:
+            self.write_cube_to_disk(self.strat_closures[:], "strat_closures")
+        if self.onlap_closures_oil is not None:
+            self.write_cube_to_disk(self.onlap_closures_oil[:], "onlap_closures_oil")
+        if self.onlap_closures_gas is not None:
+            self.write_cube_to_disk(self.onlap_closures_gas[:], "onlap_closures_gas")
+        if self.onlap_closures_brine is not None:
+            self.write_cube_to_disk(self.onlap_closures_brine[:], "onlap_closures_brine")
+        # Fault closures
+        if self.fault_closures is not None:
+            self.write_cube_to_disk(self.fault_closures[:], "fault_closures")
+        if self.faulted_closures_oil is not None:
+            self.write_cube_to_disk(self.faulted_closures_oil[:], "faulted_closures_oil")
+        if self.faulted_closures_gas is not None:
+            self.write_cube_to_disk(self.faulted_closures_gas[:], "faulted_closures_gas")
+        if self.faulted_closures_brine is not None:
+            self.write_cube_to_disk(self.faulted_closures_brine[:], "faulted_closures_brine")
+        # All closures
+        if self.all_closure_segments is not None:
+            self.write_cube_to_disk(self.all_closure_segments[:], "all_closure_segments")
+
+    def calculate_closure_statistics(self, fluid, closure_type):
+        """Calculate and log statistics for closures"""
+        if fluid[fluid > 0.0].size == 0:
+            return
+        closure_volumes = fluid[fluid > 0.0].size
+        closure_mean = fluid[fluid > 0.0].mean()
+        closure_std = fluid[fluid > 0.0].std()
+        closure_min = fluid[fluid > 0.0].min()
+        closure_max = fluid[fluid > 0.0].max()
+        msg = f"{closure_type} closures: "
+        msg += f"n: {closure_volumes}, "
+        msg += f"mean: {closure_mean:.2f}, "
+        msg += f"std: {closure_std:.2f}, "
+        msg += f"min: {closure_min:.2f}, "
+        msg += f"max: {closure_max:.2f}"
+        print(msg)
+        return msg
+
+    def assign_fluid_types(self, label_values, labels_clean):
+        """randomly assign oil or gas to closure"""
+        print(
+            " labels_clean.min(), labels_clean.max() = ",
+            labels_clean.min(),
+            labels_clean.max(),
+        )
+        _brine_closures = (labels_clean * 0.0).astype("uint8")
+        _oil_closures = (labels_clean * 0.0).astype("uint8")
+        _gas_closures = (labels_clean * 0.0).astype("uint8")
+
+        fluid_type_code = np.random.randint(3, size=labels_clean.max() + 1)
+
+        _closure_segments = self.closure_segments[:]
+        for i in range(1, labels_clean.max() + 1):
+            voxel_count = labels_clean[labels_clean == i].size
+            if voxel_count > 0:
+                print(f"Voxel Count: {voxel_count}\tFluid type: {fluid_type_code[i]}")
+            # not in closure = 0
+            # closure with brine filled reservoir fluid_type_code = 1 (same as background)
+            # closure with oil filled reservoir fluid_type_code = 2
+            # closure with gas filled reservoir fluid_type_code = 3
+            if i in label_values:
+                if fluid_type_code[i] == 0:
+                    # brine: change labels_clean contents to fluid_type_code = 1 (same as background)
+                    _brine_closures[
+                        np.logical_and(labels_clean == i, _closure_segments > 0)
+                    ] = 1
+                elif fluid_type_code[i] == 1:
+                    # oil: change labels_clean contents to fluid_type_code = 2
+                    _oil_closures[labels_clean == i] = 1
+                elif fluid_type_code[i] == 2:
+                    # gas: change labels_clean contents to fluid_type_code = 3
+                    _gas_closures[labels_clean == i] = 1
+        return _oil_closures, _gas_closures, _brine_closures
+
+    def remove_small_objects(self, labels, min_filter=True):
+        try:
+            # Use the global minimum voxel size initially, before closure types are identified
+            labels_clean = morphology.remove_small_objects(
+                labels, self.cfg.closure_min_voxels
+            )
+            if self.cfg.verbose:
+                print("labels_clean succeeded.")
+                print(
+                    " labels.min:{}, labels.max: {}".format(labels.min(), labels.max())
+                )
+                print(
+                    " labels_clean min:{}, labels_clean max: {}".format(
+                        labels_clean.min(), labels_clean.max()
                     )
-            except:
-                break
-        return _geobody
-
-    @staticmethod
-    def grow_downward(geobody, iterations, dist=1, verbose=False):
-        from scipy.ndimage.morphology import grey_dilation
-
-        dist_size = 2 * dist + 1
-        mask = np.zeros((1, 1, dist_size))
-        mask[0, 0, dist:] = 1
-        _geobody = geobody.copy()
-        if verbose:
-            print(" ...grow_downward: _geobody.shape = ", _geobody[_geobody > 0].shape)
-        for k in range(iterations):
-            try:
-                _geobody = grey_dilation(_geobody, footprint=mask)
-                if verbose:
+                )
+        except Exception as e:
+            print(
+                f"Closures/create_closures: labels_clean (remove_small_objects) did not succeed: {e}"
+            )
+            if min_filter:
+                labels_clean = minimum_filter(labels, size=(3, 3, 3))
+                if self.cfg.verbose:
                     print(
-                        " ...grow_downward: k, _geobody.shape = ",
-                        k,
-                        _geobody[_geobody > 0].shape,
+                        " labels.min:{}, labels.max: {}".format(
+                            labels.min(), labels.max()
+                        )
+
                     )
-            except:
-                break
-        return _geobody
+                    print(
+                        " labels_clean min:{}, labels_clean max: {}".format(
+                            labels_clean.min(), labels_clean.max()
+                        )
+
+                    )
+        return labels_clean
 
 
-def variable_max_column_height(top_lith_idx, num_horizons, hmin=25, hmax=200):
+def _flood_fill(horizon, max_column_height=20.0, verbose=False, debug=False):
+    """Locate areas on horizon that are in structural closure.
+
+    # horizon: depth horizon as 2D numpy array.
+    # - assume that fault intersections are inserted with value of 0.
+    # - assume that values represent depth (i.e., bigger values are deeper)
     """
-    Create a 1-D array of maximum column heights using linear function in layer numbers
-    Shallow closures will have small vertical closure heights
-    Deep closures will have larger vertical closure heights
+    from scipy import ndimage
 
-    Would be better to use a pressure profile to determine maximum column heights at given depths
+    # copy input array
+    temp_event = horizon.copy()
 
-    :param top_lith_idx: 1-D array of horizon numbers corresponding to top of layers where lithology changes
-    :param num_horizons: Total number of horizons in model
-    :param hmin: Minimum column height to use in linear function
-    :param hmax: Maximum column height to use in linear function
-    :return: 1-D array of column heights of closures
+    emptypicks = temp_event * 0.0
+    emptypicks[temp_event < 1.0] = 1.0
+    emptypicks_dilated = ndimage.grey_dilation(
+        emptypicks, size=(3, 3), structure=np.ones((3, 3))
+    )
+    # dilation removes some of the event - turn this off to honour the input events exactly
+    # Changed to avoid vertical closure-boundaries near faults
+    # emptypicks_dilated = emptypicks
+    if verbose:
+        print(
+            " emptypicks_dilated min,mean,max = ",
+            emptypicks_dilated.min(),
+            emptypicks_dilated.mean(),
+            emptypicks_dilated.max(),
+        )
+
+    # create boundary around edges of 2D array
+    temp_event[:, :3] = 0.0
+    temp_event[:, -3:] = 0.0
+    temp_event[:3, :] = 0.0
+    temp_event[-3:, :] = 0.0
+
+    # replace pixels with value=0 with vertical 'wall' that is max_column_height deeper than nearby pixels
+    temp_event[
+        np.logical_and(emptypicks_dilated == 2.0, temp_event != 0.0)
+    ] += max_column_height
+    temp_event[emptypicks == 1.0] += 0.0
+
+    # put deep point at map origin to 'collect' flood-fill run-off
+    temp_event[0, 0] = 1.0e5
+
+    # create flags to indicate pick vs no-pick in 2D array
+    flags = np.zeros((horizon.shape[0], horizon.shape[1]), "int")
+    flags[temp_event > 0.0] = 1
+    flags[0, 0] = 1
+
+    flood_filled = -fill_to_spill(-temp_event, flags)
+
+    # set pixels near fault gaps to empty
+    flood_filled[np.logical_and(emptypicks_dilated == 2.0, temp_event != 0.0)] = 0.0
+
+    # limit closure heights to max_column_height
+    # - Note that this typically causes under-filling of shallow 4-way closures
+    if debug:
+        import pdb
+
+        pdb.set_trace()
+    ff = flood_filled.copy()
+    diff = horizon - ff
+    diff[flood_filled == 0.0] = 0.0
+    diff[diff != 0.0] = 1.0
+
+    from skimage import morphology
+    from skimage import measure
+
+    labels = measure.label(diff, connectivity=2, background=0)
+    labels_clean = morphology.remove_small_objects(labels, 50)
+    labels_clean_list = list(set(labels_clean.flatten()))
+    labels_clean_list.sort()
+    for i in labels_clean_list:
+        if i == 0:
+            continue
+        trap_crest = -horizon[labels_clean == i].min()
+        initial_size = horizon[labels_clean == i].size
+        spill_depth_map = np.ones_like(horizon) * (trap_crest - max_column_height)
+        spill_points = np.dstack((-flood_filled, spill_depth_map))
+        spill_point_map = spill_points.max(axis=-1)
+        spill_point_map[spill_point_map == -100000.0] = 0.0
+        spill_point_map[spill_point_map > 0.0] = 0.0
+        flood_filled[labels_clean == i] = -spill_point_map[labels_clean == i]
+        flood_filled[flood_filled < horizon] = horizon[flood_filled < horizon]
+        final_size = horizon[
+            np.where((horizon - flood_filled != 0.0) & (labels_clean == i))
+        ].size
+        print(
+            "  ...inside _flood_fill: i, initial_size, final_size = ",
+            i,
+            initial_size,
+            final_size,
+        )
+        del spill_depth_map
+        del spill_points
+        del spill_point_map
+    del ff
+    del diff
+    del labels
+    del labels_clean
+
+    return flood_filled
+
+
+def variable_max_column_height(top_lith_idx, n_layers, min_height, max_height):
     """
-    # Use a linear function to determine max column height based on layer number
-    column_heights = np.linspace(hmin, hmax, num=num_horizons)
-    max_col_heights = column_heights[top_lith_idx]
-    return max_col_heights
+    Create a 1-D array of maximum column heights using linear function
+    in layer numbers. Shallow closures will have small vertical closure
+    heights. Deep closures will have larger vertical closure heights.
+
+    Would be better to use a pressure profile to determine maximum
+    column heights at given depths.
+
+    Parameters
+    ----------
+    top_lith_idx : array-like
+        1-D array of horizon numbers corresponding to top of layers
+        where lithology changes
+    n_layers : int
+        Total number of layers in the model
+    min_height : float
+        Minimum column height for shallow layers
+    max_height : float
+        Maximum column height for deep layers
+
+    Returns
+    -------
+    numpy.ndarray
+        1-D array of maximum column heights, one for each horizon index
+    """
+    # Normalize horizon indices to [0, 1] range
+    if len(top_lith_idx) == 0:
+        return np.array([])
+
+    # Linear interpolation: deeper horizons (higher indices) get higher heights
+    normalized_indices = np.array(top_lith_idx) / max(1, n_layers - 1)
+    heights = min_height + (max_height - min_height) * normalized_indices
+
+    return heights
 
 
-# Horizon Spill Point functions
 def fill_to_spill(test_array, array_flags, empty_value=1.0e22, quiet=True):
     if not quiet:
         print("   ... start fillToSpill ......")
@@ -3148,7 +2281,6 @@ def flood_fill_heap(test_array, empty_value=1.0e22, quiet=True):
         plt.show()
         plt.savefig("flood_fill.png", format="png")
         plt.close()
-
         print("     ... min & max for surface = ", amin, amax)
 
     # set empty values and nan's to huge
@@ -3210,178 +2342,3 @@ def flood_fill_heap(test_array, empty_value=1.0e22, quiet=True):
                 put(fill_heap, (output_array[n_row, n_col], n_row, n_col, 0))
     output_array[output_array == empty_value] = np.nan
     return output_array
-
-
-def _flood_fill(horizon, max_column_height=20.0, verbose=False, debug=False):
-    """Locate areas on horizon that are in structural closure.
-
-    # horizon: depth horizon as 2D numpy array.
-    # - assume that fault intersections are inserted with value of 0.
-    # - assume that values represent depth (i.e., bigger values are deeper)"""
-    from scipy import ndimage
-
-    # copy input array
-    temp_event = horizon.copy()
-
-    emptypicks = temp_event * 0.0
-    emptypicks[temp_event < 1.0] = 1.0
-    emptypicks_dilated = ndimage.grey_dilation(
-        emptypicks, size=(3, 3), structure=np.ones((3, 3))
-    )
-    # dilation removes some of the event - turn this off to honour the input events exactly
-    # Changed to avoid vertical closure-boundaries near faults
-    # emptypicks_dilated = emptypicks
-    if verbose:
-        print(
-            " emptypicks_dilated min,mean,max = ",
-            emptypicks_dilated.min(),
-            emptypicks_dilated.mean(),
-            emptypicks_dilated.max(),
-        )
-
-    # create boundary around edges of 2D array
-    temp_event[:, :3] = 0.0
-    temp_event[:, -3:] = 0.0
-    temp_event[:3, :] = 0.0
-    temp_event[-3:, :] = 0.0
-
-    # replace pixels with value=0 with vertical 'wall' that is max_column_height deeper than nearby pixels
-    temp_event[np.logical_and(emptypicks_dilated == 2.0, temp_event != 0.0)] += (
-        max_column_height
-    )
-    temp_event[emptypicks == 1.0] += 0.0
-
-    # put deep point at map origin to 'collect' flood-fill run-off
-    temp_event[0, 0] = 1.0e5
-
-    # create flags to indicate pick vs no-pick in 2D array
-    flags = np.zeros((horizon.shape[0], horizon.shape[1]), "int")
-    flags[temp_event > 0.0] = 1
-    flags[0, 0] = 1
-
-    flood_filled = -fill_to_spill(-temp_event, flags)
-
-    # set pixels near fault gaps to empty
-    flood_filled[np.logical_and(emptypicks_dilated == 2.0, temp_event != 0.0)] = 0.0
-
-    # limit closure heights to max_column_height
-    # - Note that this typically causes under-filling of shallow 4-way closures
-    if debug:
-        import pdb
-
-        pdb.set_trace()
-    ff = flood_filled.copy()
-    diff = horizon - ff
-    diff[flood_filled == 0.0] = 0.0
-    diff[diff != 0.0] = 1.0
-
-    from skimage import morphology
-    from skimage import measure
-
-    labels = measure.label(diff, connectivity=2, background=0)
-    labels_clean = morphology.remove_small_objects(labels, 50)
-    labels_clean_list = list(set(labels_clean.flatten()))
-    labels_clean_list.sort()
-    for i in labels_clean_list:
-        if i == 0:
-            continue
-        trap_crest = -horizon[labels_clean == i].min()
-        initial_size = horizon[labels_clean == i].size
-        spill_depth_map = np.ones_like(horizon) * (trap_crest - max_column_height)
-        spill_points = np.dstack((-flood_filled, spill_depth_map))
-        spill_point_map = spill_points.max(axis=-1)
-        spill_point_map[spill_point_map == -100000.0] = 0.0
-        spill_point_map[spill_point_map > 0.0] = 0.0
-        flood_filled[labels_clean == i] = -spill_point_map[labels_clean == i]
-        flood_filled[flood_filled < horizon] = horizon[flood_filled < horizon]
-        final_size = horizon[
-            np.where((horizon - flood_filled != 0.0) & (labels_clean == i))
-        ].size
-        print(
-            "  ...inside _flood_fill: i, initial_size, final_size = ",
-            i,
-            initial_size,
-            final_size,
-        )
-        del spill_depth_map
-        del spill_points
-        del spill_point_map
-    del ff
-    del diff
-    del labels
-    del labels_clean
-
-    return flood_filled
-
-
-def get_top_of_closure(inarray, pad_up=0, pad_down=0):
-    """Create a mask leaving only the top of a closure."""
-    mask = inarray != 0
-    t = np.where(mask.any(axis=-1), mask.argmax(axis=-1), -1)
-    xy = np.argwhere(t > 0)
-    z = t[t > 0]
-    outarray = np.zeros_like(inarray)
-    for (x, y), z in zip(xy, z):
-        zmin = z - pad_up
-        zmax = z + pad_down + 1
-        outarray[x, y, zmin:zmax] = 1
-    return outarray
-
-
-def lsq(x, y, axis=-1):
-    ###
-    ### compute the slope and intercept for an array with points to be fit
-    ### in the last dimension. can be in other axis using the 'axis' parmameter.
-    ###
-    ### returns:
-    ### - intercept
-    ### - slope
-    ### - pearson r (normalized cross-correlation coefficient)
-    ###
-    ### output will have dimensions of input with one less axis
-    ### - (specified by axis parameter)
-    ###
-
-    """
-    # compute x and y with mean removed
-    x_zeromean = x * 1.
-    x_zeromean -= x.mean(axis=axis).reshape(x.shape[0],x.shape[1],1)
-    y_zeromean = y * 1.
-    y_zeromean -= y.mean(axis=axis).reshape(y.shape[0],y.shape[1],1)
-    """
-
-    # compute pearsonr
-    r = np.sum(x * y, axis=axis) - np.sum(x) * np.sum(y, axis=axis) / y.shape[axis]
-    r /= np.sqrt(
-        (np.sum(x**2, axis=axis) - np.sum(x, axis=axis) ** 2 / y.shape[axis])
-        * (np.sum(y**2, axis=axis) - np.sum(y, axis=axis) ** 2 / y.shape[axis])
-    )
-
-    # compute slope
-    slope = r * y.std(axis=axis) / x.std(axis=axis)
-
-    # compute intercept
-    intercept = y.mean(axis=axis) - slope * x.mean(axis=axis)
-
-    return intercept, slope, r
-
-
-def compute_ai_gi(parameters, seismic_data):
-    """[summary]
-
-    Args:
-        cfg (Parameter class object): Model Parameters
-        seismic_data (np.array): Seismic data with shape n * x * y * z,
-                                 where n is number of angle stacks
-    """
-    inc_angles = np.array(parameters.incident_angles)
-    inc_angles = np.sin(inc_angles * np.pi / 180.0) ** 2
-    inc_angles = inc_angles.reshape(len(inc_angles), 1, 1, 1)
-
-    intercept, slope, _ = lsq(inc_angles, seismic_data, axis=0)
-
-    intercept[np.isnan(intercept)] = 0.0
-    slope[np.isnan(slope)] = 0.0
-    intercept[np.isinf(intercept)] = 0.0
-    slope[np.isinf(slope)] = 0.0
-    return intercept, slope

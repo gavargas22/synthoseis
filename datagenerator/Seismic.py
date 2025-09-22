@@ -446,11 +446,8 @@ class SeismicVolume(Geomodel):
         noise_0deg = self.noise_3d(self.rfc_raw.shape[1:], verbose=False)
         noise_45deg = self.noise_3d(self.rfc_raw.shape[1:], verbose=False)
         # Store the noise models
-        self.noise_0deg = self.cfg.hdf_init("noise_0deg", shape=noise_0deg.shape)
-        self.noise_45deg = self.cfg.hdf_init("noise_45deg", shape=noise_45deg.shape)
-        self.noise_0deg[:] = noise_0deg
-        self.noise_45deg[:] = noise_45deg
-
+        self.noise_0deg = self.cfg.storage.create_dataset("noise_0deg", data=noise_0deg)
+        self.noise_45deg = self.cfg.storage.create_dataset("noise_45deg", data=noise_45deg)
         for x, ang in enumerate(self.angles):
             weighted_noise = noise_0deg * (cos(ang) ** 2) + noise_45deg * (
                 sin(ang) ** 2

@@ -671,9 +671,9 @@ class RandomHorizonStack(Horizons):
 
         if self.cfg.verbose:
             print("\n ... finished creating horizon layers ...")
-        # Store maps in hdf file
-        self.depth_maps = self.cfg.hdf_init("depth_maps", shape=depth_maps.shape)
-        self.depth_maps[:] = depth_maps
+        # Store maps in storage
+        self.cfg.storage.create_dataset("depth_maps", depth_maps)
+        self.depth_maps = self.cfg.storage.get_dataset("depth_maps")
 
         self.cfg.write_to_logfile(
             f"number_layers: {self.max_layers}",

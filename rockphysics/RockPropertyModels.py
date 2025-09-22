@@ -480,7 +480,7 @@ def clip_vp_via_poissons_ratio(vp, vs):
 def store_1d_trend_dict_to_hdf(cfg, d, z):
     # Store arrays in HDF
     for k, v in d.items():
-        cfg.hdf_init(f"rpm_1d_{k}", shape=z.shape)[:] = v
+        cfg.storage.create_dataset(f"rpm_1d_{k}", data=v)
 
 
 def calc_ai(rho, vp, log=False):

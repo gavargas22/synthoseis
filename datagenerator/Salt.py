@@ -34,7 +34,8 @@ class SaltModel:
             self.cfg.cube_shape[1],
             self.cfg.cube_shape[2] + self.cfg.pad_samples,
         )
-        self.salt_segments = self.cfg.hdf_init("salt_segments", shape=cube_shape)
+        self.cfg.storage.create_dataset("salt_segments", shape=cube_shape)
+        self.salt_segments = self.cfg.storage.get_dataset("salt_segments")
         self.points = []
 
     def compute_salt_body_segmentation(self) -> None:
@@ -58,9 +59,14 @@ class SaltModel:
             self.cfg.cube_shape[0] / 5,
             self.cfg.cube_shape[0] / 4,
         )
-        shallowest_salt = self.cfg.storage.get_dataset("faulted_depth_maps")[
-            :, :, 1
-        ].copy()
+        try:
+            shallowest_salt = self.cfg.storage.get_dataset("depth_maps")[
+                :, :, 1
+            ].copy()
+        except Exception as e:
+            print(f"Error getting depth_maps: {e}")
+            print("Available datasets:", self.cfg.storage.list_datasets())
+            raise
         # shallowest_salt -= pad_samples / infill_factor
         # shallowest_salt -= pad_samples
         # shallowest_salt /= infill_factor
@@ -323,7 +329,7 @@ class SaltModel:
             faulted_depth_map_indices = np.clip(
                 faulted_depth_map_indices,
                 0,
-                self.cfg.storage.get_dataset("faulted_depth").shape[2] - 1,
+                depth_maps.shape[2] - 1,
             )
 
             _label = salt_segments[ii, jj, faulted_depth_map_indices]
@@ -345,7 +351,7 @@ class SaltModel:
 
         self.cfg.storage.create_dataset("faulted_depth_maps_gaps", depth_maps_gaps_salt)
 
-    def update_depth_maps_with_salt_segments_drag(self):
+    def update_depth_maps_with_salt_segments_drag(self, depth_maps, depth_maps_gaps):
         """
         Update depth maps with salt segments frag
         -----------------------------------------
@@ -354,7 +360,10 @@ class SaltModel:
 
         Parameters
         ----------
-        None
+        depth_maps : np.ndarray
+            The faulted depth maps.
+        depth_maps_gaps : np.ndarray
+            The faulted depth maps gaps.
 
         Returns
         -------
@@ -372,8 +381,8 @@ class SaltModel:
             indexing="ij",
         )
 
-        depth_maps = self.cfg.storage.get_dataset("faulted_depth_maps")
-        depth_maps_gaps = self.cfg.storage.get_dataset("faulted_depth_maps_gaps")
+        # depth_maps = self.cfg.storage.get_dataset("faulted_depth_maps")
+        # depth_maps_gaps = self.cfg.storage.get_dataset("faulted_depth_maps_gaps")
         salt_segments = self.cfg.storage.get_dataset("salt_segments")
 
         if self.cfg.model_qc_volumes:
@@ -409,7 +418,7 @@ class SaltModel:
             faulted_depth_map_indices = np.clip(
                 faulted_depth_map_indices,
                 0,
-                self.cfg.storage.get_dataset("faulted_depth").shape[2] - 1,
+                depth_maps.shape[2] - 1,
             )
 
             _label = salt_segments[ii, jj, faulted_depth_map_indices]

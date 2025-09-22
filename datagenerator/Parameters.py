@@ -6,6 +6,7 @@ import os
 import pathlib
 import glob
 import sqlite3
+import subprocess
 from subprocess import CalledProcessError
 import numpy as np
 from synthoseis.storage import StorageClient
