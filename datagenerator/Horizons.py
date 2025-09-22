@@ -366,6 +366,12 @@ class RandomHorizonStack(Horizons):
             print("self.cfg.num_lyr_lut = ", self.cfg.num_lyr_lut)
             print("onlap_layer_list = ", onlap_layer_list)
         onlap_array_dim = int(500 / 1250 * self.cfg.cube_shape[2])
+        # Onlaps
+        onlap_layer_list = np.sort(
+            np.random.uniform(
+                low=5, high=onlap_array_dim - 1, size=int(np.random.triangular(1, 4, 7) + 0.5)
+            ).astype("int")
+        )
         self.onlaps = np.zeros(onlap_array_dim, "int")
         self.onlaps[onlap_layer_list] = 1
 
@@ -705,6 +711,12 @@ class Onlaps(Horizons):
             print("self.cfg.num_lyr_lut = ", self.cfg.num_lyr_lut)
             print("onlap_layer_list = ", onlap_layer_list)
         onlap_array_dim = int(500 / 1250 * self.cfg.cube_shape[2])
+        # Onlaps
+        onlap_layer_list = np.sort(
+            np.random.uniform(
+                low=5, high=onlap_array_dim - 1, size=int(np.random.triangular(1, 4, 7) + 0.5)
+            ).astype("int")
+        )
         self.onlaps = np.zeros(onlap_array_dim, "int")
         self.onlaps[onlap_layer_list] = 1
 

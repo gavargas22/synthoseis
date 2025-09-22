@@ -78,12 +78,14 @@ class StorageClient:
             self.store.create_array(
                 name, data=data, chunks=chunks, compressor=compressor
             )
+            return self.store[name][...]
         else:
             # Create empty array with shape
             self.store.create_array(
                 name, shape=actual_shape, dtype=dtype,
                 chunks=chunks, compressor=compressor
             )
+            return None
 
     def get_dataset(self, name: str, use_dask: bool = False):
         if name not in self.store:
