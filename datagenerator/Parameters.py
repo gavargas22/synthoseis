@@ -669,10 +669,7 @@ class Parameters(_Borg):
         self.sand_layer_thickness = d["sand_layer_thickness"]
         self.sand_layer_pct_min = d["sand_layer_fraction"]["min"]
         self.sand_layer_pct_max = d["sand_layer_fraction"]["max"]
-        self.hdf_store = d.get("write_to_hdf", False)
-        import warnings
-        if self.hdf_store:
-            warnings.warn("The 'write_to_hdf' flag is deprecated. Storage now uses MDIO/Zarr exclusively.", DeprecationWarning)
+        # Note: write_to_hdf deprecated - HDF5 storage no longer supported
         self.broadband_qc_volume = d["broadband_qc_volume"]
         self.model_qc_volumes = d["model_qc_volumes"]
         self.multiprocess_bp = d["multiprocess_bp"]

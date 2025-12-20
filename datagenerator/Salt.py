@@ -440,19 +440,6 @@ class SaltModel:
             # depth_maps_gaps_horizon[_label > 0] = np.nan
             depth_maps_salt[..., ihorizon] = depth_map
 
-            # Re-apply blanking inside the salt to the gapped horizons
-            # _faulted_depth_map = depth_map.copy()
-            # faulted_depth_map_indices = _faulted_depth_map.astype("int")
-            # faulted_depth_map_indices = np.clip(
-            #    faulted_depth_map_indices,
-            #    0,
-            #    self.cfg.h5file.root.ModelData.faulted_depth.shape[2] - 1,
-            # )
-            # _label = salt_segments[ii, jj, faulted_depth_map_indices]
-
-            # depth_maps_gaps_horizon[_label > 0] = np.nan
-            # depth_maps_gaps_salt[..., ihorizon] = depth_maps_gaps_horizon
-
             try:
                 number_muted_points = depth_maps[_label > 0].shape[0]
                 if number_muted_points > 0:
@@ -483,9 +470,6 @@ class SaltModel:
             depth_maps_gaps_salt[..., ihorizon] = depth_map_gaps_salt
 
         depth_maps_gaps_salt[np.isnan(depth_maps_gaps)] = np.nan
-
-        # self.cfg.h5file.root.ModelData.faulted_depth_maps[:] = depth_maps
-        # self.cfg.h5file.root.ModelData.faulted_depth_maps_gaps[:] = depth_maps_gaps_salt
 
         if self.cfg.model_qc_volumes:
             self.cfg.storage.create_dataset("qc_depth_maps_salt", depth_maps_salt)
