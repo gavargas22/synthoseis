@@ -30,16 +30,17 @@ class StorageClient:
         arr = client.get_dataset("vp")
     """
 
-    def __init__(self, root_path: str, mode: str = "a") -> None:
+    def __init__(self, root_path: str, mode: str = "a", default_chunks: Optional[Tuple[int, ...]] = None) -> None:
         if zarr is None:
             raise RuntimeError("zarr is required for StorageClient but is not installed")
         self.root_path = os.path.abspath(root_path)
         self.mode = mode
+        self.default_chunks = default_chunks or (128, 128, 128)
         self.store = zarr.open(self.root_path, mode=mode)
 
     @classmethod
-    def open(cls, root_path: str, mode: str = "a") -> "StorageClient":
-        return cls(root_path, mode=mode)
+    def open(cls, root_path: str, mode: str = "a", default_chunks: Optional[Tuple[int, ...]] = None) -> "StorageClient":
+        return cls(root_path, mode=mode, default_chunks=default_chunks)
 
     def create_dataset(
         self,
@@ -70,8 +71,8 @@ class StorageClient:
             del self.store[name]
         # For scalability, default to chunking if not specified
         if chunks is None:
-            # Default chunking: reasonable size, e.g., 128x128x128 for 3D
-            chunks = tuple(min(128, s) for s in actual_shape)
+            chunks = self.default_chunks[:len(actual_shape)] if len(self.default_chunks) >= len(actual_shape) else self.default_chunks + (min(128, actual_shape[len(self.default_chunks)]),) * (len(actual_shape) - len(self.default_chunks))
+            chunks = tuple(min(c, s) for c, s in zip(chunks, actual_shape)) + tuple(actual_shape[len(chunks):])
         
         if data is not None:
             # Create with data
@@ -87,19 +88,20 @@ class StorageClient:
             )
             return None
 
-    def get_dataset(self, name: str, use_dask: bool = False):
+    def get_dataset(self, name: str, lazy: bool = False, use_dask: bool = False):
         if name not in self.store:
             raise DatasetNotFound(name)
-        arr = self.store[name]
-        if use_dask:
-            try:
-                import dask.array as da
-                return da.from_array(arr, chunks=arr.chunks)
-            except ImportError:
-                pass  # fall back to numpy
-        return arr[...]
-
-    def list_datasets(self, prefix: str = ""):
+    arr = self.store[name]
+    if use_dask:
+        try:
+            import dask.array as da
+            return da.from_zarr(self.store.store, component=name)
+        except ImportError:
+            return np.asarray(arr)
+    elif lazy:
+        return arr
+    else:
+        return np.asarray(arr)    def list_datasets(self, prefix: str = ""):
         return [k for k in list(self.store.keys()) if k.startswith(prefix)]
 
     def remove_dataset(self, name: str):

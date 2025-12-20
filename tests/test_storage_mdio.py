@@ -9,6 +9,7 @@ except Exception:
     has_mdio = False
 
 
+@pytest.mark.skipif(not has_mdio, reason="MDIO not available")
 def test_storage_create_and_read():
     if not has_mdio:
         print("mdio not installed; skipping storage test")

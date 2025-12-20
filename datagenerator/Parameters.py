@@ -488,11 +488,6 @@ class Parameters(_Borg):
             self.work_subfolder, f"model_parameters_{self.date_stamp}.txt"
         )
 
-        # HDF file to store various model data
-        self.hdf_master = os.path.join(
-            self.work_subfolder, f"seismicCube__{self.date_stamp}.hdf"
-        )
-
     def _calculate_snr_after_lateral_filter(self, sn_db: float) -> float:
         """
         Calculate Signal:Noise Ratio after lateral filter
@@ -674,7 +669,10 @@ class Parameters(_Borg):
         self.sand_layer_thickness = d["sand_layer_thickness"]
         self.sand_layer_pct_min = d["sand_layer_fraction"]["min"]
         self.sand_layer_pct_max = d["sand_layer_fraction"]["max"]
-        self.hdf_store = d["write_to_hdf"]
+        self.hdf_store = d.get("write_to_hdf", False)
+        import warnings
+        if self.hdf_store:
+            warnings.warn("The 'write_to_hdf' flag is deprecated. Storage now uses MDIO/Zarr exclusively.", DeprecationWarning)
         self.broadband_qc_volume = d["broadband_qc_volume"]
         self.model_qc_volumes = d["model_qc_volumes"]
         self.multiprocess_bp = d["multiprocess_bp"]
