@@ -267,8 +267,8 @@ class Horizons:
 
     def write_maps_to_disk(self, horizons, name):
         """Write horizons to disk."""
-        fname = os.path.join(self.cfg.work_subfolder, name)
-        np.save(fname, horizons)
+        dataset_name = name.replace('.npy', '').replace('/', '_')
+        self.cfg.storage.create_dataset(dataset_name, horizons)
 
     def write_onlap_episodes(
         self, onlap_horizon_list, depth_maps_gaps, depth_maps_infilled, n=35
@@ -305,13 +305,10 @@ class Horizons:
         # Write to disk
         self.write_maps_to_disk(onlaps * self.cfg.digi, "depth_maps_onlaps")
 
-        if self.cfg.hdf_store:
-            # Write onlap maps to hdf
-            from datagenerator.util import write_data_to_hdf
-
-            write_data_to_hdf(
-                "depth_maps_onlaps", onlaps * self.cfg.digi, self.cfg.hdf_master
-            )
+        # Write onlap maps to storage
+        self.cfg.storage.create_dataset(
+            "depth_maps_onlaps", onlaps * self.cfg.digi
+        )
 
     def write_fan_horizons(self, fan_horizon_list, depth_maps):
         """Write fan layers to a separate file."""
@@ -369,6 +366,12 @@ class RandomHorizonStack(Horizons):
             print("self.cfg.num_lyr_lut = ", self.cfg.num_lyr_lut)
             print("onlap_layer_list = ", onlap_layer_list)
         onlap_array_dim = int(500 / 1250 * self.cfg.cube_shape[2])
+        # Onlaps
+        onlap_layer_list = np.sort(
+            np.random.uniform(
+                low=5, high=onlap_array_dim - 1, size=int(np.random.triangular(1, 4, 7) + 0.5)
+            ).astype("int")
+        )
         self.onlaps = np.zeros(onlap_array_dim, "int")
         self.onlaps[onlap_layer_list] = 1
 
@@ -674,9 +677,9 @@ class RandomHorizonStack(Horizons):
 
         if self.cfg.verbose:
             print("\n ... finished creating horizon layers ...")
-        # Store maps in hdf file
-        self.depth_maps = self.cfg.hdf_init("depth_maps", shape=depth_maps.shape)
-        self.depth_maps[:] = depth_maps
+        # Store maps in storage
+        self.cfg.storage.create_dataset("depth_maps", depth_maps)
+        self.depth_maps = self.cfg.storage.get_dataset("depth_maps")
 
         self.cfg.write_to_logfile(
             f"number_layers: {self.max_layers}",
@@ -708,6 +711,12 @@ class Onlaps(Horizons):
             print("self.cfg.num_lyr_lut = ", self.cfg.num_lyr_lut)
             print("onlap_layer_list = ", onlap_layer_list)
         onlap_array_dim = int(500 / 1250 * self.cfg.cube_shape[2])
+        # Onlaps
+        onlap_layer_list = np.sort(
+            np.random.uniform(
+                low=5, high=onlap_array_dim - 1, size=int(np.random.triangular(1, 4, 7) + 0.5)
+            ).astype("int")
+        )
         self.onlaps = np.zeros(onlap_array_dim, "int")
         self.onlaps[onlap_layer_list] = 1
 

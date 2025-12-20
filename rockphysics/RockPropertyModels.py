@@ -173,19 +173,23 @@ def rpm_qc_plots(cfg, rpm):
     # Randomised rock properties. decimate a bit
     if hasattr(cfg, "bulk_z_shift"):
         depth = (
-            cfg.h5file.root.ModelData.faulted_depth[::4, ::4, ::2] + cfg.bulk_z_shift
+            cfg.storage.get_dataset("faulted_depth")[::4, ::4, ::2] + cfg.bulk_z_shift
         )
     else:
-        depth = cfg.h5file.root.ModelData.faulted_depth[::4, ::4, ::2]
-    lith = cfg.h5file.root.ModelData.faulted_lithology[::4, ::4, ::2]
-    ng = cfg.h5file.root.ModelData.faulted_net_to_gross[::4, ::4, ::2]
-    rho = cfg.h5file.root.ModelData.rho[::4, ::4, ::2]
-    vp = cfg.h5file.root.ModelData.vp[::4, ::4, ::2]
-    vs = cfg.h5file.root.ModelData.vs[::4, ::4, ::2]
-    oil = cfg.h5file.root.ModelData.oil_closures[::4, ::4, ::2]
-    gas = cfg.h5file.root.ModelData.gas_closures[::4, ::4, ::2]
+        depth = cfg.storage.get_dataset("faulted_depth")[::4, ::4, ::2]
+    lith = cfg.storage.get_dataset("faulted_lithology")[::4, ::4, ::2]
+    ng = cfg.storage.get_dataset("faulted_net_to_gross")[::4, ::4, ::2]
+    rho = cfg.storage.get_dataset("rho")[::4, ::4, ::2]
+    vp = cfg.storage.get_dataset("vp")[::4, ::4, ::2]
+    vs = cfg.storage.get_dataset("vs")[::4, ::4, ::2]
+    oil = cfg.storage.get_dataset(
+        f"oil_closures_{cfg.date_stamp}".replace('/', '_')
+    )[::4, ::4, ::2]
+    gas = cfg.storage.get_dataset(
+        f"gas_closures_{cfg.date_stamp}".replace('/', '_')
+    )[::4, ::4, ::2]
     if cfg.include_salt:
-        salt = cfg.h5file.root.ModelData.salt_segments[::4, ::4, ::2]
+        salt = cfg.storage.get_dataset("salt_segments")[::4, ::4, ::2]
         rho_salt = rho[salt > 0]
         vp_salt = vp[salt > 0]
         vs_salt = vs[salt > 0]
@@ -480,7 +484,7 @@ def clip_vp_via_poissons_ratio(vp, vs):
 def store_1d_trend_dict_to_hdf(cfg, d, z):
     # Store arrays in HDF
     for k, v in d.items():
-        cfg.hdf_init(f"rpm_1d_{k}", shape=z.shape)[:] = v
+        cfg.storage.create_dataset(f"rpm_1d_{k}", data=v)
 
 
 def calc_ai(rho, vp, log=False):
