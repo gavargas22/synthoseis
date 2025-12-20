@@ -97,7 +97,7 @@ class Horizons:
         return random_net_over_gross_map
 
     def _perlin(self, base=None, octave=1, lac=1.9, do_rotate=True):
-        import noise
+        from perlin_noise import PerlinNoise
 
         xsize = self.cfg.cube_shape[0]
         ysize = self.cfg.cube_shape[1]
@@ -117,16 +117,14 @@ class Horizons:
             if np.random.binomial(1, 0.5) == 1:
                 flipud = True
 
+        # Create PerlinNoise instance with octaves
+        # Note: perlin-noise doesn't have lacunarity, but octaves control detail
+        perlin_gen = PerlinNoise(octaves=octave, seed=base)
+
         temp = np.array(
             [
                 [
-                    noise.pnoise2(
-                        float(i) / xsize,
-                        float(j) / ysize,
-                        lacunarity=lac,
-                        octaves=octave,
-                        base=base,
-                    )
+                    perlin_gen([float(i) / xsize, float(j) / ysize])
                     for j in range(ysize)
                 ]
                 for i in range(xsize)

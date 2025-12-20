@@ -2,7 +2,7 @@ import os
 
 import numpy as np
 
-import noise
+from perlin_noise import PerlinNoise
 
 
 def noise_3d(cube_shape, verbose=False):
@@ -24,16 +24,15 @@ def perlin(xsize, ysize, base=None, octave=1, lac=1.9, do_rotate=True):
     # print "   ...inside perlin"
     if base is None:
         base = np.random.randint(255)
+
+    # Create PerlinNoise instance with octaves
+    # Note: perlin-noise doesn't have lacunarity, but octaves control detail
+    perlin_gen = PerlinNoise(octaves=octave, seed=base)
+
     temp = np.array(
         [
             [
-                noise.pnoise2(
-                    float(i) / xsize,
-                    float(j) / ysize,
-                    lacunarity=lac,
-                    octaves=octave,
-                    base=base,
-                )
+                perlin_gen([float(i) / xsize, float(j) / ysize])
                 for j in range(ysize)
             ]
             for i in range(xsize)

@@ -8,7 +8,7 @@ dependencies = [
     "bruges>=0.5.4",
     "dask>=2025.9.1",
     "matplotlib",
-    "noise>=1.2.2",
+    "perlin-noise>=1.12",
     "numba>=0.62.0",
     "numpy>=2",
     "plotly",
