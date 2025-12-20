@@ -1,5 +1,7 @@
 import os
 import numpy as np
+import dask.array as da
+from dask import delayed, compute
 from tqdm import tqdm
 from scipy.ndimage import maximum_filter, binary_dilation
 from datagenerator.Horizons import Horizons
@@ -833,6 +835,12 @@ class Faults(Horizons, Geomodel):
             unfaulted_depths * 1.0
         )  # in case there are 0 faults, prepare _faulted_depths here
 
+        # Note: Fault generation loop cannot be easily parallelized due to dependencies:
+        # - Each fault accumulates displacement on previous faults (lines 1055-1060)
+        # - _faulted_depths depends on previous fault's result (lines 1069-1106)
+        # - Fault intersections and planes are updated sequentially
+        # With only 3-30 faults typically, the main performance gains come from
+        # parallelizing the trace operations (90k+ traces) which has been done.
         for ifault in tqdm(range(self.cfg.number_faults)):
             semi_axes = [
                 fp["a"][ifault],
@@ -1560,19 +1568,44 @@ class Faults(Horizons, Geomodel):
         """
         faulted_depth_maps = np.zeros_like(self.faulted_depth_maps)
         origtime = np.arange(self.faulted_depth_maps.shape[-1])
+
+        print("\t   ... using dask parallelization for depth map improvement")
+
+        # Define function to interpolate a single depth map trace
+        def interpolate_depth_trace(i, j, faulted_geologic_age, unfaulted_geologic_age, origtime):
+            """Interpolate depth map for a single trace."""
+            if (
+                faulted_geologic_age[i, j, :].min()
+                != faulted_geologic_age[i, j, :].max()
+            ):
+                return np.interp(
+                    origtime,
+                    faulted_geologic_age[i, j, :],
+                    np.arange(faulted_geologic_age.shape[-1]).astype("float32"),
+                )
+            else:
+                return unfaulted_geologic_age[i, j, :]
+
+        # Create delayed tasks for each trace
+        tasks = []
+        indices = []
         for i in range(self.faulted_depth_maps.shape[0]):
             for j in range(self.faulted_depth_maps.shape[1]):
-                if (
-                    faulted_geologic_age[i, j, :].min()
-                    != faulted_geologic_age[i, j, :].max()
-                ):
-                    faulted_depth_maps[i, j, :] = np.interp(
-                        origtime,
-                        faulted_geologic_age[i, j, :],
-                        np.arange(faulted_geologic_age.shape[-1]).astype("float"),
-                    )
-                else:
-                    faulted_depth_maps[i, j, :] = unfaulted_geologic_age[i, j, :]
+                task = delayed(interpolate_depth_trace)(
+                    i, j, faulted_geologic_age, unfaulted_geologic_age, origtime
+                )
+                tasks.append(task)
+                indices.append((i, j))
+
+        # Compute all traces in parallel
+        print(f"\t   ... computing {len(tasks)} depth map traces in parallel")
+        results = compute(*tasks, scheduler='threads')
+
+        # Assign results back to faulted_depth_maps array
+        for idx, (i, j) in enumerate(indices):
+            faulted_depth_maps[i, j, :] = results[idx]
+
+        print("\t   ... finished parallel depth map improvement")
         # Waterbottom horizon has been set to 0. Re-insert this from the original depth_maps array
         if np.count_nonzero(faulted_depth_maps[:, :, 0]) == 0:
             faulted_depth_maps[:, :, 0] = self.faulted_depth_maps[:, :, 0] * 1.0
@@ -1874,15 +1907,38 @@ class Faults(Horizons, Geomodel):
         )
         print(f"\t   ... unstretch_times shape  = {unstretch_traces.shape}")
         print(f"\t   ... traces shape  = {traces.shape}")
+        print("\t   ... using dask parallelization for trace displacement")
 
+        # Define function to interpolate a single trace
+        def interpolate_single_trace(i, j, traces, displacement_vectors, origtime):
+            """Interpolate displacement for a single trace."""
+            if traces[i, j, :].min() != traces[i, j, :].max():
+                return np.interp(
+                    displacement_vectors[i, j, :], origtime, traces[i, j, :]
+                )
+            else:
+                return traces[i, j, :]
+
+        # Create delayed tasks for each trace
+        tasks = []
+        indices = []
         for i in range(traces.shape[0]):
             for j in range(traces.shape[1]):
-                if traces[i, j, :].min() != traces[i, j, :].max():
-                    unstretch_traces[i, j, :] = np.interp(
-                        self.displacement_vectors[i, j, :], origtime, traces[i, j, :]
-                    )
-                else:
-                    unstretch_traces[i, j, :] = traces[i, j, :]
+                task = delayed(interpolate_single_trace)(
+                    i, j, traces, self.displacement_vectors, origtime
+                )
+                tasks.append(task)
+                indices.append((i, j))
+
+        # Compute all traces in parallel
+        print(f"\t   ... computing {len(tasks)} traces in parallel")
+        results = compute(*tasks, scheduler='threads')
+
+        # Assign results back to unstretch_traces array
+        for idx, (i, j) in enumerate(indices):
+            unstretch_traces[i, j, :] = results[idx]
+
+        print("\t   ... finished parallel trace displacement")
         return unstretch_traces
 
     def copy_and_divide_depth_maps_by_infill(self, zmaps) -> np.ndarray:

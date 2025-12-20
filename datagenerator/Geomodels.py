@@ -1,5 +1,7 @@
 import os
 import numpy as np
+import dask.array as da
+from dask import delayed, compute
 from datagenerator.Parameters import Parameters
 from datagenerator.util import next_odd
 from scipy.ndimage import maximum_filter
@@ -186,19 +188,46 @@ class Geomodel:
                 )
             )
 
-        # create geologic age cube
+        # create geologic age cube using dask for parallelization
         age_range = np.linspace(0.0, float(cube_shape[2] - 1), cube_shape[2])
-        age = np.zeros(cube_shape, "float")
+        age = np.zeros(cube_shape, "float32")
+
+        if self.cfg.verbose:
+            print("    ... interpolating geologic age for all traces using dask parallelization")
+
+        # Define function for interpolating a single trace
+        def interpolate_trace(i, j, depth_maps_temp, age_range):
+            """Interpolate geologic age for a single trace (i, j)."""
+            index_max_geo_age = np.argmax(
+                depth_maps_temp[i, j, :].clip(0.0, float(cube_shape[2] - 1))
+            )
+            trace_age = np.interp(
+                age_range,
+                depth_maps_temp[i, j, : int(index_max_geo_age)],
+                np.arange(index_max_geo_age),
+            )
+            return trace_age
+
+        # Create delayed tasks for each trace
+        tasks = []
+        indices = []
         for i in range(cube_shape[0]):
             for j in range(cube_shape[1]):
-                index_max_geo_age = np.argmax(
-                    depth_maps_temp[i, j, :].clip(0.0, float(cube_shape[2] - 1))
-                )
-                age[i, j, :] = np.interp(
-                    age_range,
-                    depth_maps_temp[i, j, : int(index_max_geo_age)],
-                    np.arange(index_max_geo_age),
-                )
+                task = delayed(interpolate_trace)(i, j, depth_maps_temp, age_range)
+                tasks.append(task)
+                indices.append((i, j))
+
+        # Compute all traces in parallel
+        if self.cfg.verbose:
+            print(f"    ... computing {len(tasks)} traces in parallel")
+        results = compute(*tasks, scheduler='threads')
+
+        # Assign results back to age array
+        for idx, (i, j) in enumerate(indices):
+            age[i, j, :] = results[idx]
+
+        if self.cfg.verbose:
+            print("    ... finished parallel interpolation")
 
         if self.cfg.verbose:
             print(f"    ... age.shape = {age.shape}")
