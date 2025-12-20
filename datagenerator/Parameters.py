@@ -6,10 +6,10 @@ import os
 import pathlib
 import glob
 import sqlite3
+import subprocess
 from subprocess import CalledProcessError
 import numpy as np
-import tables
-import subprocess
+from synthoseis.storage import StorageClient
 
 dir_name = os.path.dirname(__file__)
 CONFIG_PATH = os.path.abspath(os.path.join(dir_name, "../config/config_ht.json"))
@@ -144,6 +144,7 @@ class Parameters(_Borg):
         self._set_model_parameters(self.model_dir_name)
         self.make_directories()
         self.write_key_file()
+        self.storage_setup("model_data.zarr")  # Use MDIO storage
         self._setup_rpm_scaling_factors(rpm_factors)
 
         # Write model parameters to logfile
@@ -487,11 +488,6 @@ class Parameters(_Borg):
             self.work_subfolder, f"model_parameters_{self.date_stamp}.txt"
         )
 
-        # HDF file to store various model data
-        self.hdf_master = os.path.join(
-            self.work_subfolder, f"seismicCube__{self.date_stamp}.hdf"
-        )
-
     def _calculate_snr_after_lateral_filter(self, sn_db: float) -> float:
         """
         Calculate Signal:Noise Ratio after lateral filter
@@ -673,7 +669,7 @@ class Parameters(_Borg):
         self.sand_layer_thickness = d["sand_layer_thickness"]
         self.sand_layer_pct_min = d["sand_layer_fraction"]["min"]
         self.sand_layer_pct_max = d["sand_layer_fraction"]["max"]
-        self.hdf_store = d["write_to_hdf"]
+        # Note: write_to_hdf deprecated - HDF5 storage no longer supported
         self.broadband_qc_volume = d["broadband_qc_volume"]
         self.model_qc_volumes = d["model_qc_volumes"]
         self.multiprocess_bp = d["multiprocess_bp"]
@@ -950,74 +946,34 @@ class Parameters(_Borg):
         ).total_seconds() / secs_in_year
         return format(year + fraction_of_year, "14.8f").replace(" ", "")
 
-    def hdf_setup(self, hdf_name: str) -> None:
+    def storage_setup(self, store_name: str) -> None:
+        """Setup MDIO/Zarr storage
+
+        This replaces the older HDF setup. It opens/creates an MDIO store at
+        `self.temp_folder/store_name` and exposes `self.storage` as a
+        `StorageClient` instance.
         """
-        Setup HDF files
-        ---------------
-
-        This method sets up the HDF structures
-
-        Parameters
-        ----------
-        hdf_name : str
-            The name of the HDF file to be created
-
-        Returns
-        -------
-        None
-        """
-        num_threads = min(8, mp.cpu_count() - 1)
-        tables.set_blosc_max_threads(num_threads)
-        self.hdf_filename = os.path.join(self.temp_folder, hdf_name)
-        self.filters = tables.Filters(
-            complevel=5, complib="blosc"
-        )  # compression with fast write speed
-        self.h5file = tables.open_file(self.hdf_filename, "w")
-        self.h5file.create_group("/", "ModelData")
-
-    def hdf_init(
-        self, dset_name, shape: tuple, dtype: str = "float64"
-    ) -> tables.CArray:
-        """
-        HDF Initialize
-        ----------------------------------------
-
-        Method that initializes the HDF chunked
-        array
-
-        Parameters
-        ----------
-        dset_name : str
-            The name of the dataset to be created
-        shape : tuple
-
-
-        Returns
-        -------
-        new_array: tables.CArray
-        """
-        if "float" in dtype:
-            atom = tables.FloatAtom()
-        elif "uint8" in dtype:
-            atom = tables.UInt8Atom()
-        else:
-            atom = tables.IntAtom()
-        group = self.h5file.root.ModelData
-        new_array = self.h5file.create_carray(
-            group, dset_name, atom, shape, filters=self.filters
-        )
-        return new_array
-
-    def hdf_node_list(self):
-        return [x.name for x in self.h5file.list_nodes("ModelData")]
-
-    def hdf_remove_node_list(self, dset_name):
-        group = self.h5file.root.ModelData
+        store_path = os.path.join(self.temp_folder, store_name)
+        # create parent dir
         try:
-            self.h5file.remove_node(group, dset_name)
-        except:
+            os.makedirs(self.temp_folder, exist_ok=True)
+        except Exception:
             pass
-        self.hdf_node_list
+        self.storage = StorageClient.open(store_path, mode="a")
+
+    def storage_init(self, dset_name: str, shape: tuple, dtype: str = "float64"):
+        """Initialize a dataset in the MDIO store and return a numpy placeholder.
+
+        This function creates an array in the MDIO store using the
+        `StorageClient.create_dataset` API.
+        """
+        import numpy as _np
+
+        arr = _np.zeros(shape, dtype=dtype)
+        if not hasattr(self, "storage"):
+            raise RuntimeError("storage not configured; call storage_setup first")
+        self.storage.create_dataset(dset_name, arr)
+        return arr
 
 
 def triangle_distribution_fix(left, mode, right, random_seed=None):
@@ -1038,18 +994,19 @@ def triangle_distribution_fix(left, mode, right, random_seed=None):
         mode
     right: `float`
         upper limit
-    random_seed: `int`
-        seed to set numpy's random seed
+    random_seed: `int`, optional
+        Random seed for reproducibility
 
     Returns
     -------
-    sn_db: `float`
-        Drawn samples from parameterised triangular distribution
+    float
+        Random value from the modified triangular distribution
     """
-    sn_db = 0
-    while sn_db < left or sn_db > right:
-        if random_seed:
-            np.random.seed(random_seed)
-        sn_db = np.random.triangular(left - (mode - left), mode, right + (right - mode))
+    import numpy as np
 
-    return sn_db
+    if random_seed is not None:
+        np.random.seed(random_seed)
+    # Enlarge the interval to ensure values at boundaries
+    new_left = left - (mode - left)
+    new_right = right + (right - mode)
+    return np.random.triangular(new_left, mode, new_right)

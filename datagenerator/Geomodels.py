@@ -62,18 +62,12 @@ class Geomodel:
             self.cfg.cube_shape[1],
             self.cfg.cube_shape[2] + self.cfg.pad_samples,
         )
-        self.geologic_age = self.cfg.hdf_init("geologic_age_prefault", shape=cube_shape)
-        self.onlap_segments = self.cfg.hdf_init(
-            "onlap_segments_prefault", shape=cube_shape
-        )
-        self.faulted_lithology = self.cfg.hdf_init(
-            "lithology_prefault", shape=cube_shape
-        )
-        self.geomodel_ng = self.cfg.hdf_init("net_to_gross_prefault", shape=cube_shape)
-        self.faulted_depth = self.cfg.hdf_init("depth_prefault", shape=cube_shape)
-        self.faulted_depth_randomised = self.cfg.hdf_init(
-            "depth_randomised_prefault", shape=cube_shape
-        )
+        self.geologic_age = np.zeros(cube_shape, dtype="float")
+        self.onlap_segments = np.zeros(cube_shape, dtype="float32")
+        self.faulted_lithology = np.zeros(cube_shape, dtype="float")
+        self.geomodel_ng = np.zeros(cube_shape, dtype="float")
+        self.faulted_depth = np.zeros(cube_shape, dtype="float")
+        self.faulted_depth_randomised = np.zeros(cube_shape, dtype="float")
 
         # Channel volumes
         if self.cfg.include_channels:
@@ -487,7 +481,5 @@ class Geomodel:
         It generates a `.npy` file on disk.
         """
         """Write 3D array to npy format."""
-        fname = os.path.join(
-            self.cfg.work_subfolder, f"{fname}_{self.cfg.date_stamp}.npy"
-        )
-        np.save(fname, data)
+        dataset_name = f"{fname}_{self.cfg.date_stamp}".replace('/', '_')
+        self.cfg.storage.create_dataset(dataset_name, data)

@@ -34,7 +34,8 @@ class SaltModel:
             self.cfg.cube_shape[1],
             self.cfg.cube_shape[2] + self.cfg.pad_samples,
         )
-        self.salt_segments = self.cfg.hdf_init("salt_segments", shape=cube_shape)
+        self.cfg.storage.create_dataset("salt_segments", shape=cube_shape)
+        self.salt_segments = self.cfg.storage.get_dataset("salt_segments")
         self.points = []
 
     def compute_salt_body_segmentation(self) -> None:
@@ -58,9 +59,14 @@ class SaltModel:
             self.cfg.cube_shape[0] / 5,
             self.cfg.cube_shape[0] / 4,
         )
-        shallowest_salt = self.cfg.h5file.root.ModelData.faulted_depth_maps[
-            :, :, 1
-        ].copy()
+        try:
+            shallowest_salt = self.cfg.storage.get_dataset("depth_maps")[
+                :, :, 1
+            ].copy()
+        except Exception as e:
+            print(f"Error getting depth_maps: {e}")
+            print("Available datasets:", self.cfg.storage.list_datasets())
+            raise
         # shallowest_salt -= pad_samples / infill_factor
         # shallowest_salt -= pad_samples
         # shallowest_salt /= infill_factor
@@ -297,9 +303,9 @@ class SaltModel:
             indexing="ij",
         )
 
-        depth_maps = self.cfg.h5file.root.ModelData.faulted_depth_maps[:]
-        depth_maps_gaps = self.cfg.h5file.root.ModelData.faulted_depth_maps_gaps[:]
-        salt_segments = self.cfg.h5file.root.ModelData.salt_segments[:]
+        depth_maps = self.cfg.storage.get_dataset("faulted_depth_maps")
+        depth_maps_gaps = self.cfg.storage.get_dataset("faulted_depth_maps_gaps")
+        salt_segments = self.cfg.storage.get_dataset("salt_segments")
 
         depth_maps_gaps_salt = np.zeros_like(depth_maps_gaps)
 
@@ -323,7 +329,7 @@ class SaltModel:
             faulted_depth_map_indices = np.clip(
                 faulted_depth_map_indices,
                 0,
-                self.cfg.h5file.root.ModelData.faulted_depth.shape[2] - 1,
+                depth_maps.shape[2] - 1,
             )
 
             _label = salt_segments[ii, jj, faulted_depth_map_indices]
@@ -343,9 +349,9 @@ class SaltModel:
             except:
                 pass
 
-        self.cfg.h5file.root.ModelData.faulted_depth_maps_gaps[:] = depth_maps_gaps_salt
+        self.cfg.storage.create_dataset("faulted_depth_maps_gaps", depth_maps_gaps_salt)
 
-    def update_depth_maps_with_salt_segments_drag(self):
+    def update_depth_maps_with_salt_segments_drag(self, depth_maps, depth_maps_gaps):
         """
         Update depth maps with salt segments frag
         -----------------------------------------
@@ -354,7 +360,10 @@ class SaltModel:
 
         Parameters
         ----------
-        None
+        depth_maps : np.ndarray
+            The faulted depth maps.
+        depth_maps_gaps : np.ndarray
+            The faulted depth maps gaps.
 
         Returns
         -------
@@ -372,17 +381,17 @@ class SaltModel:
             indexing="ij",
         )
 
-        depth_maps = self.cfg.h5file.root.ModelData.faulted_depth_maps[:]
-        depth_maps_gaps = self.cfg.h5file.root.ModelData.faulted_depth_maps_gaps[:]
-        salt_segments = self.cfg.h5file.root.ModelData.salt_segments[:]
+        # depth_maps = self.cfg.storage.get_dataset("faulted_depth_maps")
+        # depth_maps_gaps = self.cfg.storage.get_dataset("faulted_depth_maps_gaps")
+        salt_segments = self.cfg.storage.get_dataset("salt_segments")
 
         if self.cfg.model_qc_volumes:
-            np.save(f"{self.cfg.work_subfolder}/depth_maps_presalt.npy", depth_maps)
-            np.save(
-                f"{self.cfg.work_subfolder}/depth_maps_gaps_presalt.npy",
+            self.cfg.storage.create_dataset("qc_depth_maps_presalt", depth_maps)
+            self.cfg.storage.create_dataset(
+                "qc_depth_maps_gaps_presalt",
                 depth_maps_gaps,
             )
-            np.save(f"{self.cfg.work_subfolder}/salt_segments.npy", salt_segments)
+            self.cfg.storage.create_dataset("qc_salt_segments", salt_segments)
 
         depth_maps_salt = np.zeros_like(depth_maps_gaps)
         depth_maps_gaps_salt = np.zeros_like(depth_maps_gaps)
@@ -409,7 +418,7 @@ class SaltModel:
             faulted_depth_map_indices = np.clip(
                 faulted_depth_map_indices,
                 0,
-                self.cfg.h5file.root.ModelData.faulted_depth.shape[2] - 1,
+                depth_maps.shape[2] - 1,
             )
 
             _label = salt_segments[ii, jj, faulted_depth_map_indices]
@@ -431,19 +440,6 @@ class SaltModel:
             # depth_maps_gaps_horizon[_label > 0] = np.nan
             depth_maps_salt[..., ihorizon] = depth_map
 
-            # Re-apply blanking inside the salt to the gapped horizons
-            # _faulted_depth_map = depth_map.copy()
-            # faulted_depth_map_indices = _faulted_depth_map.astype("int")
-            # faulted_depth_map_indices = np.clip(
-            #    faulted_depth_map_indices,
-            #    0,
-            #    self.cfg.h5file.root.ModelData.faulted_depth.shape[2] - 1,
-            # )
-            # _label = salt_segments[ii, jj, faulted_depth_map_indices]
-
-            # depth_maps_gaps_horizon[_label > 0] = np.nan
-            # depth_maps_gaps_salt[..., ihorizon] = depth_maps_gaps_horizon
-
             try:
                 number_muted_points = depth_maps[_label > 0].shape[0]
                 if number_muted_points > 0:
@@ -454,8 +450,8 @@ class SaltModel:
                 pass
 
         if self.cfg.model_qc_volumes:
-            np.save(
-                f"{self.cfg.work_subfolder}/depth_maps_salt_prepushdown.npy",
+            self.cfg.storage.create_dataset(
+                "qc_depth_maps_salt_prepushdown",
                 depth_maps_salt,
             )
 
@@ -475,16 +471,13 @@ class SaltModel:
 
         depth_maps_gaps_salt[np.isnan(depth_maps_gaps)] = np.nan
 
-        # self.cfg.h5file.root.ModelData.faulted_depth_maps[:] = depth_maps
-        # self.cfg.h5file.root.ModelData.faulted_depth_maps_gaps[:] = depth_maps_gaps_salt
-
         if self.cfg.model_qc_volumes:
-            np.save(f"{self.cfg.work_subfolder}/depth_maps_salt.npy", depth_maps_salt)
-            np.save(
-                f"{self.cfg.work_subfolder}/depth_maps_gaps_salt.npy",
+            self.cfg.storage.create_dataset("qc_depth_maps_salt", depth_maps_salt)
+            self.cfg.storage.create_dataset(
+                "qc_depth_maps_gaps_salt",
                 depth_maps_gaps_salt,
             )
-            np.save(f"{self.cfg.work_subfolder}/facies_label.npy", _label)
+            self.cfg.storage.create_dataset("qc_facies_label", _label)
 
         return depth_maps_salt, depth_maps_gaps_salt
 

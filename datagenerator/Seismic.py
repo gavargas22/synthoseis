@@ -6,7 +6,6 @@ import numpy as np
 from tqdm import trange
 from datagenerator.histogram_equalizer import normalize_seismic
 from datagenerator.Geomodels import Geomodel
-from datagenerator.util import write_data_to_hdf
 from datagenerator.wavelets import generate_wavelet, plot_wavelets
 from rockphysics.RockPropertyModels import select_rpm, RockProperties, EndMemberMixing
 
@@ -53,32 +52,34 @@ class SeismicVolume(Geomodel):
 
         self.first_random_lyr = 20  # do not randomise shallow layers
 
-        self.rho = self.cfg.hdf_init(
-            "rho", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        faulted_depth_shape = self.cfg.cube_shape
+
+        self.rho = self.cfg.storage_init(
+            "rho", shape=faulted_depth_shape
         )
-        self.vp = self.cfg.hdf_init(
-            "vp", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vp = self.cfg.storage_init(
+            "vp", shape=faulted_depth_shape
         )
-        self.vs = self.cfg.hdf_init(
-            "vs", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vs = self.cfg.storage_init(
+            "vs", shape=faulted_depth_shape
         )
-        self.rho_ff = self.cfg.hdf_init(
-            "rho_ff", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.rho_ff = self.cfg.storage_init(
+            "rho_ff", shape=faulted_depth_shape
         )
-        self.vp_ff = self.cfg.hdf_init(
-            "vp_ff", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vp_ff = self.cfg.storage_init(
+            "vp_ff", shape=faulted_depth_shape
         )
-        self.vs_ff = self.cfg.hdf_init(
-            "vs_ff", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vs_ff = self.cfg.storage_init(
+            "vs_ff", shape=faulted_depth_shape
         )
 
         seis_shape = (
             len(self.angles),
-            *self.cfg.h5file.root.ModelData.faulted_depth.shape,
+            *faulted_depth_shape,
         )
         rfc_shape = (seis_shape[0], seis_shape[1], seis_shape[2], seis_shape[3] - 1)
-        self.rfc_raw = self.cfg.hdf_init("rfc_raw", shape=rfc_shape)
-        self.rfc_noise_added = self.cfg.hdf_init("rfc_noise_added", shape=rfc_shape)
+        self.rfc_raw = self.cfg.storage_init("rfc_raw", shape=rfc_shape)
+        self.rfc_noise_added = self.cfg.storage_init("rfc_noise_added", shape=rfc_shape)
 
     def build_elastic_properties(self, mixing_method="inv_vel"):
         """
@@ -349,17 +350,17 @@ class SeismicVolume(Geomodel):
         # Move the angle from last dimension to first
         self.rfc_raw[:] = np.moveaxis(zoep, -1, 0)
 
-        if self.cfg.hdf_store:
-            for n, d in zip(
-                [
-                    "qc_volume_rfc_raw_{}_degrees".format(
-                        str(self.angles[x]).replace(".", "_")
-                    )
-                    for x in range(self.rfc_raw.shape[0])
-                ],
-                [self.rfc_raw[x, ...] for x in range(self.rfc_raw.shape[0])],
-            ):
-                write_data_to_hdf(n, d, self.cfg.hdf_master)
+        for n, d in zip(
+            [
+                "qc_volume_rfc_raw_{}_degrees".format(
+                    str(self.angles[x]).replace(".", "_")
+                )
+                for x in range(self.rfc_raw.shape[0])
+            ],
+            [self.rfc_raw[x, ...] for x in range(self.rfc_raw.shape[0])],
+        ):
+            self.cfg.storage.create_dataset(n, d)
+
         if self.cfg.model_qc_volumes:
             # Write raw RFC values to disk
             _ = [
@@ -445,11 +446,8 @@ class SeismicVolume(Geomodel):
         noise_0deg = self.noise_3d(self.rfc_raw.shape[1:], verbose=False)
         noise_45deg = self.noise_3d(self.rfc_raw.shape[1:], verbose=False)
         # Store the noise models
-        self.noise_0deg = self.cfg.hdf_init("noise_0deg", shape=noise_0deg.shape)
-        self.noise_45deg = self.cfg.hdf_init("noise_45deg", shape=noise_45deg.shape)
-        self.noise_0deg[:] = noise_0deg
-        self.noise_45deg[:] = noise_45deg
-
+        self.noise_0deg = self.cfg.storage.create_dataset("noise_0deg", data=noise_0deg)
+        self.noise_45deg = self.cfg.storage.create_dataset("noise_45deg", data=noise_45deg)
         for x, ang in enumerate(self.angles):
             weighted_noise = noise_0deg * (cos(ang) ** 2) + noise_45deg * (
                 sin(ang) ** 2
@@ -551,7 +549,7 @@ class SeismicVolume(Geomodel):
     def augment_data_and_labels(self, normalised_seismic, seabed):
         from datagenerator.Augmentation import tz_stretch, uniform_stretch
 
-        hc_labels = self.cfg.h5file.root.ModelData.hc_labels[:]
+        hc_labels = self.cfg.storage.get_dataset("hc_labels")
         data, labels = tz_stretch(
             normalised_seismic,
             hc_labels[..., : self.cfg.cube_shape[2] + self.cfg.pad_samples - 1],
@@ -713,15 +711,20 @@ class SeismicVolume(Geomodel):
         layer_half_range = self.cfg.rpm_scaling_factors["layershiftsamples"]
         property_half_range = self.cfg.rpm_scaling_factors["RPshiftsamples"]
 
-        depth = self.cfg.h5file.root.ModelData.faulted_depth[:]
+        depth = self.faults.faulted_depth[:]
         lith = self.faults.faulted_lithology[:]
         net_to_gross = self.faults.faulted_net_to_gross[:]
 
-        oil_closures = self.cfg.h5file.root.ModelData.oil_closures[:]
-        gas_closures = self.cfg.h5file.root.ModelData.gas_closures[:]
+        oil_closures = self.cfg.storage.get_dataset(
+            f"oil_closures_{self.cfg.date_stamp}".replace('/', '_')
+        )
+        print(f"Available datasets: {list(self.cfg.storage.store.keys())}")
+        gas_closures = self.cfg.storage.get_dataset(
+            f"gas_closures_{self.cfg.date_stamp}".replace('/', '_')
+        )
 
         integer_faulted_age = (
-            self.cfg.h5file.root.ModelData.faulted_age_volume[:] + 0.00001
+            self.cfg.storage.get_dataset("faulted_age_volume") + 0.00001
         ).astype(int)
 
         # Use empty class object to store all Rho, Vp, Vs volumes (randomised, fluid factor and non randomised)

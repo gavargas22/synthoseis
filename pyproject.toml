@@ -3,17 +3,25 @@ name = "synthoseis"
 version = "2.5.1"
 description = "Generating seismic data and associated labels to train deep learning networks."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "bruges>=0.5.4",
+    "dask[distributed]>=2025.9.1",
     "matplotlib",
-    "noise>=1.2.2",
-    "numpy<2",
+    "perlin-noise>=1.12",
+    "numba>=0.62.0",
+    "numpy>=2",
     "plotly",
+    "psutil>=7.1.0",
     "ruff>=0.10.0",
     "scikit-image",
     "scipy",
     "setuptools>=76.0.0",
-    "tables>=3.9.2",
     "tqdm",
+    "zarr",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
 ]

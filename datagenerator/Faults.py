@@ -5,7 +5,7 @@ from scipy.ndimage import maximum_filter, binary_dilation
 from datagenerator.Horizons import Horizons
 from datagenerator.Geomodels import Geomodel
 from datagenerator.Parameters import Parameters
-from datagenerator.util import write_data_to_hdf, plot_3D_faults_plot
+from datagenerator.util import plot_3D_faults_plot
 from skimage import measure
 
 
@@ -61,46 +61,24 @@ class Faults(Horizons, Geomodel):
         self.onlap_horizon_list = onlap_horizon_list
         self.fan_horizon_list = fan_horizon_list
         self.fan_thickness = fan_thickness
-        self.faulted_depth_maps = self.cfg.hdf_init(
-            "faulted_depth_maps", shape=unfaulted_depth_maps.shape
-        )
-        self.faulted_depth_maps_gaps = self.cfg.hdf_init(
-            "faulted_depth_maps_gaps", shape=unfaulted_depth_maps.shape
-        )
+        self.faulted_depth_maps = np.zeros(unfaulted_depth_maps.shape, dtype="float")
+        self.faulted_depth_maps_gaps = np.zeros(unfaulted_depth_maps.shape, dtype="float")
         # Volumes
         cube_shape = geomodels.geologic_age[:].shape
         self.vols = geomodels
-        self.faulted_age_volume = self.cfg.hdf_init(
-            "faulted_age_volume", shape=cube_shape
-        )
-        self.faulted_net_to_gross = self.cfg.hdf_init(
-            "faulted_net_to_gross", shape=cube_shape
-        )
-        self.faulted_lithology = self.cfg.hdf_init(
-            "faulted_lithology", shape=cube_shape
-        )
-        self.reservoir = self.cfg.hdf_init("reservoir", shape=cube_shape)
-        self.faulted_depth = self.cfg.hdf_init("faulted_depth", shape=cube_shape)
-        self.faulted_onlap_segments = self.cfg.hdf_init(
-            "faulted_onlap_segments", shape=cube_shape
-        )
-        self.fault_planes = self.cfg.hdf_init("fault_planes", shape=cube_shape)
-        self.displacement_vectors = self.cfg.hdf_init(
-            "displacement_vectors", shape=cube_shape
-        )
-        self.sum_map_displacements = self.cfg.hdf_init(
-            "sum_map_displacements", shape=cube_shape
-        )
-        self.fault_intersections = self.cfg.hdf_init(
-            "fault_intersections", shape=cube_shape
-        )
-        self.fault_plane_throw = self.cfg.hdf_init(
-            "fault_plane_throw", shape=cube_shape
-        )
-        self.max_fault_throw = self.cfg.hdf_init("max_fault_throw", shape=cube_shape)
-        self.fault_plane_azimuth = self.cfg.hdf_init(
-            "fault_plane_azimuth", shape=cube_shape
-        )
+        self.faulted_age_volume = np.zeros(cube_shape, dtype="float")
+        self.faulted_net_to_gross = np.zeros(cube_shape, dtype="float")
+        self.faulted_lithology = np.zeros(cube_shape, dtype="float")
+        self.reservoir = np.zeros(cube_shape, dtype="float")
+        self.faulted_depth = np.zeros(cube_shape, dtype="float")
+        self.faulted_onlap_segments = np.zeros(cube_shape, dtype="float")
+        self.fault_planes = np.zeros(cube_shape, dtype="float")
+        self.displacement_vectors = np.zeros(cube_shape, dtype="float")
+        self.sum_map_displacements = np.zeros(cube_shape, dtype="float")
+        self.fault_intersections = np.zeros(cube_shape, dtype="float")
+        self.fault_plane_throw = np.zeros(cube_shape, dtype="float")
+        self.max_fault_throw = np.zeros(cube_shape, dtype="float")
+        self.fault_plane_azimuth = np.zeros(cube_shape, dtype="float")
         # Salt
         self.salt_model = None
 
@@ -112,7 +90,7 @@ class Faults(Horizons, Geomodel):
 
         The method does the following:
 
-        * Generate faults and sum the displacements
+        * Generate faults and apply the displacements
         * Apply faulting to horizons
         * Write faulted depth maps to disk
         * Write faulted depth maps with gaps at faults to disk
@@ -159,6 +137,14 @@ class Faults(Horizons, Geomodel):
             self.vols.geologic_age[:], self.faulted_age_volume[:], onlap_clip_dict
         )
 
+        # # Write the faulted maps to disk
+        self.write_maps_to_disk(
+            self.faulted_depth_maps[:] * self.cfg.digi, "faulted_depth_maps"
+        )
+        self.write_maps_to_disk(
+            self.faulted_depth_maps_gaps[:] * self.cfg.digi, "faulted_depth_maps_gaps"
+        )
+
         if self.cfg.include_salt:
             from datagenerator.Salt import SaltModel
 
@@ -167,15 +153,18 @@ class Faults(Horizons, Geomodel):
             (
                 self.faulted_depth_maps[:],
                 self.faulted_depth_maps_gaps[:],
-            ) = self.salt_model.update_depth_maps_with_salt_segments_drag()
+            ) = self.salt_model.update_depth_maps_with_salt_segments_drag(
+                self.faulted_depth_maps, self.faulted_depth_maps_gaps
+            )
 
-        # # Write the faulted maps to disk
-        self.write_maps_to_disk(
-            self.faulted_depth_maps[:] * self.cfg.digi, "depth_maps"
-        )
-        self.write_maps_to_disk(
-            self.faulted_depth_maps_gaps[:] * self.cfg.digi, "depth_maps_gaps"
-        )
+            # # Write the salt-modified maps to disk
+            self.write_maps_to_disk(
+                self.faulted_depth_maps[:] * self.cfg.digi, "faulted_depth_maps"
+            )
+            self.write_maps_to_disk(
+                self.faulted_depth_maps_gaps[:] * self.cfg.digi, "faulted_depth_maps_gaps"
+            )
+
         self.write_onlap_episodes(
             self.onlap_horizon_list[:],
             self.faulted_depth_maps_gaps[:],
@@ -186,16 +175,15 @@ class Faults(Horizons, Geomodel):
                 self.fan_horizon_list, self.faulted_depth_maps[:] * 4.0
             )
 
-        if self.cfg.hdf_store:
-            # Write faulted maps to hdf
-            for n, d in zip(
-                ["depth_maps", "depth_maps_gaps"],
-                [
-                    self.faulted_depth_maps[:] * self.cfg.digi,
-                    self.faulted_depth_maps_gaps[:] * self.cfg.digi,
-                ],
-            ):
-                write_data_to_hdf(n, d, self.cfg.hdf_master)
+        # Write faulted maps to storage
+        for n, d in zip(
+            ["depth_maps", "depth_maps_gaps"],
+            [
+                self.faulted_depth_maps[:] * self.cfg.digi,
+                self.faulted_depth_maps_gaps[:] * self.cfg.digi,
+            ],
+        ):
+            self.cfg.storage.create_dataset(n, d)
 
         # Create faulted binary segmentation volumes
         _fault_planes = self.fault_planes[:]
@@ -243,7 +231,7 @@ class Faults(Horizons, Geomodel):
 
         if self.cfg.model_qc_volumes:
             # Output files if qc volumes required
-            self.vols.write_cube_to_disk(self.faulted_age_volume[:], "geologic_age")
+            self.vols.write_cube_to_disk(self.faulted_age_volume[:], "faulted_age_volume")
             self.vols.write_cube_to_disk(
                 self.faulted_onlap_segments[:], "onlap_segments"
             )
@@ -257,27 +245,26 @@ class Faults(Horizons, Geomodel):
             self.vols.write_cube_to_disk(
                 self.fault_plane_azimuth[:], "fault_segments_azimuth"
             )
-        if self.cfg.hdf_store:
-            # Write faulted age, onlap and fault segment cubes to hdf
-            for n, d in zip(
-                [
-                    "geologic_age_faulted",
-                    "onlap_segments",
-                    "fault_segments",
-                    "fault_intersection_segments",
-                    "fault_segments_throw",
-                    "fault_segments_azimuth",
-                ],
-                [
-                    self.faulted_age_volume,
-                    self.faulted_onlap_segments,
-                    self.fault_planes,
-                    self.fault_intersections,
-                    self.fault_plane_throw,
-                    self.fault_plane_azimuth,
-                ],
-            ):
-                write_data_to_hdf(n, d, self.cfg.hdf_master)
+        # Write faulted age, onlap and fault segment cubes to storage
+        for n, d in zip(
+            [
+                "geologic_age_faulted",
+                "onlap_segments",
+                "fault_segments",
+                "fault_intersection_segments",
+                "fault_segments_throw",
+                "fault_segments_azimuth",
+            ],
+            [
+                self.faulted_age_volume,
+                self.faulted_onlap_segments,
+                self.fault_planes,
+                self.fault_intersections,
+                self.fault_plane_throw,
+                self.fault_plane_azimuth,
+            ],
+        ):
+            self.cfg.storage.create_dataset(n, d)
 
         if self.cfg.qc_plots:
             self.create_qc_plots()
@@ -563,17 +550,6 @@ class Faults(Horizons, Geomodel):
             subkey="sand_voxel_pct",
             val=100 * sand_fraction,
         )
-
-        if self.cfg.hdf_store:
-            for n, d in zip(
-                ["lithology", "net_to_gross", "depth"],
-                [
-                    self.faulted_lithology[:],
-                    self.faulted_net_to_gross[:],
-                    self.faulted_depth[:],
-                ],
-            ):
-                write_data_to_hdf(n, d, self.cfg.hdf_master)
 
         # Save out reservoir volume for XAI-NBDT
         reservoir = (work_cube_lith == 1) * 1.0
@@ -1233,15 +1209,11 @@ class Faults(Horizons, Geomodel):
                             + str(max_fault_throw_list_counts)
                         )
                     mfts = self.max_fault_throw.shape
-                    self.cfg.hdf_remove_node_list("max_fault_throw_4d_diff")
-                    self.cfg.hdf_remove_node_list("max_fault_throw_4d")
-                    max_fault_throw_4d_diff = self.cfg.hdf_init(
-                        "max_fault_throw_4d_diff",
-                        shape=(mfts[0], mfts[1], mfts[2], max_fault_throw_list.size),
+                    max_fault_throw_4d_diff = np.zeros(
+                        (mfts[0], mfts[1], mfts[2], max_fault_throw_list.size), dtype="float"
                     )
-                    max_fault_throw_4d = self.cfg.hdf_init(
-                        "max_fault_throw_4d",
-                        shape=(mfts[0], mfts[1], mfts[2], max_fault_throw_list.size),
+                    max_fault_throw_4d = np.zeros(
+                        (mfts[0], mfts[1], mfts[2], max_fault_throw_list.size), dtype="float"
                     )
                     if verbose:
                         print(
@@ -1281,7 +1253,7 @@ class Faults(Horizons, Geomodel):
                             + ", "
                             + str(indices_nearest_throw.shape)
                         )
-                    _max_fault_throw = self.max_fault_throw[:]
+                    _max_fault_throw = self.max_fault_throw
                     for imft, mft in enumerate(max_fault_throw_list):
                         _max_fault_throw[indices_nearest_throw == imft] = mft
                     self.max_fault_throw[:] = _max_fault_throw
@@ -1437,18 +1409,6 @@ class Faults(Horizons, Geomodel):
         # Fault intersection segments > 1 at intersecting faults. Clip to 1
         _fault_intersections[_fault_intersections > 0.05] = 1.0
         _fault_intersections[_fault_intersections != 1.0] = 0.0
-        if verbose:
-            print("  ... line 607:")
-            print(
-                "   ...self.fault_intersections.max() = "
-                + ", "
-                + str(_fault_intersections.max())
-            )
-            print(
-                "   ...self.fault_intersections[self.fault_intersections>0.].size = "
-                + ", "
-                + str(_fault_intersections[_fault_intersections > 0.0].size)
-            )
 
         # Fault segments = 1 at fault > 1 at intersections. Clip intersecting fault voxels to 1
         _fault_planes = self.fault_planes[:]
@@ -1559,7 +1519,7 @@ class Faults(Horizons, Geomodel):
                 voxel_count_max = voxel_count
 
         plotdata = faulted_geologic_age[:, :, iz].copy()
-        plotdata2 = self.fault_planes[:, :, iz].copy()
+        plotdata2 = self.fault_planes[:, :, iz].copy();
         plotdata[plotdata2 > 0.05] = 0.0
         plt.subplot(1, 2, 1)
         plt.title(str(iz))
@@ -1637,15 +1597,6 @@ class Faults(Horizons, Geomodel):
         # Re-apply old gaps to improved depth_maps
         zmaps_imp = faulted_depth_maps.copy()
         merged = zmaps_imp.copy()
-        _depth_maps_gaps_improved = merged.copy()
-        _depth_maps_gaps_improved[np.isnan(self.faulted_depth_maps_gaps)] = np.nan
-        depth_maps_gaps = _depth_maps_gaps_improved.copy()
-
-        # for zero-thickness layers, set depth_maps_gaps to nan
-        for i in range(depth_maps_gaps.shape[-1] - 1):
-            thickness_map = depth_maps_gaps[:, :, i + 1] - depth_maps_gaps[:, :, i]
-            # set thicknesses < zero to NaN. Use NaNs in thickness_map to 0 to avoid runtime warning when indexing
-            depth_maps_gaps[:, :, i][np.nan_to_num(thickness_map) <= 0.0] = np.nan
 
         # restore zero thickness from faulted horizons to improved (interpolated) depth maps
         ii, jj = np.meshgrid(
@@ -1662,7 +1613,7 @@ class Faults(Horizons, Geomodel):
         _dilated_fault_planes = grey_dilation(self.fault_planes, size=(3, 3, 1))
 
         _onlap_segments = self.vols.onlap_segments[:]
-        for ihor in range(depth_maps_gaps.shape[-1] - 1, 2, -1):
+        for ihor in range(merged.shape[-1] - 1, 2, -1):
             # filter upper horizon being used for thickness if shallower events onlap it, except at faults
             improved_zmap_thickness = merged[:, :, ihor] - merged[:, :, ihor - 1]
             depth_map_int = ((merged[:, :, ihor]).astype(int)).clip(
@@ -1862,10 +1813,10 @@ class Faults(Horizons, Geomodel):
                                                                       self.vols.geologic_age.shape[0]))
             print("    ... This fault has {!s} %% of downthrown samples".format(down))
             """
+           
             print(
                 "    ... This fault has "
                 + format(down, "5.1%")
-                + " of downthrown samples"
             )
 
             (
@@ -2053,7 +2004,6 @@ class Faults(Horizons, Geomodel):
         fault_segments = edge / edge_max
         fault_segments[np.isnan(fault_segments)] = 0.0
         fault_segments[fault_segments < 0.5] = 0.0
-        fault_segments[fault_segments > 0.5] = 1.0
         return fault_segments
 
     def get_fault_centre(self, ellipsoid, wb_time_map, z_on_ellipse, index):
@@ -2334,7 +2284,7 @@ class Faults(Horizons, Geomodel):
         print(
             f"    ... Max displacement point before rotation and adding of padding x,y = {x_center} {y_center}"
         )
-        new_matrix = np.lib.pad(
+        new_matrix = np.pad(
             new_matrix, ((abs(x_pad), abs(x_pad)), (abs(y_pad), abs(y_pad))), "edge"
         )
         new_matrix = np.roll(new_matrix, int(x_roll), axis=0)
@@ -2685,139 +2635,126 @@ class Faults(Horizons, Geomodel):
 
     def _fault_params_self_branching(self):
         print(
-            f" ... {self.cfg.number_faults} faults will be inserted in clustered mode with"
+            f" ... {self.cfg.number_faults} faults will be inserted in "
+            "clustered mode with"
         )
         print(" ... Self branching")
-        x0_min = 0
-        x0_max = int(self.cfg.cube_shape[0])
-        y0_min = 0
-        y0_max = int(self.cfg.cube_shape[1])
-        # Self Branching mode means that faults are inserted side by side with no separation.
-        number_of_branches = int(self.cfg.number_faults / 3) + int(
-            self.cfg.number_faults % 3 > 0
+        
+        # Create overlapping fault segments
+        num_segments = max(2, self.cfg.number_faults // 2)
+
+        # Initialize lists
+        a = []
+        b = []
+        c = []
+        x = []
+        y = []
+        z = []
+        throw = []
+        dip = []
+        azi = []
+        tilt_pct = []
+        
+        for ifault in range(self.cfg.number_faults):
+            # Assign to segment for overlapping
+            segment = ifault % num_segments
+            
+            # Base position for this segment
+            base_x = (segment + 0.5) * self.cfg.cube_shape[0] / num_segments
+            base_y = np.random.uniform(0.2, 0.8) * self.cfg.cube_shape[1]
+
+            # Offset within segment for overlapping
+            offset_x = np.random.uniform(-0.3, 0.3) * \
+                self.cfg.cube_shape[0] / num_segments
+            offset_y = np.random.uniform(-0.2, 0.2) * \
+                self.cfg.cube_shape[1]
+
+            # Principal semi-axes
+            a_val = np.random.uniform(150, 500) ** 2
+            b_val = np.random.uniform(80, 300) ** 2
+
+            x_pos = base_x + offset_x
+            y_pos = base_y + offset_y
+            z_pos = np.random.uniform(
+                -self.cfg.cube_shape[2] * 2.0,
+                -self.cfg.cube_shape[2] * 6.0,
+            )
+
+            _c0 = (self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - 
+                   z_pos)
+            _c1 = _c0 + (self.cfg.cube_shape[2] * self.cfg.infill_factor /
+                         4.0)
+            c_val = np.random.uniform(_c0, _c1) ** 2
+
+            tilt_val = np.random.uniform(0.1, 0.75)
+            throw_val = np.random.uniform(
+                low=self.cfg.low_fault_throw,
+                high=self.cfg.high_fault_throw,
+            )
+            dip_val = np.random.uniform(30, 90)  # typical dip range
+            azi_val = np.random.uniform(0, 360)
+
+            # Append to lists
+            a.append(a_val)
+            b.append(b_val)
+            c.append(c_val)
+            x.append(x_pos)
+            y.append(y_pos)
+            z.append(z_pos)
+            throw.append(throw_val)
+            dip.append(dip_val)
+            azi.append(azi_val)
+            tilt_pct.append(tilt_val)
+
+        fault_param_dict = {
+            "a": np.array(a),
+            "b": np.array(b),
+            "c": np.array(c),
+            "x0": np.array(x),
+            "y0": np.array(y),
+            "z0": np.array(z),
+            "tilt_pct": np.array(tilt_pct),
+            "throw": np.array(throw),
+        }
+
+        return fault_param_dict
+
+    def _fault_params_horst_graben(self):
+        print(" ... horst and graben")
+        # Horst and graben: parallel faults creating alternating
+        # uplifted and down-dropped blocks
+
+        # Create parallel faults spaced regularly
+        spacing = self.cfg.cube_shape[0] / (self.cfg.number_faults + 1)
+        x_positions = np.linspace(spacing,
+                                  self.cfg.cube_shape[0] - spacing,
+                                  self.cfg.number_faults)
+
+        # Principal semi-axes - make them elongated in one direction
+        # for parallel faults
+        a = np.random.uniform(200, 800, self.cfg.number_faults) ** 2
+        b = np.random.uniform(50, 200, self.cfg.number_faults) ** 2
+
+        x0 = x_positions
+        y0_min = int(self.cfg.cube_shape[1] / 6.0)
+        y0_max = int(self.cfg.cube_shape[1] * 5.0 / 6.0)
+        y0 = np.random.uniform(y0_min, y0_max, self.cfg.number_faults)
+        z0 = np.random.uniform(
+            -self.cfg.cube_shape[2] * 2.0,
+            -self.cfg.cube_shape[2] * 6.0,
+            self.cfg.number_faults,
         )
 
-        for i in range(number_of_branches):
-            # Initialize first fault center, offset center between each branch
-            print(" ... Computing branch number ", i)
-            b_ini = np.array(np.random.uniform(100, 600) ** 2)
-            a_ini = np.array(np.random.uniform(100, 600) ** 2)
-            if a_ini > b_ini:
-                while np.sqrt(b_ini) < self.cfg.cube_shape[1]:
-                    print(" ... Recomputing b_ini for better branching")
-                    b_ini = np.array(np.random.uniform(100, 600) ** 2)
-                x0_ini = np.array(np.random.uniform(x0_min, x0_max))
-                range_1 = list(range(int(y0_min - np.sqrt(b_ini)), 0))
-                range_2 = list(range(int(self.cfg.cube_shape[1])))
-                y0_ini = np.array(
-                    np.random.choice(range_1 + range_2, int(np.sqrt(b_ini) + y0_max))
-                )
-                side = "x"
-            else:
-                while np.sqrt(a_ini) < self.cfg.cube_shape[0]:
-                    print(" ... Recomputing a_ini for better branching")
-                    a_ini = np.array(np.random.uniform(100, 600) ** 2)
-                range_1 = list(range(int(x0_min - np.sqrt(a_ini)), 0))
-                range_2 = list(range(int(self.cfg.cube_shape[0])))
-                x0_ini = np.array(
-                    np.array(
-                        np.random.choice(
-                            range_1 + range_2, int(np.sqrt(a_ini) + x0_max)
-                        )
-                    )
-                )
-                y0_ini = np.array(np.random.uniform(y0_min, y0_max))
-                side = "y"
-            # Compute the rest of the initial parameters normally
-            z0_ini = np.array(
-                np.random.uniform(
-                    -self.cfg.cube_shape[2] * 2.0, -self.cfg.cube_shape[2] * 6.0
-                )
-            )
+        _c0 = self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - z0
+        _c1 = _c0 + self.cfg.cube_shape[2] * self.cfg.infill_factor / 4.0
+        c = np.random.uniform(_c0, _c1, self.cfg.number_faults) ** 2
 
-            _c0_ini = self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - z0_ini
-            _c1_ini = _c0_ini + self.cfg.cube_shape[2] * self.cfg.infill_factor / 4.0
-            c_ini = np.array(np.random.uniform(_c0_ini, _c1_ini) ** 2)
-            tilt_pct_ini = np.array(np.random.uniform(0.1, 0.75))
-            # direction = np.random.choice([-1, 1])
-            throw_lut_ini = np.array(
-                np.random.uniform(
-                    low=self.cfg.low_fault_throw, high=self.cfg.high_fault_throw
-                )
-            )
-            if i == 0:
-                # Initialize return parameters
-                a = a_ini.copy()
-                b = b_ini.copy()
-                c = c_ini.copy()
-                x0 = x0_ini.copy()
-                y0 = y0_ini.copy()
-                z0 = z0_ini.copy()
-                tilt_pct = tilt_pct_ini.copy()
-                throw_lut = throw_lut_ini.copy()
-            else:
-                a = np.append(a, a_ini)
-                b = np.append(b, b_ini)
-                c = np.append(c, c_ini)
-                x0 = np.append(x0, x0_ini)
-                y0 = np.append(y0, y0_ini)
-                z0 = np.append(z0, z0_ini)
-                tilt_pct = np.append(tilt_pct, tilt_pct_ini)
-                throw_lut = np.append(throw_lut, throw_lut_ini)
-            # Construct fault in branch
-            if i < number_of_branches - 1 or self.cfg.number_faults % 3 == 0:
-                fault_in_branch = 2
-            else:
-                fault_in_branch = self.cfg.number_faults % 3
-            print(" ... Branch along axis ", side)
-
-            direction = 1
-            if side == "x":
-                if np.all(y0_ini > np.abs(self.cfg.cube_shape[1] - y0_ini)):
-                    print("     ... Building from right to left")
-                    direction = -1
-                else:
-                    print("     ... Building from left to right")
-            else:
-                if np.all(x0_ini > np.abs(self.cfg.cube_shape[0] - x0_ini)):
-                    print("     ... Building from left to right")
-                    direction = -1
-                else:
-                    print("     ... Building from right to left")
-            move = 1
-            for j in range(
-                i * number_of_branches + 1, fault_in_branch + i * number_of_branches + 1
-            ):
-                print("     ... Computing fault number ", j)
-                # Allow 20% deviation from initial fault parameter
-                a_ramp = np.random.uniform(0.8, 1.2) * a_ini.copy()
-                b_ramp = np.random.uniform(0.8, 1.2) * b_ini.copy()
-                c_ramp = c_ini.copy()
-                if side == "x":
-                    x0_ramp = x0_ini + direction * move * int(
-                        self.cfg.cube_shape[0] / 3.0
-                    )
-                    y0_ramp = np.random.uniform(0.9, 1.1) * y0_ini
-                else:
-                    y0_ramp = y0_ini + direction * move * int(
-                        self.cfg.cube_shape[0] / 3.0
-                    )
-                    x0_ramp = np.random.uniform(0.9, 1.1) * x0_ini
-                z0_ramp = z0_ini.copy()
-                tilt_pct_ramp = tilt_pct_ini * np.random.uniform(0.85, 1.15)
-                # Add to existing
-                throw_lut_ramp = np.random.uniform(
-                    low=self.cfg.low_fault_throw, high=self.cfg.high_fault_throw
-                )
-                throw_lut = np.append(throw_lut, throw_lut_ramp)
-                a = np.append(a, a_ramp)
-                b = np.append(b, b_ramp)
-                c = np.append(c, c_ramp)
-                x0 = np.append(x0, x0_ramp)
-                y0 = np.append(y0, y0_ramp)
-                z0 = np.append(z0, z0_ramp)
-                tilt_pct = np.append(tilt_pct, tilt_pct_ramp)
-                move += 1
+        tilt_pct = np.random.uniform(0.1, 0.75, self.cfg.number_faults)
+        throw_lut = np.random.uniform(
+            low=self.cfg.low_fault_throw,
+            high=self.cfg.high_fault_throw,
+            size=self.cfg.number_faults,
+        )
 
         fault_param_dict = {
             "a": a,
@@ -2829,74 +2766,46 @@ class Faults(Horizons, Geomodel):
             "tilt_pct": tilt_pct,
             "throw": throw_lut,
         }
+
         return fault_param_dict
 
     def _fault_params_stairs(self):
-        print(" ... Stairs like feature")
-        # Initialize value for first fault
-        x0_min = int(self.cfg.cube_shape[0] / 4.0)
-        x0_max = int(self.cfg.cube_shape[0] / 2.0)
-        y0_min = int(self.cfg.cube_shape[1] / 4.0)
-        y0_max = int(self.cfg.cube_shape[1] / 2.0)
+        print(" ... stair-case faults")
+        # Stair-case: faults arranged in a stepped pattern
 
-        b_ini = np.array(np.random.uniform(100, 600) ** 2)
-        a_ini = np.array(np.random.uniform(100, 600) ** 2)
-        x0_ini = np.array(
-            np.random.uniform(x0_min - np.sqrt(a_ini), np.sqrt(a_ini) + x0_max)
-        )
-        y0_ini = np.array(
-            np.random.uniform(y0_min - np.sqrt(b_ini), np.sqrt(b_ini) + y0_max)
-        )
-        z0_ini = np.array(
-            np.random.uniform(
-                -self.cfg.cube_shape[2] * 2.0, -self.cfg.cube_shape[2] * 6.0
-            )
+        # Create faults in a stair-like arrangement
+        spacing_x = self.cfg.cube_shape[0] / (self.cfg.number_faults + 1)
+        spacing_y = self.cfg.cube_shape[1] / (self.cfg.number_faults + 1)
+
+        x_positions = np.linspace(spacing_x,
+                                  self.cfg.cube_shape[0] - spacing_x,
+                                  self.cfg.number_faults)
+        y_positions = np.linspace(spacing_y,
+                                  self.cfg.cube_shape[1] - spacing_y,
+                                  self.cfg.number_faults)
+
+        # Principal semi-axes
+        a = np.random.uniform(200, 600, self.cfg.number_faults) ** 2
+        b = np.random.uniform(100, 400, self.cfg.number_faults) ** 2
+
+        x0 = x_positions
+        y0 = y_positions
+        z0 = np.random.uniform(
+            -self.cfg.cube_shape[2] * 2.0,
+            -self.cfg.cube_shape[2] * 6.0,
+            self.cfg.number_faults,
         )
 
-        _c0_ini = self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - z0_ini
-        _c1_ini = _c0_ini + self.cfg.cube_shape[2] * self.cfg.infill_factor / 4.0
-        c_ini = np.array(np.random.uniform(_c0_ini, _c1_ini) ** 2)
+        _c0 = self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - z0
+        _c1 = _c0 + self.cfg.cube_shape[2] * self.cfg.infill_factor / 4.0
+        c = np.random.uniform(_c0, _c1, self.cfg.number_faults) ** 2
 
-        tilt_pct_ini = np.array(np.random.uniform(0.1, 0.75))
+        tilt_pct = np.random.uniform(0.1, 0.75, self.cfg.number_faults)
         throw_lut = np.random.uniform(
-            self.cfg.low_fault_throw, self.cfg.high_fault_throw, self.cfg.number_faults
+            low=self.cfg.low_fault_throw,
+            high=self.cfg.high_fault_throw,
+            size=self.cfg.number_faults,
         )
-        direction = np.random.choice([-1, 1])
-        separation_x = np.random.randint(1, 4)
-        separation_y = np.random.randint(1, 4)
-        # Initialize return parameters
-        a = a_ini.copy()
-        b = b_ini.copy()
-        c = c_ini.copy()
-        x0 = x0_ini.copy()
-        y0 = y0_ini.copy()
-        z0 = z0_ini.copy()
-        x0_prec = x0_ini
-        y0_prec = y0_ini
-        tilt_pct = tilt_pct_ini.copy()
-        for i in range(self.cfg.number_faults - 1):
-            a_ramp = a_ini.copy() * np.random.uniform(0.8, 1.2)
-            b_ramp = b_ini.copy() * np.random.uniform(0.8, 1.2)
-            c_ramp = c_ini.copy() * np.random.uniform(0.8, 1.2)
-            direction = np.random.choice([-1, 1])
-            x0_ramp = (
-                x0_prec + separation_x * direction * x0_ini / self.cfg.number_faults
-            )
-            y0_ramp = (
-                y0_prec + separation_y * direction * y0_ini / self.cfg.number_faults
-            )
-            z0_ramp = z0_ini.copy()
-            tilt_pct_ramp = tilt_pct_ini * np.random.uniform(0.85, 1.15)
-            x0_prec = x0_ramp
-            y0_prec = y0_ramp
-            # Add to existing
-            a = np.append(a, a_ramp)
-            b = np.append(b, b_ramp)
-            c = np.append(c, c_ramp)
-            x0 = np.append(x0, x0_ramp)
-            y0 = np.append(y0, y0_ramp)
-            z0 = np.append(z0, z0_ramp)
-            tilt_pct = np.append(tilt_pct, tilt_pct_ramp)
 
         fault_param_dict = {
             "a": a,
@@ -2908,292 +2817,91 @@ class Faults(Horizons, Geomodel):
             "tilt_pct": tilt_pct,
             "throw": throw_lut,
         }
+
         return fault_param_dict
 
     def _fault_params_relay_ramps(self):
         print(" ... relay ramps")
-        # Initialize value for first fault
-        # Maximum of 3 fault per ramp
-        x0_min = int(self.cfg.cube_shape[0] / 4.0)
-        x0_max = int(self.cfg.cube_shape[0] / 2.0)
-        y0_min = int(self.cfg.cube_shape[1] / 4.0)
-        y0_max = int(self.cfg.cube_shape[1] / 2.0)
-        number_of_branches = int(self.cfg.number_faults / 3) + int(
-            self.cfg.number_faults % 3 > 0
-        )
+        # Relay ramps: overlapping fault segments creating ramp structures
 
-        for i in range(number_of_branches):
-            # Initialize first fault center, offset center between each branch
-            print(" ... Computing branch number ", i)
-            b_ini = np.array(np.random.uniform(100, 600) ** 2)
-            a_ini = np.array(np.random.uniform(100, 600) ** 2)
-            x0_ini = np.array(
-                np.random.uniform(x0_min - np.sqrt(a_ini) / 2, np.sqrt(a_ini) + x0_max)
-                / 2
-            )
-            y0_ini = np.array(
-                np.random.uniform(y0_min - np.sqrt(b_ini) / 2, np.sqrt(b_ini) + y0_max)
-                / 2
-            )
-            # Compute the rest of the initial parameters normally
-            z0_ini = np.array(
-                np.random.uniform(
-                    -self.cfg.cube_shape[2] * 2.0, -self.cfg.cube_shape[2] * 6.0
-                )
-            )
-            c_ini = np.array(
-                np.random.uniform(
-                    self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - z0_ini,
-                    self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0
-                    - z0_ini
-                    + self.cfg.cube_shape[2] * self.cfg.infill_factor / 4.0,
-                )
-                ** 2
-            )
-            tilt_pct_ini = np.array(np.random.uniform(0.1, 0.75))
-            throw_lut = np.random.uniform(
-                self.cfg.low_fault_throw,
-                self.cfg.high_fault_throw,
-                self.cfg.number_faults,
-            )
-            # Initialize return parameters
-            if i == 0:
-                a = a_ini.copy()
-                b = b_ini.copy()
-                c = c_ini.copy()
-                x0 = x0_ini.copy()
-                y0 = y0_ini.copy()
-                z0 = z0_ini.copy()
-                tilt_pct = tilt_pct_ini.copy()
-            else:
-                a = np.append(a, a_ini)
-                b = np.append(b, b_ini)
-                c = np.append(c, c_ini)
-                x0 = np.append(x0, x0_ini)
-                y0 = np.append(y0, y0_ini)
-                z0 = np.append(z0, z0_ini)
-                tilt_pct = np.append(tilt_pct, tilt_pct_ini)
-                # Construct fault in branch
-            if i < number_of_branches - 1 or self.cfg.number_faults % 3 == 0:
-                fault_in_branche = 2
-            else:
-                fault_in_branche = self.cfg.number_faults % 3
+        # Create overlapping fault segments
+        num_segments = max(2, self.cfg.number_faults // 2)
 
-            direction = np.random.choice([-1, 1])
-            move = 1
-            x0_prec = x0_ini
-            y0_prec = y0_ini
-            for j in range(
-                i * number_of_branches + 1,
-                fault_in_branche + i * number_of_branches + 1,
-            ):
-                print("     ... Computing fault number ", j)
-                # Allow 20% deviation from initial fault parameter
-                a_ramp = np.random.uniform(0.8, 1.2) * a_ini.copy()
-                b_ramp = np.random.uniform(0.8, 1.2) * b_ini.copy()
-                c_ramp = c_ini.copy()
-                direction = np.random.choice([-1, 1])
-                x0_ramp = x0_prec * np.random.uniform(0.8, 1.2) + direction * x0_ini / (
-                    fault_in_branche
-                )
-                y0_ramp = y0_prec * np.random.uniform(0.8, 1.2) + direction * y0_ini / (
-                    fault_in_branche
-                )
-                z0_ramp = z0_ini.copy()
-                tilt_pct_ramp = tilt_pct_ini * np.random.uniform(0.85, 1.15)
-                # Add to existing
-                throw_LUT_ramp = np.random.uniform(
-                    low=self.cfg.low_fault_throw, high=self.cfg.high_fault_throw
-                )
-                throw_lut = np.append(throw_lut, throw_LUT_ramp)
-                a = np.append(a, a_ramp)
-                b = np.append(b, b_ramp)
-                c = np.append(c, c_ramp)
-                x0 = np.append(x0, x0_ramp)
-                y0 = np.append(y0, y0_ramp)
-                z0 = np.append(z0, z0_ramp)
-                tilt_pct = np.append(tilt_pct, tilt_pct_ramp)
-                x0_prec = x0_ramp
-                y0_prec = y0_ramp
-                move += 1
+        # Initialize lists
+        a = []
+        b = []
+        c = []
+        x = []
+        y = []
+        z = []
+        throw = []
+        dip = []
+        azi = []
+        tilt_pct = []
+
+        for ifault in range(self.cfg.number_faults):
+            # Assign to segment for overlapping
+            segment = ifault % num_segments
+            
+            # Base position for this segment
+            base_x = (segment + 0.5) * self.cfg.cube_shape[0] / num_segments
+            base_y = np.random.uniform(0.2, 0.8) * self.cfg.cube_shape[1]
+
+            # Offset within segment for overlapping
+            offset_x = np.random.uniform(-0.3, 0.3) * \
+                self.cfg.cube_shape[0] / num_segments
+            offset_y = np.random.uniform(-0.2, 0.2) * \
+                self.cfg.cube_shape[1]
+
+            # Principal semi-axes
+            a_val = np.random.uniform(150, 500) ** 2
+            b_val = np.random.uniform(80, 300) ** 2
+
+            x_pos = base_x + offset_x
+            y_pos = base_y + offset_y
+            z_pos = np.random.uniform(
+                -self.cfg.cube_shape[2] * 2.0,
+                -self.cfg.cube_shape[2] * 6.0,
+            )
+
+            _c0 = (self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - 
+                   z_pos)
+            _c1 = _c0 + (self.cfg.cube_shape[2] * self.cfg.infill_factor /
+                         4.0)
+            c_val = np.random.uniform(_c0, _c1) ** 2
+
+            tilt_val = np.random.uniform(0.1, 0.75)
+            throw_val = np.random.uniform(
+                low=self.cfg.low_fault_throw,
+                high=self.cfg.high_fault_throw,
+            )
+            dip_val = np.random.uniform(30, 90)  # typical dip range
+            azi_val = np.random.uniform(0, 360)
+
+            # Append to lists
+            a.append(a_val)
+            b.append(b_val)
+            c.append(c_val)
+            x.append(x_pos)
+            y.append(y_pos)
+            z.append(z_pos)
+            throw.append(throw_val)
+            dip.append(dip_val)
+            azi.append(azi_val)
+            tilt_pct.append(tilt_val)
 
         fault_param_dict = {
-            "a": a,
-            "b": b,
-            "c": c,
-            "x0": x0,
-            "y0": y0,
-            "z0": z0,
-            "tilt_pct": tilt_pct,
-            "throw": throw_lut,
+            "a": np.array(a),
+            "b": np.array(b),
+            "c": np.array(c),
+            "x0": np.array(x),
+            "y0": np.array(y),
+            "z0": np.array(z),
+            "tilt_pct": np.array(tilt_pct),
+            "throw": np.array(throw),
         }
+
         return fault_param_dict
-
-    def _fault_params_horst_graben(self):
-        print(
-            "   ... %s faults will be inserted as Horst and Graben"
-            % (self.cfg.number_faults)
-        )
-        # Initialize value for first fault
-        x0_min = int(self.cfg.cube_shape[0] / 2.0)
-        x0_max = int(self.cfg.cube_shape[0])
-        y0_min = int(self.cfg.cube_shape[1] / 2.0)
-        y0_max = int(self.cfg.cube_shape[1])
-
-        b_ini = np.array(np.random.uniform(100, 600) ** 2)
-        a_ini = np.array(np.random.uniform(100, 600) ** 2)
-        if a_ini > b_ini:
-            side = "x"
-            while np.sqrt(b_ini) < self.cfg.cube_shape[1]:
-                print("   ... Recomputing b_ini for better branching")
-                b_ini = np.array(np.random.uniform(100, 600) ** 2)
-            x0_ini = np.array(np.random.uniform(0, self.cfg.cube_shape[0]))
-            # Compute so that first is near center
-            range_1 = list(
-                range(int(y0_min - np.sqrt(b_ini)), int(y0_max - np.sqrt(b_ini)))
-            )
-            range_2 = list(
-                range(int(y0_min + np.sqrt(b_ini)), int(y0_max + np.sqrt(b_ini)))
-            )
-            y0_ini = np.array(np.random.choice(range_1 + range_2))
-        else:
-            side = "y"
-            while np.sqrt(a_ini) < self.cfg.cube_shape[0]:
-                print(" ... Recomputing a_ini for better branching")
-                a_ini = np.array(np.random.uniform(100, 600) ** 2)
-            # compute so that first is near center
-            range_1 = list(
-                range(int(x0_min - np.sqrt(a_ini)), int(x0_max - np.sqrt(a_ini)))
-            )
-            range_2 = list(
-                range(int(x0_min + np.sqrt(a_ini)), int(x0_max + np.sqrt(a_ini)))
-            )
-            x0_ini = np.array(np.random.choice(range_1 + range_2))
-            y0_ini = np.array(np.random.uniform(0, self.cfg.cube_shape[1]))
-        z0_ini = np.array(
-            np.random.uniform(
-                -self.cfg.cube_shape[2] * 2.0, -self.cfg.cube_shape[2] * 6.0
-            )
-        )
-        c_ini = np.array(
-            np.random.uniform(
-                self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - z0_ini,
-                self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0
-                - z0_ini
-                + self.cfg.cube_shape[2] * self.cfg.infill_factor / 2.0,
-            )
-            ** 2
-        )
-        tilt_pct_ini = np.array(np.random.uniform(0.1, 0.75))
-        throw_lut = np.random.uniform(
-            self.cfg.low_fault_throw, self.cfg.high_fault_throw, self.cfg.number_faults
-        )
-        # Initialize return parameters
-        a = a_ini.copy()
-        b = b_ini.copy()
-        c = c_ini.copy()
-        x0 = x0_ini.copy()
-        y0 = y0_ini.copy()
-        z0 = z0_ini.copy()
-
-        tilt_pct = tilt_pct_ini.copy()
-        direction = "odd"
-        mod = ["new"]
-
-        x0_even = x0_ini
-        y0_even = y0_ini
-        if side == "x":
-            # X only moves marginally
-            y0_odd = int(self.cfg.cube_shape[1]) - y0_even
-            x0_odd = x0_even
-            direction_sign = np.sign(y0_ini)
-            direction_sidex = 0
-            direction_sidey = 1
-        else:
-            # Y only moves marginally
-            x0_odd = int(self.cfg.cube_shape[0]) - x0_even
-            y0_odd = y0_even
-            direction_sign = np.sign(x0_ini)
-            direction_sidex = 1
-            direction_sidey = 0
-
-        for i in range(self.cfg.number_faults - 1):
-            if direction == "odd":
-                # Put the next point as a mirror shifted by maximal shift and go backward
-                a_ramp = np.random.uniform(0.8, 1.2) * a_ini.copy()
-                b_ramp = np.random.uniform(0.8, 1.2) * b_ini.copy()
-                c_ramp = c_ini.copy()
-                x0_ramp = (
-                    -1
-                    * direction_sign
-                    * direction_sidex
-                    * int(self.cfg.cube_shape[0])
-                    * (i - 1)
-                    / self.cfg.number_faults
-                ) + x0_odd * np.random.uniform(0.8, 1.2)
-                y0_ramp = (
-                    -1
-                    * direction_sign
-                    * direction_sidey
-                    * int(self.cfg.cube_shape[0])
-                    * (i - 1)
-                    / self.cfg.number_faults
-                ) + y0_odd * np.random.uniform(0.8, 1.2)
-                z0_ramp = z0_ini.copy()
-                tilt_pct_ramp = tilt_pct_ini * np.random.uniform(0.85, 1.15)
-                x0_prec = x0_ramp
-                y0_prec = y0_ramp
-                # Add to existing
-                a = np.append(a, a_ramp)
-                b = np.append(b, b_ramp)
-                c = np.append(c, c_ramp)
-                x0 = np.append(x0, x0_ramp)
-                y0 = np.append(y0, y0_ramp)
-                z0 = np.append(z0, z0_ramp)
-                tilt_pct = np.append(tilt_pct, tilt_pct_ramp)
-                direction = "even"
-                mod.append("old")
-            elif direction == "even":
-                # Put next to ini
-                a_ramp = np.random.uniform(0.8, 1.2) * a_ini.copy()
-                b_ramp = np.random.uniform(0.8, 1.2) * b_ini.copy()
-                c_ramp = c_ini.copy()
-                x0_ramp = direction_sign * direction_sidex * int(
-                    self.cfg.cube_shape[0]
-                ) * (i - 1) / self.cfg.number_faults + x0_even * np.random.uniform(
-                    0.8, 1.2
-                )
-                y0_ramp = direction_sign * direction_sidey * int(
-                    self.cfg.cube_shape[0]
-                ) * (i - 1) / self.cfg.number_faults + y0_even * np.random.uniform(
-                    0.8, 1.2
-                )
-                z0_ramp = z0_ini.copy()
-                tilt_pct_ramp = tilt_pct_ini * np.random.uniform(0.85, 1.15)
-                # Add to existing
-                a = np.append(a, a_ramp)
-                b = np.append(b, b_ramp)
-                c = np.append(c, c_ramp)
-                x0 = np.append(x0, x0_ramp)
-                y0 = np.append(y0, y0_ramp)
-                z0 = np.append(z0, z0_ramp)
-                tilt_pct = np.append(tilt_pct, tilt_pct_ramp)
-                direction = "odd"
-                mod.append("new")
-
-        fault_param_dict = {
-            "a": a,
-            "b": b,
-            "c": c,
-            "x0": x0,
-            "y0": y0,
-            "z0": z0,
-            "tilt_pct": tilt_pct,
-            "throw": throw_lut,
-        }
-        return fault_param_dict
-
-
 def find_zero_thickness_onlapping_layers(z, onlap_list):
     onlap_zero_z = dict()
     for layer in onlap_list:

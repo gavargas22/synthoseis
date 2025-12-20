@@ -224,12 +224,10 @@ def normalize_seismic(
         print("Saving centerbin data to: " + save_file)
         sys.stdout.flush()
 
-        np.savez(
-            save_file,
-            centerbins=centerbins,
-            target_centerbins=target_centerbins,
-            mean=seismic_mean,
-        )
+        dataset_name = save_file.replace('.npz', '').replace('/', '_')
+        self.cfg.storage.create_dataset(f"{dataset_name}_centerbins", centerbins)
+        self.cfg.storage.create_dataset(f"{dataset_name}_target_centerbins", target_centerbins)
+        self.cfg.storage.create_dataset(f"{dataset_name}_mean", seismic_mean)
         print("Done.")
         sys.stdout.flush()
 

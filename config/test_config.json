@@ -1,8 +1,8 @@
 {
-  "project": "example",
-  "project_folder": "/mnt/d/scratch/synthoseis_example",
-  "work_folder": "/scratch",
-  "cube_shape": [300, 300, 1250],
+  "project": "test",
+  "project_folder": "C:\\temp\\synthoseis_test",
+  "work_folder": "C:\\temp",
+  "cube_shape": [50, 50, 50],
   "incident_angles": [7, 15, 24],
   "digi": 4,
   "infill_factor": 10,
@@ -19,24 +19,23 @@
   "max_number_faults": 6,
   "pad_samples": 10,
   "max_column_height": [150.0, 150.0],
-  "closure_types": ["simple", "faulted", "onlap"],
-  "min_closure_voxels_simple": 500,
+  "closure_types": ["simple"],
+  "min_closure_voxels_simple": 10,
   "min_closure_voxels_faulted": 2500,
   "min_closure_voxels_onlap": 500,
   "sand_layer_thickness":2,
-  "sand_layer_fraction":
-  {
+  "sand_layer_fraction": {
     "min": 0.05,
     "max": 0.25
   },
-  "extra_qc_plots": true,
+  "extra_qc_plots": false,
   "verbose": true,
   "partial_voxels": true,
   "variable_shale_ng": false,
   "basin_floor_fans": false,
   "include_channels": false,
-  "include_salt": true,
+  "include_salt": false,
   "broadband_qc_volume": false,
-  "model_qc_volumes": true,
-  "multiprocess_bp": true
+  "model_qc_volumes": false,
+  "multiprocess_bp": false
 }
