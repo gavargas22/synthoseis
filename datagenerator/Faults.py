@@ -61,24 +61,24 @@ class Faults(Horizons, Geomodel):
         self.onlap_horizon_list = onlap_horizon_list
         self.fan_horizon_list = fan_horizon_list
         self.fan_thickness = fan_thickness
-        self.faulted_depth_maps = np.zeros(unfaulted_depth_maps.shape, dtype="float")
-        self.faulted_depth_maps_gaps = np.zeros(unfaulted_depth_maps.shape, dtype="float")
+        self.faulted_depth_maps = np.zeros(unfaulted_depth_maps.shape, dtype="float32")
+        self.faulted_depth_maps_gaps = np.zeros(unfaulted_depth_maps.shape, dtype="float32")
         # Volumes
         cube_shape = geomodels.geologic_age[:].shape
         self.vols = geomodels
-        self.faulted_age_volume = np.zeros(cube_shape, dtype="float")
-        self.faulted_net_to_gross = np.zeros(cube_shape, dtype="float")
-        self.faulted_lithology = np.zeros(cube_shape, dtype="float")
-        self.reservoir = np.zeros(cube_shape, dtype="float")
-        self.faulted_depth = np.zeros(cube_shape, dtype="float")
-        self.faulted_onlap_segments = np.zeros(cube_shape, dtype="float")
-        self.fault_planes = np.zeros(cube_shape, dtype="float")
-        self.displacement_vectors = np.zeros(cube_shape, dtype="float")
-        self.sum_map_displacements = np.zeros(cube_shape, dtype="float")
-        self.fault_intersections = np.zeros(cube_shape, dtype="float")
-        self.fault_plane_throw = np.zeros(cube_shape, dtype="float")
-        self.max_fault_throw = np.zeros(cube_shape, dtype="float")
-        self.fault_plane_azimuth = np.zeros(cube_shape, dtype="float")
+        self.faulted_age_volume = np.zeros(cube_shape, dtype="float32")
+        self.faulted_net_to_gross = np.zeros(cube_shape, dtype="float32")
+        self.faulted_lithology = np.zeros(cube_shape, dtype="float32")
+        self.reservoir = np.zeros(cube_shape, dtype="float32")
+        self.faulted_depth = np.zeros(cube_shape, dtype="float32")
+        self.faulted_onlap_segments = np.zeros(cube_shape, dtype="float32")
+        self.fault_planes = np.zeros(cube_shape, dtype="float32")
+        self.displacement_vectors = np.zeros(cube_shape, dtype="float32")
+        self.sum_map_displacements = np.zeros(cube_shape, dtype="float32")
+        self.fault_intersections = np.zeros(cube_shape, dtype="float32")
+        self.fault_plane_throw = np.zeros(cube_shape, dtype="float32")
+        self.max_fault_throw = np.zeros(cube_shape, dtype="float32")
+        self.fault_plane_azimuth = np.zeros(cube_shape, dtype="float32")
         # Salt
         self.salt_model = None
 
@@ -1210,10 +1210,10 @@ class Faults(Horizons, Geomodel):
                         )
                     mfts = self.max_fault_throw.shape
                     max_fault_throw_4d_diff = np.zeros(
-                        (mfts[0], mfts[1], mfts[2], max_fault_throw_list.size), dtype="float"
+                        (mfts[0], mfts[1], mfts[2], max_fault_throw_list.size), dtype="float32"
                     )
                     max_fault_throw_4d = np.zeros(
-                        (mfts[0], mfts[1], mfts[2], max_fault_throw_list.size), dtype="float"
+                        (mfts[0], mfts[1], mfts[2], max_fault_throw_list.size), dtype="float32"
                     )
                     if verbose:
                         print(

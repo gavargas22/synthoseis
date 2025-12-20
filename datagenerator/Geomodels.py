@@ -62,12 +62,12 @@ class Geomodel:
             self.cfg.cube_shape[1],
             self.cfg.cube_shape[2] + self.cfg.pad_samples,
         )
-        self.geologic_age = np.zeros(cube_shape, dtype="float")
+        self.geologic_age = np.zeros(cube_shape, dtype="float32")
         self.onlap_segments = np.zeros(cube_shape, dtype="float32")
-        self.faulted_lithology = np.zeros(cube_shape, dtype="float")
-        self.geomodel_ng = np.zeros(cube_shape, dtype="float")
-        self.faulted_depth = np.zeros(cube_shape, dtype="float")
-        self.faulted_depth_randomised = np.zeros(cube_shape, dtype="float")
+        self.faulted_lithology = np.zeros(cube_shape, dtype="float32")
+        self.geomodel_ng = np.zeros(cube_shape, dtype="float32")
+        self.faulted_depth = np.zeros(cube_shape, dtype="float32")
+        self.faulted_depth_randomised = np.zeros(cube_shape, dtype="float32")
 
         # Channel volumes
         if self.cfg.include_channels:

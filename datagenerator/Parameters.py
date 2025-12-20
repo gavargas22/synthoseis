@@ -961,7 +961,7 @@ class Parameters(_Borg):
             pass
         self.storage = StorageClient.open(store_path, mode="a")
 
-    def storage_init(self, dset_name: str, shape: tuple, dtype: str = "float64"):
+    def storage_init(self, dset_name: str, shape: tuple, dtype: str = "float32"):
         """Initialize a dataset in the MDIO store and return a numpy placeholder.
 
         This function creates an array in the MDIO store using the

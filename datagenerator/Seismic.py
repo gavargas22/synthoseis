@@ -2,6 +2,14 @@ import os
 import itertools
 from multiprocessing import Pool
 import numpy as np
+import dask.array as da
+try:
+    import cubed
+    import cubed.array_api as xp
+    CUBED_AVAILABLE = True
+except ImportError:
+    CUBED_AVAILABLE = False
+    xp = np
 
 from tqdm import trange
 from datagenerator.histogram_equalizer import normalize_seismic
@@ -158,21 +166,34 @@ class SeismicVolume(Geomodel):
     def postprocess_rfc_cubes(
         self, rfc_data, filename_suffix="", bb=False, stack=False
     ):
-        """Postprocess the RFC cubes."""
+        """Postprocess the RFC cubes using dask for chunk-based processing."""
+        # Convert to dask array if not already
+        if not isinstance(rfc_data, da.Array):
+            rfc_data = da.from_array(rfc_data, chunks="auto")
+
         if bb:
             bandlimited = self.apply_bandlimits(rfc_data, (4.0, 90.0))
         else:
             bandlimited = self.apply_bandlimits(rfc_data)
+
         if self.cfg.lateral_filter_size > 1:
-            bandlimited = self.apply_lateral_filter(bandlimited)
+            # Compute bandlimited for lateral filter (scipy operations need numpy)
+            bandlimited_np = bandlimited.compute() if isinstance(bandlimited, da.Array) else bandlimited
+            bandlimited = self.apply_lateral_filter(bandlimited_np)
+            bandlimited = da.from_array(bandlimited, chunks="auto")
+
         if filename_suffix == "":
             fname = "seismicCubes_RFC_"
         else:
             fname = f"seismicCubes_RFC_{filename_suffix}_"
-        _ = self.write_final_cubes_to_disk(bandlimited, fname)
+
+        # Compute for writing to disk
+        bandlimited_np = bandlimited.compute() if isinstance(bandlimited, da.Array) else bandlimited
+        _ = self.write_final_cubes_to_disk(bandlimited_np, fname)
+
         if stack:
             rfc_fullstack = self.stack_substacks(
-                [bandlimited[x, ...] for x, _ in enumerate(self.angles)]
+                [bandlimited_np[x, ...] for x, _ in enumerate(self.angles)]
             )
             rfc_fullstack_scaled = self._scale_seismic(rfc_fullstack)
             self.write_cube_to_disk(
@@ -185,10 +206,14 @@ class SeismicVolume(Geomodel):
             fname = "seismicCubes_cumsum_"
         else:
             fname = f"seismicCubes_cumsum_{filename_suffix}_"
-        normalised_cumsum = self.write_final_cubes_to_disk(cumsum, fname)
+
+        # Compute for writing to disk
+        cumsum_np = cumsum.compute() if isinstance(cumsum, da.Array) else cumsum
+        normalised_cumsum = self.write_final_cubes_to_disk(cumsum_np, fname)
+
         if stack:
             rai_fullstack = self.stack_substacks(
-                [cumsum[x, ...] for x, _ in enumerate(self.angles)]
+                [cumsum_np[x, ...] for x, _ in enumerate(self.angles)]
             )
             rai_fullstack_scaled = self._scale_seismic(rai_fullstack)
             self.write_cube_to_disk(
@@ -309,6 +334,7 @@ class SeismicVolume(Geomodel):
     def create_rfc_volumes(self):
         """
         Build a 3D array of PP-Reflectivity using Zoeppritz for each incident angle given.
+        Uses dask/cubed for chunk-based processing to handle large arrays efficiently.
 
         :return: 4D array of PP-Reflectivity. 4th dimension holds reflectivities of each incident angle provided
         """
@@ -316,88 +342,113 @@ class SeismicVolume(Geomodel):
             (-1, 1)
         )  # Convert angles into a column vector
 
-        # Make empty array to store RPP via zoeppritz
-        zoep = np.zeros(
-            (self.rho.shape[0], self.rho.shape[1], self.rho.shape[2] - 1, theta.size),
-            dtype="complex64",
-        )
+        # Load arrays as dask arrays from storage for chunk-based processing
+        _rho = self.cfg.storage.get_dataset("rho", use_dask=True)
+        _vp = self.cfg.storage.get_dataset("vp", use_dask=True)
+        _vs = self.cfg.storage.get_dataset("vs", use_dask=True)
 
-        _rho = self.rho[:]
-        _vp = self.vp[:]
-        _vs = self.vs[:]
         if self.cfg.verbose:
             print("Checking for null values inside create_rfc_volumes:\n")
-            print(f"Rho: {np.min(_rho)}, {np.max(_rho)}")
-            print(f"Vp: {np.min(_vp)}, {np.max(_vp)}")
-            print(f"Vs: {np.min(_vs)}, {np.max(_vs)}")
-        # Doing this for each trace & all (5) angles is actually quicker than doing entire cubes for each angle
-        for i in trange(
-            self.rho.shape[0],
-            desc=f"Calculating Zoeppritz for {len(self.angles)} angles",
-        ):
-            for j in range(self.rho.shape[1]):
-                rho1, rho2 = _rho[i, j, :-1], _rho[i, j, 1:]
-                vp1, vp2 = _vp[i, j, :-1], _vp[i, j, 1:]
-                vs1, vs2 = _vs[i, j, :-1], _vs[i, j, 1:]
-                rfc = RFC(vp1, vs1, rho1, vp2, vs2, rho2, theta)
-                zoep[i, j, :, :] = rfc.zoeppritz_reflectivity().T
-        # Set any voxels with imaginary parts to 0, since all transmitted energy travels along the reflector
-        # zoep[np.where(np.imag(zoep) != 0)] = 0
-        # discard complex values and set dtype to float64
-        zoep = np.real(zoep).astype("float64")
-        del _rho, _vp, _vs
+            print(f"Rho: {da.min(_rho).compute()}, {da.max(_rho).compute()}")
+            print(f"Vp: {da.min(_vp).compute()}, {da.max(_vp).compute()}")
+            print(f"Vs: {da.min(_vs).compute()}, {da.max(_vs).compute()}")
 
-        # Move the angle from last dimension to first
-        self.rfc_raw[:] = np.moveaxis(zoep, -1, 0)
+        # Define chunk-based Zoeppritz calculation function
+        def compute_zoep_chunk(rho_chunk, vp_chunk, vs_chunk, theta_arr):
+            """Compute Zoeppritz reflectivity for a chunk of data."""
+            chunk_shape = rho_chunk.shape
+            zoep_chunk = np.zeros(
+                (chunk_shape[0], chunk_shape[1], chunk_shape[2] - 1, theta_arr.size),
+                dtype="complex64",
+            )
 
-        for n, d in zip(
-            [
-                "qc_volume_rfc_raw_{}_degrees".format(
-                    str(self.angles[x]).replace(".", "_")
-                )
-                for x in range(self.rfc_raw.shape[0])
-            ],
-            [self.rfc_raw[x, ...] for x in range(self.rfc_raw.shape[0])],
-        ):
-            self.cfg.storage.create_dataset(n, d)
+            for i in range(chunk_shape[0]):
+                for j in range(chunk_shape[1]):
+                    rho1, rho2 = rho_chunk[i, j, :-1], rho_chunk[i, j, 1:]
+                    vp1, vp2 = vp_chunk[i, j, :-1], vp_chunk[i, j, 1:]
+                    vs1, vs2 = vs_chunk[i, j, :-1], vs_chunk[i, j, 1:]
+                    rfc = RFC(vp1, vs1, rho1, vp2, vs2, rho2, theta_arr)
+                    zoep_chunk[i, j, :, :] = rfc.zoeppritz_reflectivity().T
+
+            # Convert to float32
+            zoep_chunk = np.real(zoep_chunk).astype("float32")
+            return zoep_chunk
+
+        # Apply the function using dask map_blocks for chunk-based processing
+        if self.cfg.verbose:
+            print(f"Processing Zoeppritz calculation using dask chunks for {len(self.angles)} angles")
+
+        # Use map_blocks to apply the Zoeppritz calculation to each chunk
+        zoep = da.map_blocks(
+            lambda rho, vp, vs: compute_zoep_chunk(rho, vp, vs, theta),
+            _rho, _vp, _vs,
+            dtype="float32",
+            new_axis=3,
+            chunks=(_rho.chunks[0], _rho.chunks[1], (_rho.chunks[2][0] - 1,), theta.size),
+            drop_axis=None
+        )
+
+        # Move the angle from last dimension to first and compute
+        zoep_reordered = da.moveaxis(zoep, -1, 0)
+
+        # Store result back to zarr - compute chunk by chunk
+        if self.cfg.verbose:
+            print("Writing Zoeppritz results to storage...")
+        da.to_zarr(zoep_reordered, self.cfg.storage.store.store, component="rfc_raw", overwrite=True)
+
+        # Update the in-memory reference
+        self.rfc_raw = self.cfg.storage.get_dataset("rfc_raw")
+
+        # Load rfc_raw as dask array for QC volume processing
+        rfc_raw_dask = self.cfg.storage.get_dataset("rfc_raw", use_dask=True)
+
+        # Store QC volumes using dask arrays
+        for x in range(rfc_raw_dask.shape[0]):
+            qc_name = "qc_volume_rfc_raw_{}_degrees".format(
+                str(self.angles[x]).replace(".", "_")
+            )
+            # Extract the angle slice and store to zarr
+            angle_slice = rfc_raw_dask[x, ...]
+            da.to_zarr(angle_slice, self.cfg.storage.store.store, component=qc_name, overwrite=True)
 
         if self.cfg.model_qc_volumes:
-            # Write raw RFC values to disk
-            _ = [
+            # Write raw RFC values to disk using dask arrays
+            for x in range(rfc_raw_dask.shape[0]):
+                angle_data = rfc_raw_dask[x, ...].compute()
                 self.write_cube_to_disk(
-                    self.rfc_raw[x, ...],
+                    angle_data,
                     f"qc_volume_rfc_raw_{self.angles[x]}_degrees",
                 )
-                for x in range(self.rfc_raw.shape[0])
-            ]
-            max_amp = np.max(np.abs(self.rfc_raw[:]))
-            _ = [
+
+            max_amp = da.max(da.abs(rfc_raw_dask)).compute()
+            for x in range(rfc_raw_dask.shape[0]):
+                angle_data = rfc_raw_dask[x, ...].compute()
                 self.write_cube_to_disk(
-                    self.rfc_raw[x, ...],
+                    angle_data,
                     f"qc_volume_rfc_raw_{self.angles[x]}_degrees",
                 )
-                for x in range(self.rfc_raw.shape[0])
-            ]
 
     def noise_3d(self, cube_shape, verbose=False):
+        """
+        Generate 3D noise using dask for chunk-based processing.
+        """
         if verbose:
-            print("   ... inside noise3D")
+            print("   ... inside noise3D using dask")
 
         noise_seed = np.random.randint(1, high=(2 ** (32 - 1)))
         sign_seed = np.random.randint(1, high=(2 ** (32 - 1)))
 
-        np.random.seed(noise_seed)
-        noise3d = np.random.exponential(
-            1.0 / 100.0, size=cube_shape[0] * cube_shape[1] * cube_shape[2]
-        )
-        np.random.seed(sign_seed)
-        sign = np.random.binomial(
-            1, 0.5, size=cube_shape[0] * cube_shape[1] * cube_shape[2]
-        )
+        # Use dask.array.random for chunk-aware random generation
+        rng = da.random.RandomState(noise_seed)
+        noise3d = rng.exponential(1.0 / 100.0, size=cube_shape, chunks="auto")
 
-        sign[sign == 0] = -1
-        noise3d *= sign
-        noise3d = noise3d.reshape((cube_shape[0], cube_shape[1], cube_shape[2]))
+        rng_sign = da.random.RandomState(sign_seed)
+        sign = rng_sign.binomial(1, 0.5, size=cube_shape, chunks="auto")
+
+        # Apply sign correction using dask operations
+        sign = da.where(sign == 0, -1, sign)
+        noise3d = noise3d * sign
+
         return noise3d
 
     def add_weighted_noise(self, depth_maps):
@@ -427,55 +478,80 @@ class SeismicVolume(Geomodel):
             wb_map = infill_surface(wb_map)
         wb_plus_15samples = wb_map / (self.cfg.digi + 15) * self.cfg.digi
 
+        # Load rfc_raw as dask array
+        rfc_raw_dask = self.cfg.storage.get_dataset("rfc_raw", use_dask=True)
+
         # Use the Middle angle cube for normalisation
         if self.cfg.model_qc_volumes:
             # 0 and 45 degree cubes have been added
-            norm_cube = self.rfc_raw[2, ...]
+            norm_cube = rfc_raw_dask[2, ...].compute()
         else:
-            norm_cube = self.rfc_raw[1, ...]
+            norm_cube = rfc_raw_dask[1, ...].compute()
         data_below_seafloor = norm_cube[
-            mute_above_seafloor(wb_plus_15samples, np.ones(norm_cube.shape, "float"))
+            mute_above_seafloor(wb_plus_15samples, np.ones(norm_cube.shape, "float32"))
             != 0.0
         ]
         data_std = data_below_seafloor.std()
 
-        # Create array to store the 3D noise model for each angle
-        noise3d_cubes = np.zeros_like(self.rfc_raw[:])
-
         # Add weighted stack of noise using Hilterman equation to each angle substack
-        noise_0deg = self.noise_3d(self.rfc_raw.shape[1:], verbose=False)
-        noise_45deg = self.noise_3d(self.rfc_raw.shape[1:], verbose=False)
-        # Store the noise models
-        self.noise_0deg = self.cfg.storage.create_dataset("noise_0deg", data=noise_0deg)
-        self.noise_45deg = self.cfg.storage.create_dataset("noise_45deg", data=noise_45deg)
+        # noise_3d now returns dask arrays
+        noise_0deg = self.noise_3d(rfc_raw_dask.shape[1:], verbose=False)
+        noise_45deg = self.noise_3d(rfc_raw_dask.shape[1:], verbose=False)
+
+        # Store the noise models to zarr
+        da.to_zarr(noise_0deg, self.cfg.storage.store.store, component="noise_0deg", overwrite=True)
+        da.to_zarr(noise_45deg, self.cfg.storage.store.store, component="noise_45deg", overwrite=True)
+
+        # Create noise cubes list using dask arrays
+        noise3d_cubes_list = []
         for x, ang in enumerate(self.angles):
             weighted_noise = noise_0deg * (cos(ang) ** 2) + noise_45deg * (
                 sin(ang) ** 2
             )
-            noise_std = weighted_noise.std()
-            noise3d_cubes[x, ...] = weighted_noise * (data_std / noise_std) / std_ratio
+            noise_std = da.std(weighted_noise).compute()
+            normalized_noise = weighted_noise * (data_std / noise_std) / std_ratio
+            noise3d_cubes_list.append(normalized_noise)
+
             if self.cfg.verbose:
+                # Compute statistics for verbose output
+                min_val = da.min(normalized_noise).compute()
+                mean_val = da.mean(normalized_noise).compute()
+                max_val = da.max(normalized_noise).compute()
+                std_val = da.std(normalized_noise).compute()
                 print(
-                    f"\t...Normalised noise3d for angle {ang}:\tMin: {noise3d_cubes[x, ...].min():.4f},"
-                    f" mean: {noise3d_cubes[x, ...].mean():.4f}, max: {noise3d_cubes[x, ...].max():.4f},"
-                    f" std: {noise3d_cubes[x, ...].std():.4f}"
+                    f"\t...Normalised noise3d for angle {ang}:\tMin: {min_val:.4f},"
+                    f" mean: {mean_val:.4f}, max: {max_val:.4f},"
+                    f" std: {std_val:.4f}"
                 )
                 print(
                     f"\tS/N ratio = {self.cfg.sn_db:3.1f} dB.\n\tstd_ratio = {std_ratio:.4f}"
                     f"\n\tdata_std = {data_std:.4f}\n\tnoise_std = {noise_std:.4f}"
                 )
 
-        self.rfc_noise_added[:] = noise3d_cubes + self.rfc_raw[:]
+        # Stack noise cubes and add to rfc_raw using dask
+        noise3d_cubes = da.stack(noise3d_cubes_list, axis=0)
+        rfc_noise_added = noise3d_cubes + rfc_raw_dask
+
+        # Store result back to zarr
+        da.to_zarr(rfc_noise_added, self.cfg.storage.store.store, component="rfc_noise_added", overwrite=True)
+
+        # Update in-memory reference
+        self.rfc_noise_added = self.cfg.storage.get_dataset("rfc_noise_added")
 
     def apply_bandlimits(self, data, frequencies=None):
         """
-        Apply Butterworth Bandpass Filter to data
-        :param data: 4D array of RFC values
+        Apply Butterworth Bandpass Filter to data using dask for chunk-based processing.
+        :param data: 4D array of RFC values (can be numpy or dask array)
         :param frequencies: Explicit frequency bounds (lower, upper)
         :return: 4D array of band-limited RFC
         """
+        # Convert to dask array if not already
+        if not isinstance(data, da.Array):
+            data = da.from_array(data, chunks="auto")
+
         if self.cfg.verbose:
-            print(f"Data Min: {np.min(data):.2f}, Data Max: {np.max(data):.2f}")
+            print(f"Data Min: {da.min(data).compute():.2f}, Data Max: {da.max(data).compute():.2f}")
+
         dt = self.cfg.digi / 1000.0
         if (
             data.shape[-1] / self.cfg.infill_factor - self.cfg.pad_samples
@@ -503,22 +579,20 @@ class SeismicVolume(Geomodel):
             print(" ... shape of data being bandlimited = ", data.shape, "\n")
         num = data.shape[0]
         if self.cfg.verbose:
-            print(f"Applying Bandpass to {num} cubes")
-        if self.cfg.multiprocess_bp:
-            # Much faster to use multiprocessing and apply band-limitation to entire cube at once
-            with Pool(processes=min(num, os.cpu_count() - 2)) as p:
-                iterator = zip(
-                    [data[x, ...] for x in range(num)],
-                    itertools.repeat(b),
-                    itertools.repeat(a),
-                )
-                out_cubes_mp = p.starmap(self._run_bandpass_on_cubes, iterator)
-            out_cubes = np.asarray(out_cubes_mp)
-        else:
-            # multiprocessing can fail using Python version 3.6 and very large arrays
-            out_cubes = np.zeros_like(data)
-            for idx in range(num):
-                out_cubes[idx, ...] = self._run_bandpass_on_cubes(data[idx, ...], b, a)
+            print(f"Applying Bandpass to {num} cubes using dask")
+
+        # Use dask map_blocks to apply bandpass filter to each angle cube
+        def apply_bandpass_to_cube(cube_data, block_info=None):
+            """Apply bandpass filter to a single cube."""
+            return self._run_bandpass_on_cubes(cube_data, b, a)
+
+        # Apply bandpass filter to each angle using map_blocks
+        out_cubes = da.map_blocks(
+            apply_bandpass_to_cube,
+            data,
+            dtype=data.dtype,
+            chunks=data.chunks
+        )
 
         return out_cubes
 
@@ -534,11 +608,16 @@ class SeismicVolume(Geomodel):
         return uniform_filter(data, size=(0, n_filt, n_filt, 0))
 
     def apply_cumsum(self, data):
-        """Calculate cumulative sum on the Z-axis of input data
+        """Calculate cumulative sum on the Z-axis of input data using dask.
         Sipmap's cumsum also applies an Ormsby filter to the cumulatively summed data
         To replicate this, apply a butterworth filter to the data using 2, 100Hz frequency limits
         todo: make an ormsby function"""
-        cumsum = data.cumsum(axis=-1)
+        # Convert to dask array if not already
+        if not isinstance(data, da.Array):
+            data = da.from_array(data, chunks="auto")
+
+        # Apply cumsum using dask
+        cumsum = da.cumsum(data, axis=-1)
         return self.apply_bandlimits(cumsum, (2.0, 100.0))
 
     @staticmethod
@@ -711,34 +790,41 @@ class SeismicVolume(Geomodel):
         layer_half_range = self.cfg.rpm_scaling_factors["layershiftsamples"]
         property_half_range = self.cfg.rpm_scaling_factors["RPshiftsamples"]
 
+        # Load data arrays - use dask for large datasets where possible
         depth = self.faults.faulted_depth[:]
         lith = self.faults.faulted_lithology[:]
         net_to_gross = self.faults.faulted_net_to_gross[:]
 
-        oil_closures = self.cfg.storage.get_dataset(
-            f"oil_closures_{self.cfg.date_stamp}".replace('/', '_')
+        # Load closures using dask for memory efficiency
+        oil_closures_dask = self.cfg.storage.get_dataset(
+            f"oil_closures_{self.cfg.date_stamp}".replace('/', '_'),
+            use_dask=True
         )
-        print(f"Available datasets: {list(self.cfg.storage.store.keys())}")
-        gas_closures = self.cfg.storage.get_dataset(
-            f"gas_closures_{self.cfg.date_stamp}".replace('/', '_')
-        )
+        oil_closures = oil_closures_dask.compute()  # Compute when needed for indexing
 
-        integer_faulted_age = (
-            self.cfg.storage.get_dataset("faulted_age_volume") + 0.00001
-        ).astype(int)
+        print(f"Available datasets: {list(self.cfg.storage.store.keys())}")
+
+        gas_closures_dask = self.cfg.storage.get_dataset(
+            f"gas_closures_{self.cfg.date_stamp}".replace('/', '_'),
+            use_dask=True
+        )
+        gas_closures = gas_closures_dask.compute()  # Compute when needed for indexing
+
+        faulted_age_dask = self.cfg.storage.get_dataset("faulted_age_volume", use_dask=True)
+        integer_faulted_age = (faulted_age_dask + 0.00001).astype(int).compute()
 
         # Use empty class object to store all Rho, Vp, Vs volumes (randomised, fluid factor and non randomised)
         mixed_properties = ElasticProperties3D()
-        mixed_properties.rho = np.zeros_like(lith)
-        mixed_properties.vp = np.zeros_like(lith)
-        mixed_properties.vs = np.zeros_like(lith)
-        mixed_properties.sum_net = np.zeros_like(lith)
+        mixed_properties.rho = np.zeros(lith.shape, dtype="float32")
+        mixed_properties.vp = np.zeros(lith.shape, dtype="float32")
+        mixed_properties.vs = np.zeros(lith.shape, dtype="float32")
+        mixed_properties.sum_net = np.zeros(lith.shape, dtype="float32")
         cube_shape = lith.shape
 
         if self.cfg.verbose:
-            mixed_properties.rho_not_random = np.zeros_like(lith)
-            mixed_properties.vp_not_random = np.zeros_like(lith)
-            mixed_properties.vs_not_random = np.zeros_like(lith)
+            mixed_properties.rho_not_random = np.zeros(lith.shape, dtype="float32")
+            mixed_properties.vp_not_random = np.zeros(lith.shape, dtype="float32")
+            mixed_properties.vs_not_random = np.zeros(lith.shape, dtype="float32")
 
         # water layer
         mixed_properties = self.water_properties(lith, mixed_properties)

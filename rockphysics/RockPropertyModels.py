@@ -496,6 +496,6 @@ def calc_ai(rho, vp, log=False):
 
 def taper_fn(z, thresh, scalar):
     """Exponential tapering"""
-    t = np.ones_like(z, dtype="float")
+    t = np.ones_like(z, dtype="float32")
     t[:thresh] = 1 - np.exp(-scalar * z[:thresh] / thresh)
     return t

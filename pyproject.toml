@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "bruges>=0.5.4",
+    "cubed",
     "dask[distributed]>=2025.9.1",
     "matplotlib",
     "perlin-noise>=1.12",
