@@ -36,7 +36,6 @@
   "basin_floor_fans": false,
   "include_channels": false,
   "include_salt": true,
-  "write_to_hdf": false,
   "broadband_qc_volume": false,
   "model_qc_volumes": true,
   "multiprocess_bp": true

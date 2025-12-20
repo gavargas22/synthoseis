@@ -1,6 +1,6 @@
-"""MDIO-based storage backend for synthoseis
+"""Zarr v3 storage backend for synthoseis
 
-This provides a minimal StorageClient that wraps mdio (zarr) operations.
+This provides a minimal StorageClient that wraps Zarr v3 operations.
 The implementation favors clarity and a small API surface.
 """
 from __future__ import annotations
@@ -10,10 +10,8 @@ from typing import Any, Optional, Tuple
 import numpy as np
 
 try:
-    import mdio
     import zarr
-except Exception:  # pragma: no cover - mdio may not be installed in test env
-    mdio = None
+except ImportError:  # pragma: no cover - zarr may not be installed in test env
     zarr = None
 
 
@@ -22,7 +20,7 @@ class DatasetNotFound(Exception):
 
 
 class StorageClient:
-    """Minimal storage client backed by MDIO (zarr).
+    """Minimal storage client backed by Zarr v3.
 
     Usage:
         client = StorageClient.open("/path/to/store", mode="a")
@@ -50,7 +48,7 @@ class StorageClient:
         dtype: Optional[Any] = None,
         compressor: Optional[Any] = None
     ) -> None:
-        # mdio exposes a zarr-like API via mdio.write or mdio.create
+        # Create zarr array with optional compression
         if data is not None and shape is not None:
             raise ValueError("Cannot specify both 'data' and 'shape'")
         if data is None and shape is None:
