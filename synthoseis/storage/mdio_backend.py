@@ -89,17 +89,19 @@ class StorageClient:
     def get_dataset(self, name: str, lazy: bool = False, use_dask: bool = False):
         if name not in self.store:
             raise DatasetNotFound(name)
-    arr = self.store[name]
-    if use_dask:
-        try:
-            import dask.array as da
-            return da.from_zarr(self.store.store, component=name)
-        except ImportError:
+        arr = self.store[name]
+        if use_dask:
+            try:
+                import dask.array as da
+                return da.from_zarr(self.store.store, component=name)
+            except ImportError:
+                return np.asarray(arr)
+        elif lazy:
+            return arr
+        else:
             return np.asarray(arr)
-    elif lazy:
-        return arr
-    else:
-        return np.asarray(arr)    def list_datasets(self, prefix: str = ""):
+
+    def list_datasets(self, prefix: str = ""):
         return [k for k in list(self.store.keys()) if k.startswith(prefix)]
 
     def remove_dataset(self, name: str):

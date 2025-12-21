@@ -1,7 +1,7 @@
 {
   "project": "example",
   "project_folder": "/mnt/d/scratch/synthoseis_example",
-  "work_folder": "/scratch",
+  "work_folder": "/mnt/d/scratch/",
   "cube_shape": [300, 300, 1250],
   "incident_angles": [7, 15, 24],
   "digi": 4,

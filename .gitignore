@@ -13,3 +13,4 @@ tags
 wip*
 *.code-workspace
 .venv
+uv.lock
