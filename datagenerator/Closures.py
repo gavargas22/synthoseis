@@ -3,6 +3,11 @@ import os
 import numpy as np
 from datagenerator.Horizons import Horizons
 from datagenerator.Geomodels import Geomodel
+from datagenerator._closures_vectorised import (
+    closure_size_filter_sizes,
+    relabel_consecutive,
+    parse_closure_codes_vectorised,
+)
 from numpy.random import default_rng
 from skimage import morphology, measure
 from scipy.ndimage import minimum_filter, maximum_filter
@@ -1322,9 +1327,9 @@ class Closures(Horizons, Geomodel):
         if (
             num > 0
         ):  # TODO add whether smallest closure is below threshold constraint too
-            s = [labels[labels == x].size for x in range(1, 1 + np.max(labels))]
+            labels_before = labels.copy()
             labels = morphology.remove_small_objects(labels, threshold, connectivity=2)
-            t = [labels[labels == x].size for x in range(1, 1 + np.max(labels))]
+            s, t = closure_size_filter_sizes(labels_before, labels)
             print(
                 f"Closure sizes before filter: {s}\nThreshold: {threshold}\n"
                 f"Closure sizes after filter: {t}"
@@ -1711,29 +1716,10 @@ class Closures(Horizons, Geomodel):
         self.cfg.write_to_logfile(msg)
 
     def parse_label_values_and_counts(self, labels_clean):
-        """parse label values and counts"""
+        """parse label values and counts — vectorised via relabel_consecutive"""
         if self.cfg.verbose:
             print(" Inside parse_label_values_and_counts")
-        next_label = 0
-        label_values = [0]
-        label_counts = [labels_clean[labels_clean == 0].size]
-        for i in range(1, labels_clean.max() + 1):
-            try:
-                next_label = labels_clean[labels_clean > next_label].min()
-            except (TypeError, ValueError):
-                break
-            label_values.append(next_label)
-            label_counts.append(labels_clean[labels_clean == next_label].size)
-            print(
-                f"Label: {i}, label_values: {label_values[-1]}, label_counts: {label_counts[-1]}"
-            )
-        # force labels to use consecutive integer values
-        for i, ilabel in enumerate(label_values):
-            labels_clean[labels_clean == ilabel] = i
-            label_values[i] = i
-        # labels_clean = self.remove_small_objects(labels_clean)  # already applied to labels_clean
-        # Remove label_value 0
-        label_values.remove(0)
+        label_values, labels_clean = relabel_consecutive(labels_clean)
         return label_values, labels_clean
 
     def assign_fluid_types(self, label_values, labels_clean):
@@ -2566,13 +2552,7 @@ class Closures(Horizons, Geomodel):
         return volume
 
     def parse_closure_codes(self, hc_closure_codes, labels, num, code=0.1):
-        labels = labels.astype("float32")
-        if num > 0:
-            for x in range(1, num + 1):
-                y = code + labels[labels == x].size
-                labels[labels == x] = y
-            hc_closure_codes += labels
-        return hc_closure_codes
+        return parse_closure_codes_vectorised(hc_closure_codes, labels, num, code)
 
 
 class Intersect3D(Closures):

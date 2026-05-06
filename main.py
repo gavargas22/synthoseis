@@ -13,6 +13,7 @@ from datagenerator.Geomodels import Geomodel
 from datagenerator.Horizons import build_unfaulted_depth_maps, create_facies_array
 from datagenerator.Parameters import Parameters
 from datagenerator.Seismic import SeismicVolume
+from datagenerator.log import setup_logging
 from datagenerator.util import plot_3D_closure_plot
 
 
@@ -85,6 +86,7 @@ def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None,
 
 
 if __name__ == "__main__":
+    setup_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-t",
