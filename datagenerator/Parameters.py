@@ -681,6 +681,11 @@ class Parameters:
         self.model_store_in_memory = bool(d.get("model_store_in_memory", False))
         self.cleanup_intermediates = bool(d.get("cleanup_intermediates", True))
 
+        _proj_basename = os.path.basename(os.path.normpath(self.project_folder))
+        self.gather_store_path = os.path.join(
+            self.work_folder, _proj_basename, "gathers.zarr"
+        )
+
         # print em
         self.__repr__()
 
@@ -727,6 +732,11 @@ class Parameters:
             )
         # Set smaller sized model
         self.cube_shape = tuple([size_x, size_y, self.cube_shape[-1]])
+        # Recalculate gather_store_path after folders changed
+        _proj_basename = os.path.basename(os.path.normpath(self.project_folder))
+        self.gather_store_path = os.path.join(
+            self.work_folder, _proj_basename, "gathers.zarr"
+        )
         # Print message to user
         print(
             "{0}\nTesting Mode\nOutput Folder: {1}\nCube_Shape: {2}\n{0}".format(

@@ -1818,6 +1818,30 @@ class Closures(Horizons, Geomodel):
         labels_clean = self.remove_small_objects(labels)
         return labels_clean, _closure_segments
 
+    def write_closure_volumes_to_zarr(self):
+        """Write all closure label volumes as zarr stores."""
+        from datagenerator.output_writer import write_volume_to_zarr
+        import os
+        out_dir = os.path.join(self.cfg.work_subfolder, "closures")
+        os.makedirs(out_dir, exist_ok=True)
+        label_dims = ("inline", "crossline", "time")
+        # Ensure hc_labels is populated (oil + gas)
+        self.hc_labels[:] = (self.oil_closures[:] + self.gas_closures[:]).astype(
+            "uint8"
+        )
+        write_volume_to_zarr(self.cfg.model_store["gas_closures"][:],
+                             os.path.join(out_dir, "gas.zarr"),
+                             name="label", dims=label_dims)
+        write_volume_to_zarr(self.cfg.model_store["oil_closures"][:],
+                             os.path.join(out_dir, "oil.zarr"),
+                             name="label", dims=label_dims)
+        write_volume_to_zarr(self.cfg.model_store["brine_closures"][:],
+                             os.path.join(out_dir, "brine.zarr"),
+                             name="label", dims=label_dims)
+        write_volume_to_zarr(self.cfg.model_store["hc_labels"][:],
+                             os.path.join(out_dir, "hc_labels.zarr"),
+                             name="label", dims=label_dims)
+
     def write_closure_volumes_to_disk(self):
         # Create files for closure volumes
         self.write_cube_to_disk(self.brine_closures[:], "closure_segments_brine")

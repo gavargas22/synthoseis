@@ -271,9 +271,16 @@ class Horizons:
         return converted_maps
 
     def write_maps_to_disk(self, horizons, name):
-        """Write horizons to disk."""
-        fname = os.path.join(self.cfg.work_subfolder, name)
-        np.save(fname, horizons)
+        """Write horizons to disk as a zarr store."""
+        from datagenerator.output_writer import write_volume_to_zarr
+        zarr_path = os.path.join(self.cfg.work_subfolder, f"{name}.zarr")
+        write_volume_to_zarr(
+            horizons,
+            zarr_path,
+            name="depth",
+            dims=("inline", "crossline", "horizon") if horizons.ndim == 3
+            else tuple(f"dim{i}" for i in range(horizons.ndim)),
+        )
 
     def write_onlap_episodes(
         self, onlap_horizon_list, depth_maps_gaps, depth_maps_infilled, n=35

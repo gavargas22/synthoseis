@@ -14,6 +14,7 @@ from datagenerator.Horizons import build_unfaulted_depth_maps, create_facies_arr
 from datagenerator.Parameters import Parameters
 from datagenerator.Seismic import SeismicVolume
 from datagenerator.log import setup_logging
+from datagenerator.output_writer import write_volume_to_zarr
 from datagenerator.util import plot_3D_closure_plot
 
 
@@ -39,10 +40,34 @@ def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None,
     # Build faulted lithology, net_to_gross and depth and randomised models
     f.build_faulted_property_geomodels(facies)
 
+    # Write final geology outputs as zarr stores
+    geology_dir = os.path.join(p.work_subfolder, "geology")
+    os.makedirs(geology_dir, exist_ok=True)
+    write_volume_to_zarr(
+        f.faulted_age_volume[:],
+        os.path.join(geology_dir, "geologic_age.zarr"),
+        name="age",
+        dims=("inline", "crossline", "time"),
+    )
+    write_volume_to_zarr(
+        f.faulted_lithology[:],
+        os.path.join(geology_dir, "faulted_lithology.zarr"),
+        name="lithology",
+        dims=("inline", "crossline", "time"),
+    )
+    horizons_dir = os.path.join(p.work_subfolder, "horizons")
+    os.makedirs(horizons_dir, exist_ok=True)
+    write_volume_to_zarr(
+        f.faulted_depth_maps,
+        os.path.join(horizons_dir, "depth_maps.zarr"),
+        name="depth",
+        dims=("inline", "crossline", "horizon"),
+    )
+
     # Create closures, remove false closures and and output closures
     closures = Closures(p, f, facies, onlap_list)
     closures.create_closures()
-    closures.write_closure_volumes_to_disk()
+    closures.write_closure_volumes_to_zarr()
 
     # Create 3D qc plot
     if p.qc_plots:
@@ -55,6 +80,7 @@ def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None,
     seismic = SeismicVolume(p, f, closures)
     seismic.build_elastic_properties("inv_vel")
     seismic.build_seismic_volumes()
+    seismic.join_gather_write()
 
     closures.write_closure_info_to_log(seismic.rfc_raw[1:4, ...])
 

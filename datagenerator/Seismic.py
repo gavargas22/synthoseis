@@ -7,6 +7,7 @@ from numpy.random import default_rng
 from tqdm import trange
 from datagenerator.histogram_equalizer import normalize_seismic
 from datagenerator.Geomodels import Geomodel
+from datagenerator.output_writer import write_volume_to_zarr
 from datagenerator.util import plot_3D_faults_plot
 from datagenerator.wavelets import generate_wavelet, plot_wavelets
 from datagenerator.zoeppritz_kernel import compute_rfc_volumes as _numba_compute_rfc
@@ -290,15 +291,30 @@ class SeismicVolume(Geomodel):
         scaled_data[1 + cube_incr, ...] *= factor_mid
         scaled_data[2 + cube_incr, ...] *= factor_far
 
+        seismic_dir = os.path.join(self.cfg.work_subfolder, "seismic")
+        os.makedirs(seismic_dir, exist_ok=True)
+        dims = ("inline", "crossline", "time")
         for i, ang in enumerate(self.cfg.incident_angles):
             data = scaled_data[i, ...]
             fname = f"{name}_{ang}_degrees"
-            self.write_cube_to_disk(data, fname)
+            write_volume_to_zarr(
+                data,
+                os.path.join(seismic_dir, f"{fname}_{self.cfg.date_stamp}.zarr"),
+                name="amplitude",
+                dims=dims,
+                attrs={"angle_deg": ang, "sample_rate_ms": self.cfg.digi},
+            )
         normed_data = normalize_seismic(scaled_data)
         for i, ang in enumerate(self.cfg.incident_angles):
             data = normed_data[i, ...]
             fname = f"{name}_{ang}_degrees_normalized"
-            self.write_cube_to_disk(data, fname)
+            write_volume_to_zarr(
+                data,
+                os.path.join(seismic_dir, f"{fname}_{self.cfg.date_stamp}.zarr"),
+                name="amplitude",
+                dims=dims,
+                attrs={"angle_deg": ang, "sample_rate_ms": self.cfg.digi},
+            )
         return normed_data
 
     @staticmethod
@@ -1302,18 +1318,58 @@ class SeismicVolume(Geomodel):
 
     def write_property_volumes_to_disk(self):
         """Write Rho, Vp, Vs volumes to disk."""
-        self.write_cube_to_disk(
+        seismic_dir = os.path.join(self.cfg.work_subfolder, "seismic")
+        os.makedirs(seismic_dir, exist_ok=True)
+        dims = ("inline", "crossline", "time")
+        write_volume_to_zarr(
             self.rho[:],
-            "qc_volume_rho",
+            os.path.join(seismic_dir, f"qc_volume_rho_{self.cfg.date_stamp}.zarr"),
+            name="data",
+            dims=dims,
         )
-        self.write_cube_to_disk(
+        write_volume_to_zarr(
             self.vp[:],
-            "qc_volume_vp",
+            os.path.join(seismic_dir, f"qc_volume_vp_{self.cfg.date_stamp}.zarr"),
+            name="data",
+            dims=dims,
         )
-        self.write_cube_to_disk(
+        write_volume_to_zarr(
             self.vs[:],
-            "qc_volume_vs",
+            os.path.join(seismic_dir, f"qc_volume_vs_{self.cfg.date_stamp}.zarr"),
+            name="data",
+            dims=dims,
         )
+
+    def _write_gather_blocking(self, data, group_name, attrs=None):
+        """Blocking zarr v3 write — called from background thread."""
+        import zarr
+        path = getattr(self.cfg, 'gather_store_path',
+                       os.path.join(self.cfg.work_folder, "gathers.zarr"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        store = zarr.storage.LocalStore(path)
+        root = zarr.open_group(store=store, mode="a")
+        if group_name in root:
+            del root[group_name]
+        root.create_array(group_name, data=data, overwrite=True)
+        if attrs:
+            root[group_name].attrs.update(attrs)
+
+    def write_gather_to_zarr(self, data, group_name, attrs=None):
+        """Non-blocking: fire background thread, continue pipeline."""
+        import threading
+        self._gather_thread = threading.Thread(
+            target=self._write_gather_blocking,
+            args=(data, group_name, attrs),
+            name="gather-zarr-write",
+            daemon=True,
+        )
+        self._gather_thread.start()
+
+    def join_gather_write(self):
+        """Wait for the background gather write to complete."""
+        t = getattr(self, "_gather_thread", None)
+        if t is not None:
+            t.join(timeout=300)
 
 
 class ElasticProperties3D:
