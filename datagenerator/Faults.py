@@ -5,9 +5,9 @@ from scipy.ndimage import maximum_filter, binary_dilation
 from datagenerator.Horizons import Horizons
 from datagenerator.Geomodels import Geomodel
 from datagenerator.Parameters import Parameters
-from datagenerator.util import plot_3D_faults_plot
+# plot_3D_faults_plot and skimage.measure are deferred to first use (OPT-3):
+# importing them here would trigger heavy C-extension loads at process start.
 from numpy.random import default_rng
-from skimage import measure
 
 
 class Faults(Horizons, Geomodel):
@@ -253,7 +253,8 @@ class Faults(Horizons, Geomodel):
         if self.cfg.qc_plots:
             self.create_qc_plots()
             try:
-                # Create 3D qc plot
+                # Create 3D qc plot — deferred import (OPT-3)
+                from datagenerator.util import plot_3D_faults_plot
                 plot_3D_faults_plot(self.cfg, self)
             except ValueError:
                 self.cfg.write_to_logfile("3D Fault Plotting Failed")
@@ -1379,6 +1380,7 @@ class Faults(Horizons, Geomodel):
 
         # make 2nd count of number of intersections between faults. write result to logfile.
         from datetime import datetime
+        from skimage import measure  # deferred import (OPT-3)
 
         start_time = datetime.now()
         number_fault_intersections = max(

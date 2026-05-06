@@ -9,12 +9,21 @@ from datagenerator._closures_vectorised import (
     parse_closure_codes_vectorised,
 )
 from numpy.random import default_rng
-from skimage import morphology, measure
+# skimage imports are deferred to Closures.__init__ (OPT-3) so that a bare
+# 'import datagenerator.Closures' does not trigger the ~60-80 MB skimage
+# C-extension load.  See __init__ for the actual imports.
 from scipy.ndimage import minimum_filter, maximum_filter
 
 
 class Closures(Horizons, Geomodel):
     def __init__(self, parameters, faults, facies, onlap_horizon_list):
+        # Deferred skimage imports (OPT-3): cost is paid once at instantiation,
+        # not at module import time.  Python sys.modules cache means subsequent
+        # calls within the same process have zero overhead.
+        from skimage import morphology as _morphology, measure as _measure
+        self._morphology = _morphology
+        self._measure = _measure
+
         self.closure_dict = dict()
         self.cfg = parameters
         self.rng = default_rng(parameters.property_ss.spawn(1)[0])
@@ -1038,7 +1047,7 @@ class Closures(Horizons, Geomodel):
             hc_closures = (
                 self.simple_closures_oil[:] + self.simple_closures_gas[:]
             ).astype("float32")
-            labels, num = measure.label(
+            labels, num = self._measure.label(
                 hc_closures, connectivity=2, background=0, return_num=True
             )
             hc_closure_codes = self.parse_closure_codes(
@@ -1092,7 +1101,7 @@ class Closures(Horizons, Geomodel):
 
             # Add faulted closures to closure code cube
             hc_closures = self.faulted_closures_oil[:] + self.faulted_closures_gas[:]
-            labels, num = measure.label(
+            labels, num = self._measure.label(
                 hc_closures, connectivity=2, background=0, return_num=True
             )
             hc_closure_codes = self.parse_closure_codes(
@@ -1132,7 +1141,7 @@ class Closures(Horizons, Geomodel):
 
             # Add faulted closures to closure code cube
             hc_closures = self.onlap_closures_oil[:] + self.onlap_closures_gas[:]
-            labels, num = measure.label(
+            labels, num = self._measure.label(
                 hc_closures, connectivity=2, background=0, return_num=True
             )
             hc_closure_codes = self.parse_closure_codes(
@@ -1243,7 +1252,7 @@ class Closures(Horizons, Geomodel):
 
             # Add faulted closures to closure code cube
             hc_closures = self.salt_closures_oil[:] + self.salt_closures_gas[:]
-            labels, num = measure.label(
+            labels, num = self._measure.label(
                 hc_closures, connectivity=2, background=0, return_num=True
             )
             hc_closure_codes = self.parse_closure_codes(
@@ -1321,14 +1330,14 @@ class Closures(Horizons, Geomodel):
             )
 
     def closure_size_filter(self, closure_type, threshold, count):
-        labels, num = measure.label(
+        labels, num = self._measure.label(
             closure_type, connectivity=2, background=0, return_num=True
         )
         if (
             num > 0
         ):  # TODO add whether smallest closure is below threshold constraint too
             labels_before = labels.copy()
-            labels = morphology.remove_small_objects(labels, threshold, connectivity=2)
+            labels = self._morphology.remove_small_objects(labels, threshold, connectivity=2)
             s, t = closure_size_filter_sizes(labels_before, labels)
             print(
                 f"Closure sizes before filter: {s}\nThreshold: {threshold}\n"
@@ -1620,9 +1629,9 @@ class Closures(Horizons, Geomodel):
             subkey="top_sand_layers",
             val=top_sand_layers,
         )
-        o = measure.label(self.oil_closures[:], connectivity=2, background=0)
-        g = measure.label(self.gas_closures[:], connectivity=2, background=0)
-        b = measure.label(self.brine_closures[:], connectivity=2, background=0)
+        o = self._measure.label(self.oil_closures[:], connectivity=2, background=0)
+        g = self._measure.label(self.gas_closures[:], connectivity=2, background=0)
+        b = self._measure.label(self.brine_closures[:], connectivity=2, background=0)
         oil_closures = self.populate_closure_dict(o, "oil", seismic_nmf)
         gas_closures = self.populate_closure_dict(g, "gas", seismic_nmf)
         brine_closures = self.populate_closure_dict(b, "brine", seismic_nmf)
@@ -1761,7 +1770,7 @@ class Closures(Horizons, Geomodel):
     def remove_small_objects(self, labels, min_filter=True):
         try:
             # Use the global minimum voxel size initially, before closure types are identified
-            labels_clean = morphology.remove_small_objects(
+            labels_clean = self._morphology.remove_small_objects(
                 labels, self.cfg.closure_min_voxels
             )
             if self.cfg.verbose:
@@ -1813,7 +1822,7 @@ class Closures(Horizons, Geomodel):
                 ].copy()
             _closure_segments[sand_shale <= 0.0] = 0
             del sand_shale
-        labels = measure.label(_closure_segments, connectivity=2, background=0)
+        labels = self._measure.label(_closure_segments, connectivity=2, background=0)
 
         labels_clean = self.remove_small_objects(labels)
         return labels_clean, _closure_segments
@@ -1869,7 +1878,7 @@ class Closures(Horizons, Geomodel):
                 self.fault_closures,
             ]
         ):
-            _t = measure.label(c, connectivity=2, background=0)
+            _t = self._measure.label(c, connectivity=2, background=0)
             counts = [_t[_t == x].size for x in range(np.max(_t))]
             print(f"Final closure volume voxels sizes: {counts}")
             for n, x in enumerate(counts):
@@ -1888,7 +1897,7 @@ class Closures(Horizons, Geomodel):
         :param digi: int or float. To convert depth values from samples to units
         :return: string. Concatenated string of closure statistics to be written to log
         """
-        labelled_array, max_labels = measure.label(
+        labelled_array, max_labels = self._measure.label(
             in_array, connectivity=2, return_num=True
         )
         msg = ""
@@ -2128,13 +2137,13 @@ class Closures(Horizons, Geomodel):
         onlaps = self._threshold_volumes(self.faults.faulted_onlap_segments[:])
         mask = np.zeros((1, 1, 3))
         mask[0, 0, :2] = 1
-        self.onlaps_upward[:] = morphology.binary_dilation(onlaps, mask)
+        self.onlaps_upward[:] = self._morphology.binary_dilation(onlaps, mask)
         mask = np.zeros((1, 1, 3))
         mask[0, 0, 1:] = 1
         self.onlaps_downward[:] = onlaps.copy()
         for _ in range(30):
             try:
-                self.onlaps_downward[:] = morphology.binary_dilation(
+                self.onlaps_downward[:] = self._morphology.binary_dilation(
                     self.onlaps_downward[:], mask
                 )
             except:
@@ -2318,10 +2327,10 @@ class Closures(Horizons, Geomodel):
         #     print(f'Size after editing: {size}')
 
         if remove_small_closures:
-            _initial_labels = measure.label(
+            _initial_labels = self._measure.label(
                 initial_closures, connectivity=2, background=0
             )
-            _grown_labels = measure.label(labels_clean, connectivity=2, background=0)
+            _grown_labels = self._measure.label(labels_clean, connectivity=2, background=0)
             for x in np.unique(_grown_labels):
                 size_initial = _initial_labels[_initial_labels == x].size
                 size_grown = _grown_labels[_grown_labels == x].size
@@ -2339,7 +2348,7 @@ class Closures(Horizons, Geomodel):
         print("\n\n ... grow_to_salt: grow closures laterally and up within layer ...")
         self.cfg.write_to_logfile("growing closures to salt body: grow_to_salt")
 
-        labels_clean = measure.label(
+        labels_clean = self._measure.label(
             self.closure_segments[:], connectivity=2, background=0
         )
         labels_clean[closures == 0] = 0
@@ -2483,8 +2492,8 @@ class Closures(Horizons, Geomodel):
             self.cfg.write_to_logfile(msg + msg_postscript)
 
         # Set small closures to 0 after growth
-        _initial_labels = measure.label(initial_closures, connectivity=2, background=0)
-        _grown_labels = measure.label(labels_clean, connectivity=2, background=0)
+        _initial_labels = self._measure.label(initial_closures, connectivity=2, background=0)
+        _grown_labels = self._measure.label(labels_clean, connectivity=2, background=0)
         for x in np.unique(_grown_labels)[
             1:
         ]:  # ignore the first label of 0 (closures only)
@@ -2919,7 +2928,7 @@ class Intersect3D(Closures):
                 self.cfg.write_to_logfile(msg + msg_postscript)
 
         # Set small closures to 0 after growth
-        _grown_labels = measure.label(labels_clean, connectivity=2, background=0)
+        _grown_labels = self._measure.label(labels_clean, connectivity=2, background=0)
         for x in np.unique(_grown_labels):
             size = _grown_labels[_grown_labels == x].size
             print(f"Size before editing: {size}")
@@ -2936,13 +2945,13 @@ class Intersect3D(Closures):
         self.fat_faults = self.grow_lateral(self.faults, 21, dist=1, verbose=False)
         mask = np.zeros((1, 1, 3))
         mask[0, 0, :2] = 1
-        self.onlaps_upward = morphology.binary_dilation(self.onlaps, mask)
+        self.onlaps_upward = self._morphology.binary_dilation(self.onlaps, mask)
         mask = np.zeros((1, 1, 3))
         mask[0, 0, 1:] = 1
         self.onlaps_downward = self.onlaps.copy()
         for k in range(30):
             try:
-                self.onlaps_downward = morphology.binary_dilation(
+                self.onlaps_downward = self._morphology.binary_dilation(
                     self.onlaps_downward, mask
                 )
             except:
