@@ -18,3 +18,5 @@ wip*
 .worktrees/
 .venv/
 uv.lock
+poetry.lock
+environment.yml
