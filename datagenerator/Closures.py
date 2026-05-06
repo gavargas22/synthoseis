@@ -3,69 +3,75 @@ import os
 import numpy as np
 from datagenerator.Horizons import Horizons
 from datagenerator.Geomodels import Geomodel
-from datagenerator.Parameters import Parameters
+from datagenerator._closures_vectorised import (
+    closure_size_filter_sizes,
+    relabel_consecutive,
+    parse_closure_codes_vectorised,
+)
+from numpy.random import default_rng
 from skimage import morphology, measure
 from scipy.ndimage import minimum_filter, maximum_filter
 
 
-class Closures(Horizons, Geomodel, Parameters):
+class Closures(Horizons, Geomodel):
     def __init__(self, parameters, faults, facies, onlap_horizon_list):
         self.closure_dict = dict()
         self.cfg = parameters
+        self.rng = default_rng(parameters.property_ss.spawn(1)[0])
         self.faults = faults
         self.facies = facies
         self.onlap_list = onlap_horizon_list
         self.top_lith_facies = None
         self.closure_vol_shape = self.faults.faulted_age_volume.shape
-        self.closure_segments = self.cfg.hdf_init(
+        self.closure_segments = self.cfg.create_array(
             "closure_segments", shape=self.closure_vol_shape
         )
-        self.oil_closures = self.cfg.hdf_init(
+        self.oil_closures = self.cfg.create_array(
             "oil_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.gas_closures = self.cfg.hdf_init(
+        self.gas_closures = self.cfg.create_array(
             "gas_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.brine_closures = self.cfg.hdf_init(
+        self.brine_closures = self.cfg.create_array(
             "brine_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.simple_closures = self.cfg.hdf_init(
+        self.simple_closures = self.cfg.create_array(
             "simple_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.strat_closures = self.cfg.hdf_init(
+        self.strat_closures = self.cfg.create_array(
             "strat_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.fault_closures = self.cfg.hdf_init(
+        self.fault_closures = self.cfg.create_array(
             "fault_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.hc_labels = self.cfg.hdf_init(
+        self.hc_labels = self.cfg.create_array(
             "hc_labels", shape=self.closure_vol_shape, dtype="uint8"
         )
 
-        self.all_closure_segments = self.cfg.hdf_init(
+        self.all_closure_segments = self.cfg.create_array(
             "all_closure_segments", shape=self.closure_vol_shape
         )
 
         # Class attributes added from Intersect3D
-        self.wide_faults = self.cfg.hdf_init(
+        self.wide_faults = self.cfg.create_array(
             "wide_faults", shape=self.closure_vol_shape
         )
-        self.fat_faults = self.cfg.hdf_init("fat_faults", shape=self.closure_vol_shape)
-        self.onlaps_upward = self.cfg.hdf_init(
+        self.fat_faults = self.cfg.create_array("fat_faults", shape=self.closure_vol_shape)
+        self.onlaps_upward = self.cfg.create_array(
             "onlaps_upward", shape=self.closure_vol_shape
         )
-        self.onlaps_downward = self.cfg.hdf_init(
+        self.onlaps_downward = self.cfg.create_array(
             "onlaps_downward", shape=self.closure_vol_shape
         )
 
         # Faulted closures
-        self.faulted_closures_oil = self.cfg.hdf_init(
+        self.faulted_closures_oil = self.cfg.create_array(
             "faulted_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.faulted_closures_gas = self.cfg.hdf_init(
+        self.faulted_closures_gas = self.cfg.create_array(
             "faulted_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.faulted_closures_brine = self.cfg.hdf_init(
+        self.faulted_closures_brine = self.cfg.create_array(
             "faulted_closures_brine", shape=self.closure_vol_shape, dtype="uint8"
         )
         self.fault_closures_oil_segment_list = list()
@@ -75,20 +81,20 @@ class Closures(Horizons, Geomodel, Parameters):
         self.n_fault_closures_gas = 0
         self.n_fault_closures_brine = 0
 
-        self.faulted_all_closures = self.cfg.hdf_init(
+        self.faulted_all_closures = self.cfg.create_array(
             "faulted_all_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
         self.fault_all_closures_segment_list = list()
         self.n_fault_all_closures = 0
 
         # Onlap closures
-        self.onlap_closures_oil = self.cfg.hdf_init(
+        self.onlap_closures_oil = self.cfg.create_array(
             "onlap_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.onlap_closures_gas = self.cfg.hdf_init(
+        self.onlap_closures_gas = self.cfg.create_array(
             "onlap_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.onlap_closures_brine = self.cfg.hdf_init(
+        self.onlap_closures_brine = self.cfg.create_array(
             "onlap_closures_brine", shape=self.closure_vol_shape, dtype="uint8"
         )
         self.onlap_closures_oil_segment_list = list()
@@ -98,20 +104,20 @@ class Closures(Horizons, Geomodel, Parameters):
         self.n_onlap_closures_gas = 0
         self.n_onlap_closures_brine = 0
 
-        self.onlap_all_closures = self.cfg.hdf_init(
+        self.onlap_all_closures = self.cfg.create_array(
             "onlap_all_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
         self.onlap_all_closures_segment_list = list()
         self.n_onlap_all_closures_oil = 0
 
         # Simple closures
-        self.simple_closures_oil = self.cfg.hdf_init(
+        self.simple_closures_oil = self.cfg.create_array(
             "simple_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.simple_closures_gas = self.cfg.hdf_init(
+        self.simple_closures_gas = self.cfg.create_array(
             "simple_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.simple_closures_brine = self.cfg.hdf_init(
+        self.simple_closures_brine = self.cfg.create_array(
             "simple_closures_brine", shape=self.closure_vol_shape, dtype="uint8"
         )
         self.simple_closures_oil_segment_list = list()
@@ -121,45 +127,45 @@ class Closures(Horizons, Geomodel, Parameters):
         self.n_4way_closures_gas = 0
         self.n_4way_closures_brine = 0
 
-        self.simple_all_closures = self.cfg.hdf_init(
+        self.simple_all_closures = self.cfg.create_array(
             "simple_all_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
         self.simple_all_closures_segment_list = list()
         self.n_4way_all_closures = 0
 
         # False closures
-        self.false_closures_oil = self.cfg.hdf_init(
+        self.false_closures_oil = self.cfg.create_array(
             "false_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.false_closures_gas = self.cfg.hdf_init(
+        self.false_closures_gas = self.cfg.create_array(
             "false_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
         )
-        self.false_closures_brine = self.cfg.hdf_init(
+        self.false_closures_brine = self.cfg.create_array(
             "false_closures_brine", shape=self.closure_vol_shape, dtype="uint8"
         )
         self.n_false_closures_oil = 0
         self.n_false_closures_gas = 0
         self.n_false_closures_brine = 0
 
-        self.false_all_closures = self.cfg.hdf_init(
+        self.false_all_closures = self.cfg.create_array(
             "false_all_closures", shape=self.closure_vol_shape, dtype="uint8"
         )
         self.n_false_all_closures = 0
 
         if self.cfg.include_salt:
-            self.salt_closures = self.cfg.hdf_init(
+            self.salt_closures = self.cfg.create_array(
                 "salt_closures", shape=self.closure_vol_shape, dtype="uint8"
             )
-            self.wide_salt = self.cfg.hdf_init(
+            self.wide_salt = self.cfg.create_array(
                 "wide_salt", shape=self.closure_vol_shape
             )
-            self.salt_closures_oil = self.cfg.hdf_init(
+            self.salt_closures_oil = self.cfg.create_array(
                 "salt_bounded_closures_oil", shape=self.closure_vol_shape, dtype="uint8"
             )
-            self.salt_closures_gas = self.cfg.hdf_init(
+            self.salt_closures_gas = self.cfg.create_array(
                 "salt_bounded_closures_gas", shape=self.closure_vol_shape, dtype="uint8"
             )
-            self.salt_closures_brine = self.cfg.hdf_init(
+            self.salt_closures_brine = self.cfg.create_array(
                 "salt_bounded_closures_brine",
                 shape=self.closure_vol_shape,
                 dtype="uint8",
@@ -171,7 +177,7 @@ class Closures(Horizons, Geomodel, Parameters):
             self.n_salt_closures_gas = 0
             self.n_salt_closures_brine = 0
 
-            self.salt_all_closures = self.cfg.hdf_init(
+            self.salt_all_closures = self.cfg.create_array(
                 "salt_bounded_all_closures", shape=self.closure_vol_shape, dtype="uint8"
             )
             self.salt_all_closures_segment_list = list()
@@ -1321,9 +1327,9 @@ class Closures(Horizons, Geomodel, Parameters):
         if (
             num > 0
         ):  # TODO add whether smallest closure is below threshold constraint too
-            s = [labels[labels == x].size for x in range(1, 1 + np.max(labels))]
+            labels_before = labels.copy()
             labels = morphology.remove_small_objects(labels, threshold, connectivity=2)
-            t = [labels[labels == x].size for x in range(1, 1 + np.max(labels))]
+            s, t = closure_size_filter_sizes(labels_before, labels)
             print(
                 f"Closure sizes before filter: {s}\nThreshold: {threshold}\n"
                 f"Closure sizes after filter: {t}"
@@ -1710,29 +1716,10 @@ class Closures(Horizons, Geomodel, Parameters):
         self.cfg.write_to_logfile(msg)
 
     def parse_label_values_and_counts(self, labels_clean):
-        """parse label values and counts"""
+        """parse label values and counts — vectorised via relabel_consecutive"""
         if self.cfg.verbose:
             print(" Inside parse_label_values_and_counts")
-        next_label = 0
-        label_values = [0]
-        label_counts = [labels_clean[labels_clean == 0].size]
-        for i in range(1, labels_clean.max() + 1):
-            try:
-                next_label = labels_clean[labels_clean > next_label].min()
-            except (TypeError, ValueError):
-                break
-            label_values.append(next_label)
-            label_counts.append(labels_clean[labels_clean == next_label].size)
-            print(
-                f"Label: {i}, label_values: {label_values[-1]}, label_counts: {label_counts[-1]}"
-            )
-        # force labels to use consecutive integer values
-        for i, ilabel in enumerate(label_values):
-            labels_clean[labels_clean == ilabel] = i
-            label_values[i] = i
-        # labels_clean = self.remove_small_objects(labels_clean)  # already applied to labels_clean
-        # Remove label_value 0
-        label_values.remove(0)
+        label_values, labels_clean = relabel_consecutive(labels_clean)
         return label_values, labels_clean
 
     def assign_fluid_types(self, label_values, labels_clean):
@@ -1746,7 +1733,7 @@ class Closures(Horizons, Geomodel, Parameters):
         _oil_closures = (labels_clean * 0.0).astype("uint8")
         _gas_closures = (labels_clean * 0.0).astype("uint8")
 
-        fluid_type_code = np.random.randint(3, size=labels_clean.max() + 1)
+        fluid_type_code = self.rng.integers(3, size=labels_clean.max() + 1)
 
         _closure_segments = self.closure_segments[:]
         for i in range(1, labels_clean.max() + 1):
@@ -1830,6 +1817,30 @@ class Closures(Horizons, Geomodel, Parameters):
 
         labels_clean = self.remove_small_objects(labels)
         return labels_clean, _closure_segments
+
+    def write_closure_volumes_to_zarr(self):
+        """Write all closure label volumes as zarr stores."""
+        from datagenerator.output_writer import write_volume_to_zarr
+        import os
+        out_dir = os.path.join(self.cfg.work_subfolder, "closures")
+        os.makedirs(out_dir, exist_ok=True)
+        label_dims = ("inline", "crossline", "time")
+        # Ensure hc_labels is populated (oil + gas)
+        self.hc_labels[:] = (self.oil_closures[:] + self.gas_closures[:]).astype(
+            "uint8"
+        )
+        write_volume_to_zarr(self.cfg.model_store["gas_closures"][:],
+                             os.path.join(out_dir, "gas.zarr"),
+                             name="label", dims=label_dims)
+        write_volume_to_zarr(self.cfg.model_store["oil_closures"][:],
+                             os.path.join(out_dir, "oil.zarr"),
+                             name="label", dims=label_dims)
+        write_volume_to_zarr(self.cfg.model_store["brine_closures"][:],
+                             os.path.join(out_dir, "brine.zarr"),
+                             name="label", dims=label_dims)
+        write_volume_to_zarr(self.cfg.model_store["hc_labels"][:],
+                             os.path.join(out_dir, "hc_labels.zarr"),
+                             name="label", dims=label_dims)
 
     def write_closure_volumes_to_disk(self):
         # Create files for closure volumes
@@ -2565,13 +2576,7 @@ class Closures(Horizons, Geomodel, Parameters):
         return volume
 
     def parse_closure_codes(self, hc_closure_codes, labels, num, code=0.1):
-        labels = labels.astype("float32")
-        if num > 0:
-            for x in range(1, num + 1):
-                y = code + labels[labels == x].size
-                labels[labels == x] = y
-            hc_closure_codes += labels
-        return hc_closure_codes
+        return parse_closure_codes_vectorised(hc_closure_codes, labels, num, code)
 
 
 class Intersect3D(Closures):
