@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import os
+import shutil
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -15,13 +16,13 @@ from datagenerator.Seismic import SeismicVolume
 from datagenerator.util import plot_3D_closure_plot
 
 
-def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None):
+def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None, seed=None):
     """Build model from config file."""
     # Set up model parameters
     p = Parameters(user_json, runid=run_id, test_mode=test_mode)
-    p.setup_model(rpm_factors=rpm_factors)
+    p.setup_model(rpm_factors=rpm_factors, seed=seed)
 
-    p.hdf_setup(os.path.join(p.temp_folder, "model_data.hdf"))
+    p.setup_model_store()
     # Build un-faulted depth maps and facies array
     depth_maps, onlap_list, fan_list, fan_thicknesses = build_unfaulted_depth_maps(p)
     facies = create_facies_array(p, depth_maps, onlap_list, fan_list)
@@ -68,8 +69,8 @@ def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None)
     p.write_sqldict_to_db()
 
     # Cleanup
-    p.h5file.close()
-    os.system("rm -rf " + p.temp_folder)
+    if getattr(p, 'cleanup_intermediates', True) and not p.test_mode:
+        shutil.rmtree(p.temp_folder, ignore_errors=True)
     try:
         os.system(f"chmod -R 777 {p.work_subfolder}")
     except OSError:
@@ -99,6 +100,7 @@ if __name__ == "__main__":
         "-n", "--num_runs", help="Number of models to create", default=1, type=int
     )
     parser.add_argument("-r", "--run_id", help="Run ID", default=None)
+    parser.add_argument("-s", "--seed", help="Random seed for reproducibility", default=None, type=int)
 
     args = parser.parse_args()
 
@@ -125,5 +127,5 @@ if __name__ == "__main__":
         factor_dict["farfactor"] = 1.0
         # Build model using the selected rpm factors
         build_model(
-            args.config_file, args.run_id, args.test_mode, rpm_factors=factor_dict
+            args.config_file, args.run_id, args.test_mode, rpm_factors=factor_dict, seed=args.seed
         )

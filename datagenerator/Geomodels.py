@@ -62,16 +62,16 @@ class Geomodel:
             self.cfg.cube_shape[1],
             self.cfg.cube_shape[2] + self.cfg.pad_samples,
         )
-        self.geologic_age = self.cfg.hdf_init("geologic_age_prefault", shape=cube_shape)
-        self.onlap_segments = self.cfg.hdf_init(
+        self.geologic_age = self.cfg.create_array("geologic_age_prefault", shape=cube_shape)
+        self.onlap_segments = self.cfg.create_array(
             "onlap_segments_prefault", shape=cube_shape
         )
-        self.faulted_lithology = self.cfg.hdf_init(
+        self.faulted_lithology = self.cfg.create_array(
             "lithology_prefault", shape=cube_shape
         )
-        self.geomodel_ng = self.cfg.hdf_init("net_to_gross_prefault", shape=cube_shape)
-        self.faulted_depth = self.cfg.hdf_init("depth_prefault", shape=cube_shape)
-        self.faulted_depth_randomised = self.cfg.hdf_init(
+        self.geomodel_ng = self.cfg.create_array("net_to_gross_prefault", shape=cube_shape)
+        self.faulted_depth = self.cfg.create_array("depth_prefault", shape=cube_shape)
+        self.faulted_depth_randomised = self.cfg.create_array(
             "depth_randomised_prefault", shape=cube_shape
         )
 

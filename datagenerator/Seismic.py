@@ -2,11 +2,12 @@ import os
 import itertools
 from multiprocessing import Pool
 import numpy as np
+from numpy.random import default_rng
 
 from tqdm import trange
 from datagenerator.histogram_equalizer import normalize_seismic
 from datagenerator.Geomodels import Geomodel
-from datagenerator.util import write_data_to_hdf
+from datagenerator.util import plot_3D_faults_plot
 from datagenerator.wavelets import generate_wavelet, plot_wavelets
 from rockphysics.RockPropertyModels import select_rpm, RockProperties, EndMemberMixing
 
@@ -42,6 +43,7 @@ class SeismicVolume(Geomodel):
         self.cfg = parameters
         self.faults = faults
         self.traps = closures
+        self.rng = default_rng(parameters.noise_ss.spawn(1)[0])
 
         if self.cfg.model_qc_volumes:
             # Add 0 and 45 degree angles to the list of user-input angles
@@ -53,32 +55,32 @@ class SeismicVolume(Geomodel):
 
         self.first_random_lyr = 20  # do not randomise shallow layers
 
-        self.rho = self.cfg.hdf_init(
-            "rho", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.rho = self.cfg.create_array(
+            "rho", shape=self.cfg.model_store["faulted_depth"].shape
         )
-        self.vp = self.cfg.hdf_init(
-            "vp", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vp = self.cfg.create_array(
+            "vp", shape=self.cfg.model_store["faulted_depth"].shape
         )
-        self.vs = self.cfg.hdf_init(
-            "vs", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vs = self.cfg.create_array(
+            "vs", shape=self.cfg.model_store["faulted_depth"].shape
         )
-        self.rho_ff = self.cfg.hdf_init(
-            "rho_ff", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.rho_ff = self.cfg.create_array(
+            "rho_ff", shape=self.cfg.model_store["faulted_depth"].shape
         )
-        self.vp_ff = self.cfg.hdf_init(
-            "vp_ff", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vp_ff = self.cfg.create_array(
+            "vp_ff", shape=self.cfg.model_store["faulted_depth"].shape
         )
-        self.vs_ff = self.cfg.hdf_init(
-            "vs_ff", shape=self.cfg.h5file.root.ModelData.faulted_depth.shape
+        self.vs_ff = self.cfg.create_array(
+            "vs_ff", shape=self.cfg.model_store["faulted_depth"].shape
         )
 
         seis_shape = (
             len(self.angles),
-            *self.cfg.h5file.root.ModelData.faulted_depth.shape,
+            *self.cfg.model_store["faulted_depth"].shape,
         )
         rfc_shape = (seis_shape[0], seis_shape[1], seis_shape[2], seis_shape[3] - 1)
-        self.rfc_raw = self.cfg.hdf_init("rfc_raw", shape=rfc_shape)
-        self.rfc_noise_added = self.cfg.hdf_init("rfc_noise_added", shape=rfc_shape)
+        self.rfc_raw = self.cfg.create_array("rfc_raw", shape=rfc_shape)
+        self.rfc_noise_added = self.cfg.create_array("rfc_noise_added", shape=rfc_shape)
 
     def build_elastic_properties(self, mixing_method="inv_vel"):
         """
@@ -103,9 +105,9 @@ class SeismicVolume(Geomodel):
         fs_fr = np.load(self.cfg.wavelets[2])
 
         for wavelet_count in range(n_wavelets):
-            low_freq_pctile = np.random.uniform(0, 100)
-            mid_freq_pctile = np.random.uniform(0, 100)
-            high_freq_pctile = np.random.uniform(0, 100)
+            low_freq_pctile = self.rng.uniform(0, 100)
+            mid_freq_pctile = self.rng.uniform(0, 100)
+            high_freq_pctile = self.rng.uniform(0, 100)
             low_med_high_percentiles = (
                 low_freq_pctile,
                 mid_freq_pctile,
@@ -300,9 +302,9 @@ class SeismicVolume(Geomodel):
 
     @staticmethod
     def random_z_rho_vp_vs(dmin=-7, dmax=7):
-        delta_z_rho = int(np.random.uniform(dmin, dmax))
-        delta_z_vp = int(np.random.uniform(dmin, dmax))
-        delta_z_vs = int(np.random.uniform(dmin, dmax))
+        delta_z_rho = int(self.rng.uniform(dmin, dmax))
+        delta_z_vp = int(self.rng.uniform(dmin, dmax))
+        delta_z_vs = int(self.rng.uniform(dmin, dmax))
         return delta_z_rho, delta_z_vp, delta_z_vs
 
     def create_rfc_volumes(self):
@@ -349,17 +351,6 @@ class SeismicVolume(Geomodel):
         # Move the angle from last dimension to first
         self.rfc_raw[:] = np.moveaxis(zoep, -1, 0)
 
-        if self.cfg.hdf_store:
-            for n, d in zip(
-                [
-                    "qc_volume_rfc_raw_{}_degrees".format(
-                        str(self.angles[x]).replace(".", "_")
-                    )
-                    for x in range(self.rfc_raw.shape[0])
-                ],
-                [self.rfc_raw[x, ...] for x in range(self.rfc_raw.shape[0])],
-            ):
-                write_data_to_hdf(n, d, self.cfg.hdf_master)
         if self.cfg.model_qc_volumes:
             # Write raw RFC values to disk
             _ = [
@@ -382,15 +373,15 @@ class SeismicVolume(Geomodel):
         if verbose:
             print("   ... inside noise3D")
 
-        noise_seed = np.random.randint(1, high=(2 ** (32 - 1)))
-        sign_seed = np.random.randint(1, high=(2 ** (32 - 1)))
+        noise_seed = self.rng.integers(1, high=(2 ** (32 - 1)))
+        sign_seed = self.rng.integers(1, high=(2 ** (32 - 1)))
 
-        np.random.seed(noise_seed)
-        noise3d = np.random.exponential(
+        # np.random.seed(noise_seed)
+        noise3d = self.rng.exponential(
             1.0 / 100.0, size=cube_shape[0] * cube_shape[1] * cube_shape[2]
         )
-        np.random.seed(sign_seed)
-        sign = np.random.binomial(
+        # np.random.seed(sign_seed)
+        sign = self.rng.binomial(
             1, 0.5, size=cube_shape[0] * cube_shape[1] * cube_shape[2]
         )
 
@@ -445,8 +436,8 @@ class SeismicVolume(Geomodel):
         noise_0deg = self.noise_3d(self.rfc_raw.shape[1:], verbose=False)
         noise_45deg = self.noise_3d(self.rfc_raw.shape[1:], verbose=False)
         # Store the noise models
-        self.noise_0deg = self.cfg.hdf_init("noise_0deg", shape=noise_0deg.shape)
-        self.noise_45deg = self.cfg.hdf_init("noise_45deg", shape=noise_45deg.shape)
+        self.noise_0deg = self.cfg.create_array("noise_0deg", shape=noise_0deg.shape)
+        self.noise_45deg = self.cfg.create_array("noise_45deg", shape=noise_45deg.shape)
         self.noise_0deg[:] = noise_0deg
         self.noise_45deg[:] = noise_45deg
 
@@ -551,7 +542,7 @@ class SeismicVolume(Geomodel):
     def augment_data_and_labels(self, normalised_seismic, seabed):
         from datagenerator.Augmentation import tz_stretch, uniform_stretch
 
-        hc_labels = self.cfg.h5file.root.ModelData.hc_labels[:]
+        hc_labels = self.cfg.model_store["hc_labels"][:]
         data, labels = tz_stretch(
             normalised_seismic,
             hc_labels[..., : self.cfg.cube_shape[2] + self.cfg.pad_samples - 1],
@@ -591,18 +582,18 @@ class SeismicVolume(Geomodel):
             )
         # generate 1 to 3 randomly located velocity fractions at random depth indices
         for _ in range(250):
-            num_tie_points = np.random.randint(low=1, high=4)
-            tie_fractions = np.random.uniform(
+            num_tie_points = self.rng.integers(low=1, high=4)
+            tie_fractions = self.rng.uniform(
                 low=-velocity_fraction, high=velocity_fraction, size=num_tie_points
             )
             if num_tie_points > 1:
-                tie_indices = np.random.uniform(
+                tie_indices = self.rng.uniform(
                     low=0.25 * nsamples, high=0.75 * nsamples, size=num_tie_points
                 ).astype("int")
 
             else:
                 tie_indices = int(
-                    np.random.uniform(low=0.25 * nsamples, high=0.75 * nsamples)
+                    self.rng.uniform(low=0.25 * nsamples, high=0.75 * nsamples)
                 )
             tie_fractions = np.hstack(([0.0, 0.0], tie_fractions, [0.0, 0.0]))
             tie_indices = np.hstack(([0, 1], tie_indices, [nsamples - 2, nsamples - 1]))
@@ -713,15 +704,15 @@ class SeismicVolume(Geomodel):
         layer_half_range = self.cfg.rpm_scaling_factors["layershiftsamples"]
         property_half_range = self.cfg.rpm_scaling_factors["RPshiftsamples"]
 
-        depth = self.cfg.h5file.root.ModelData.faulted_depth[:]
+        depth = self.cfg.model_store["faulted_depth"][:]
         lith = self.faults.faulted_lithology[:]
         net_to_gross = self.faults.faulted_net_to_gross[:]
 
-        oil_closures = self.cfg.h5file.root.ModelData.oil_closures[:]
-        gas_closures = self.cfg.h5file.root.ModelData.gas_closures[:]
+        oil_closures = self.cfg.model_store["oil_closures"][:]
+        gas_closures = self.cfg.model_store["gas_closures"][:]
 
         integer_faulted_age = (
-            self.cfg.h5file.root.ModelData.faulted_age_volume[:] + 0.00001
+            self.cfg.model_store["faulted_age_volume"][:] + 0.00001
         ).astype(int)
 
         # Use empty class object to store all Rho, Vp, Vs volumes (randomised, fluid factor and non randomised)
@@ -1097,7 +1088,7 @@ class SeismicVolume(Geomodel):
 
     def get_delta_z_layer(self, z, half_range, z_cells):
         if z > self.first_random_lyr:
-            delta_z_layer = int(np.random.uniform(-half_range, half_range))
+            delta_z_layer = int(self.rng.uniform(-half_range, half_range))
         else:
             delta_z_layer = 0
         if self.cfg.verbose:
