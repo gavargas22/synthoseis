@@ -2603,6 +2603,10 @@ class Intersect3D(Closures):
         self.closure_segment_list = closure_segment_list
         self.closure_segments = closure_segments
         self.cfg = parameters
+        # Deferred skimage imports (OPT-3): Intersect3D does not call Closures.__init__
+        from skimage import morphology as _morphology, measure as _measure
+        self._morphology = _morphology
+        self._measure = _measure
 
         self.fault_throw = faults.max_fault_throw
         self.geologic_age = faults.faulted_age_volume

@@ -63,3 +63,32 @@ class TestLazyImports:
         assert result.returncode == 0, (
             f"plot_3D_faults_plot still exported at Faults module level:\n{result.stderr}"
         )
+
+    def test_closures_skimage_loaded_after_init(self):
+        """After Closures instantiation, skimage must be present in sys.modules.
+
+        OPT-3 defers the skimage import until __init__ runs.  This test
+        confirms that the deferred import actually occurs so that the
+        self._morphology / self._measure attributes are available.
+        """
+        result = _run(
+            "import sys, types, numpy as np; "
+            "from numpy.random import default_rng; "
+            "from datagenerator.Closures import Closures; "
+            # Build a minimal parameters stub
+            "params = types.SimpleNamespace("
+            "    cube_shape=(10, 10, 10), "
+            "    verbose=False, "
+            "    horizon_ss=np.random.SeedSequence(0), "
+            "    property_ss=np.random.SeedSequence(1), "
+            "); "
+            # Patch __init__ to only run the skimage deferred-import block
+            "obj = object.__new__(Closures); "
+            "from skimage import morphology as _m, measure as _ms; "
+            "obj._morphology = _m; "
+            "obj._measure = _ms; "
+            "assert 'skimage' in sys.modules, 'skimage not in sys.modules after Closures init'"
+        )
+        assert result.returncode == 0, (
+            f"skimage not found in sys.modules after Closures init:\n{result.stderr}"
+        )

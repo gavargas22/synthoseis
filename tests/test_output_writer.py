@@ -132,3 +132,38 @@ def test_write_volume_1d_array(tmp_path):
     write_volume_to_zarr(arr, path, name="trace", dims=("sample",))
     result = read_volume_from_zarr(path, name="trace")
     np.testing.assert_array_equal(result, arr)
+
+
+# ---------------------------------------------------------------------------
+# Error-case tests
+# ---------------------------------------------------------------------------
+
+def test_write_volume_invalid_compressor(tmp_path):
+    """Passing a plain string as compressor must raise before any data is written."""
+    arr = np.ones((4, 4, 8), dtype="float32")
+    path = str(tmp_path / "bad_compressor.zarr")
+    with pytest.raises(Exception):
+        write_volume_to_zarr(
+            arr, path, name="amplitude",
+            dims=("inline", "crossline", "time"),
+            compressor="zstd",  # invalid: must be a codec object or None
+        )
+
+
+def test_write_volume_path_not_writable(tmp_path):
+    """Writing to a read-only directory must raise OSError or PermissionError."""
+    import stat
+    ro_dir = tmp_path / "readonly"
+    ro_dir.mkdir()
+    ro_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)  # r-x for owner only
+    arr = np.ones((4, 4, 8), dtype="float32")
+    path = str(ro_dir / "out.zarr")
+    try:
+        with pytest.raises((OSError, PermissionError)):
+            write_volume_to_zarr(
+                arr, path, name="amplitude",
+                dims=("inline", "crossline", "time"),
+            )
+    finally:
+        # Restore permissions so tmp_path cleanup doesn't fail
+        ro_dir.chmod(stat.S_IRWXU)

@@ -13,6 +13,7 @@ Compression note (OPT-2):
 """
 from __future__ import annotations
 
+import warnings
 import numpy as np
 import xarray as xr
 from zarr.codecs import BloscCodec, BloscShuffle
@@ -73,7 +74,9 @@ def write_volume_to_zarr(
         # zarr 3.x uses "compressors" (list) not legacy "compressor" (scalar).
         encoding.setdefault(name, {})["compressors"] = [compressor]
 
-    ds.to_zarr(path, mode="w", consolidated=True, encoding=encoding or None)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*[Cc]onsolidated metadata.*", category=UserWarning)
+        ds.to_zarr(path, mode="w", consolidated=True, encoding=encoding or None)
 
 
 def read_volume_from_zarr(path: str, name: str = "data") -> np.ndarray:

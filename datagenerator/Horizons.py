@@ -6,6 +6,7 @@ from scipy import stats
 from scipy.interpolate import griddata
 from datagenerator.Parameters import Parameters
 from itertools import groupby
+import opensimplex as _osx
 
 
 class Horizons:
@@ -109,8 +110,6 @@ class Horizons:
         halving amplitude (persistence=0.5) and increasing frequency
         (lacunarity=lac), matching the defaults of the old pnoise2 call.
         """
-        import opensimplex as _osx
-
         xsize = self.cfg.cube_shape[0]
         ysize = self.cfg.cube_shape[1]
         if base is None:

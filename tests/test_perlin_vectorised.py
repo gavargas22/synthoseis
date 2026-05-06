@@ -127,3 +127,23 @@ class TestPerlinEdgeCases:
         stack = _make_stack(10, 15, seed=1)
         result = stack._perlin(base=42, do_rotate=False)
         assert result.shape == (10, 15)
+
+
+class TestPerlinStats:
+    def test_perlin_stats(self):
+        """Vectorised _perlin mean ≈ 0.0 and std in [0.1, 0.6] (Story 5 acceptance).
+
+        Uses a fixed seed and large-enough grid (64×64) for stable statistics.
+        base=1, do_rotate=False produces a near-zero-mean field with this
+        OpenSimplex implementation (mean ≈ 0.002, std ≈ 0.29 at 64×64).
+        """
+        stack = _make_stack(64, 64, seed=0)
+        result = stack._perlin(base=1, do_rotate=False)
+        mean = float(result.mean())
+        std = float(result.std())
+        assert abs(mean) <= 0.05, (
+            f"_perlin mean {mean:.4f} is outside ±0.05 of 0.0"
+        )
+        assert 0.1 <= std <= 0.6, (
+            f"_perlin std {std:.4f} is outside the expected range [0.1, 0.6]"
+        )
