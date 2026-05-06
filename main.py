@@ -83,7 +83,9 @@ def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None,
     seismic.build_seismic_volumes()
     seismic.join_gather_write()
 
-    closures.write_closure_info_to_log(seismic.rfc_raw[1:4, ...])
+    n_incident = len(p.incident_angles)
+    rfc_start = 1 if p.model_qc_volumes else 0
+    closures.write_closure_info_to_log(seismic.rfc_raw[rfc_start : rfc_start + n_incident, ...])
 
     elapsed_time = datetime.datetime.now() - p.start_time
     print("\n\n\n...elapsed time is {}".format(elapsed_time))

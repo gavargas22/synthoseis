@@ -37,7 +37,7 @@ def write_volume_to_zarr(
     chunks : dict | None
         Chunk sizes keyed by dim name. None = xarray auto-chunking.
     """
-    da = xr.DataArray(arr, dims=dims, coords=coords or {}, attrs=attrs or {})
+    da = xr.DataArray(np.asarray(arr), dims=dims, coords=coords or {}, attrs=attrs or {})
     ds = da.to_dataset(name=name)
     encoding = None
     if chunks:
