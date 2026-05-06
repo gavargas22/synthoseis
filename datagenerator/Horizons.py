@@ -99,44 +99,57 @@ class Horizons:
         return random_net_over_gross_map
 
     def _perlin(self, base=None, octave=1, lac=1.9, do_rotate=True):
-        try:
-            import noise
-        except ImportError:
-            from datagenerator import _noise_shim as noise
+        """Return a 2-D noise field of shape (xsize, ysize).
+
+        Uses opensimplex.OpenSimplex.noise2array() for fully vectorised,
+        C-level computation — eliminates the O(n²) Python loop from the
+        previous noise.pnoise2 implementation (OPT-1).
+
+        Multi-octave fBm is emulated by accumulating octave passes with
+        halving amplitude (persistence=0.5) and increasing frequency
+        (lacunarity=lac), matching the defaults of the old pnoise2 call.
+        """
+        import opensimplex as _osx
 
         xsize = self.cfg.cube_shape[0]
         ysize = self.cfg.cube_shape[1]
         if base is None:
             base = self.rng.integers(255)
-        # randomly rotate image
+
+        # Decide rotation / flip before computing noise so that rng state
+        # consumption is identical to the previous implementation.
+        number_90_deg_rotations = 0
+        fliplr = False
+        flipud = False
         if do_rotate:
-            number_90_deg_rotations = 0
-            fliplr = False
-            flipud = False
             if xsize == ysize and self.rng.binomial(1, 0.5) == 1:
                 number_90_deg_rotations = int(self.rng.uniform(1, 4))
-                # temp = np.rot90(temp, number_90_deg_rotations)
-            # randomly flip left and right, top and bottom
             if self.rng.binomial(1, 0.5) == 1:
                 fliplr = True
             if self.rng.binomial(1, 0.5) == 1:
                 flipud = True
 
-        temp = np.array(
-            [
-                [
-                    noise.pnoise2(
-                        float(i) / xsize,
-                        float(j) / ysize,
-                        lacunarity=lac,
-                        octaves=octave,
-                        base=base,
-                    )
-                    for j in range(ysize)
-                ]
-                for i in range(xsize)
-            ]
-        )
+        # Vectorised fBm using opensimplex (seed controls per-call randomness).
+        # OpenSimplex(seed) is deterministic for a given integer seed.
+        gen = _osx.OpenSimplex(seed=int(base))
+        xs = np.arange(xsize, dtype=float) / xsize
+        ys = np.arange(ysize, dtype=float) / ysize
+
+        temp = np.zeros((xsize, ysize), dtype=float)
+        amplitude = 1.0
+        frequency = 1.0
+        max_amplitude = 0.0
+        for _ in range(octave):
+            # noise2array(xs, ys) returns shape (len(ys), len(xs)); transpose
+            # to match the expected (xsize, ysize) convention.
+            temp += amplitude * gen.noise2array(xs * frequency, ys * frequency).T
+            max_amplitude += amplitude
+            amplitude *= 0.5   # persistence matching pnoise2 default
+            frequency *= lac
+
+        if max_amplitude > 0:
+            temp /= max_amplitude
+
         temp = np.rot90(temp, number_90_deg_rotations)
         if fliplr:
             temp = np.fliplr(temp)
