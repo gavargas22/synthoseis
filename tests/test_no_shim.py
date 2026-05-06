@@ -13,6 +13,8 @@ BANNED_NAMES = {
     "hdf_setup",
     "hdf_master",
     "hdf_store",
+    "hdf_remove_node_list",
+    "hdf_node_list",
     "write_data_to_hdf",
 }
 

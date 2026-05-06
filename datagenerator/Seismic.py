@@ -317,8 +317,7 @@ class SeismicVolume(Geomodel):
             )
         return normed_data
 
-    @staticmethod
-    def random_z_rho_vp_vs(dmin=-7, dmax=7):
+    def random_z_rho_vp_vs(self, dmin=-7, dmax=7):
         delta_z_rho = int(self.rng.uniform(dmin, dmax))
         delta_z_vp = int(self.rng.uniform(dmin, dmax))
         delta_z_vs = int(self.rng.uniform(dmin, dmax))

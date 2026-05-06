@@ -5,6 +5,7 @@ import datetime
 import os
 import shutil
 import numpy as np
+from numpy.random import default_rng
 import matplotlib.pyplot as plt
 
 from datagenerator.Closures import Closures
@@ -96,7 +97,7 @@ def build_model(user_json: str, run_id, test_mode: int = None, rpm_factors=None,
     p.write_sqldict_to_db()
 
     # Cleanup
-    if getattr(p, 'cleanup_intermediates', True) and not p.test_mode:
+    if getattr(p, 'cleanup_intermediates', True):
         shutil.rmtree(p.temp_folder, ignore_errors=True)
     try:
         os.system(f"chmod -R 777 {p.work_subfolder}")
@@ -138,11 +139,13 @@ if __name__ == "__main__":
         print(f"\t* {arg}: {getattr(args, arg)}")
 
     for iRun in range(args.num_runs):
-        # TODO Create a separate class to handle rpm randomization do these things need to be added to the config file?
+        # Seed the pre-run RPM factor draws from the same seed passed to build_model
+        # so that --seed N always produces the same layershiftsamples / RPshiftsamples.
+        _run_rng = default_rng(args.seed if args.seed is not None else None)
         # Apply randomisation to the rock properties
         factor_dict = dict()
-        factor_dict["layershiftsamples"] = int(np.random.triangular(35, 75, 125))
-        factor_dict["RPshiftsamples"] = int(np.random.triangular(5, 11, 20))
+        factor_dict["layershiftsamples"] = int(_run_rng.triangular(35, 75, 125))
+        factor_dict["RPshiftsamples"] = int(_run_rng.triangular(5, 11, 20))
         factor_dict["shalerho_factor"] = 1.0
         factor_dict["shalevp_factor"] = 1.0
         factor_dict["shalevs_factor"] = 1.0

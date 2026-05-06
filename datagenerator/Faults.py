@@ -1194,8 +1194,8 @@ class Faults(Horizons, Geomodel):
                             + str(max_fault_throw_list_counts)
                         )
                     mfts = self.max_fault_throw.shape
-                    self.cfg.hdf_remove_node_list("max_fault_throw_4d_diff")
-                    self.cfg.hdf_remove_node_list("max_fault_throw_4d")
+                    self.cfg.remove_array("max_fault_throw_4d_diff")
+                    self.cfg.remove_array("max_fault_throw_4d")
                     max_fault_throw_4d_diff = self.cfg.create_array(
                         "max_fault_throw_4d_diff",
                         shape=(mfts[0], mfts[1], mfts[2], max_fault_throw_list.size),
