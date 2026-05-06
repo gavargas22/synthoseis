@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=2.0",
     "opensimplex>=0.4.5.1",
     "plotly",
+    "psutil>=7.2.2",
     "ruff>=0.10.0",
     "scikit-image",
     "scipy",

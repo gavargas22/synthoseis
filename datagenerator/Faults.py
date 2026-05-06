@@ -2295,7 +2295,7 @@ class Faults(Horizons, Geomodel):
         print(
             f"    ... Max displacement point before rotation and adding of padding x,y = {x_center} {y_center}"
         )
-        new_matrix = np.lib.pad(
+        new_matrix = np.pad(
             new_matrix, ((abs(x_pad), abs(x_pad)), (abs(y_pad), abs(y_pad))), "edge"
         )
         new_matrix = np.roll(new_matrix, int(x_roll), axis=0)
@@ -2617,8 +2617,8 @@ class Faults(Horizons, Geomodel):
             y0_min - np.sqrt(b), np.sqrt(b) + y0_max, self.cfg.number_faults
         )
         z0 = self.rng.uniform(
-            -self.cfg.cube_shape[2] * 2.0,
             -self.cfg.cube_shape[2] * 6.0,
+            -self.cfg.cube_shape[2] * 2.0,
             self.cfg.number_faults,
         )
         _c0 = self.cfg.cube_shape[2] * self.cfg.infill_factor * 4.0 - z0
@@ -2692,7 +2692,7 @@ class Faults(Horizons, Geomodel):
             # Compute the rest of the initial parameters normally
             z0_ini = np.array(
                 self.rng.uniform(
-                    -self.cfg.cube_shape[2] * 2.0, -self.cfg.cube_shape[2] * 6.0
+                    -self.cfg.cube_shape[2] * 6.0, -self.cfg.cube_shape[2] * 2.0
                 )
             )
 
@@ -2810,7 +2810,7 @@ class Faults(Horizons, Geomodel):
         )
         z0_ini = np.array(
             self.rng.uniform(
-                -self.cfg.cube_shape[2] * 2.0, -self.cfg.cube_shape[2] * 6.0
+                -self.cfg.cube_shape[2] * 6.0, -self.cfg.cube_shape[2] * 2.0
             )
         )
 
@@ -2899,7 +2899,7 @@ class Faults(Horizons, Geomodel):
             # Compute the rest of the initial parameters normally
             z0_ini = np.array(
                 self.rng.uniform(
-                    -self.cfg.cube_shape[2] * 2.0, -self.cfg.cube_shape[2] * 6.0
+                    -self.cfg.cube_shape[2] * 6.0, -self.cfg.cube_shape[2] * 2.0
                 )
             )
             c_ini = np.array(
@@ -3033,7 +3033,7 @@ class Faults(Horizons, Geomodel):
             y0_ini = np.array(self.rng.uniform(0, self.cfg.cube_shape[1]))
         z0_ini = np.array(
             self.rng.uniform(
-                -self.cfg.cube_shape[2] * 2.0, -self.cfg.cube_shape[2] * 6.0
+                -self.cfg.cube_shape[2] * 6.0, -self.cfg.cube_shape[2] * 2.0
             )
         )
         c_ini = np.array(
