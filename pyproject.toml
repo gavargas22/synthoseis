@@ -20,19 +20,9 @@ dependencies = [
     "tqdm",
     "xarray",
     "zarr>=3",
-    "fastapi>=0.111",
-    "uvicorn[standard]>=0.29",
-    "httpx>=0.27",
-    "pydantic>=2.5",
-    "anyio>=4.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
-]
-
-[tool.pytest.ini_options]
-markers = [
-    "slow: marks tests as slow end-to-end integration tests (deselect with '-m not slow')",
 ]

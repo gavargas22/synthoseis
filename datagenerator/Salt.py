@@ -78,7 +78,8 @@ class SaltModel:
             salt_radius=salt_radius,
         )
 
-    def create_circular_pointcloud(self, cx, cy, cz, radius, verbose=False):
+    @staticmethod
+    def create_circular_pointcloud(cx, cy, cz, radius, verbose=False):
         """
         Create a circular pointcloud
         ----------------------------
