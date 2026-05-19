@@ -294,16 +294,13 @@ class Faults(Horizons, Geomodel):
         -------
         None
         """
-        work_cube_lith = (
-            np.ones_like(self.faulted_age_volume) * -1
-        )  # initialise lith cube to water
-        work_cube_sealed = np.zeros_like(self.faulted_age_volume)
-        work_cube_net_to_gross = np.zeros_like(self.faulted_age_volume)
-        work_cube_depth = np.zeros_like(self.faulted_age_volume)
-        # Also create a randomised depth cube for generating randomised rock properties
-        # final dimension's shape is based on number of possible list types
-        # currently  one of ['seawater', 'shale', 'sand']
-        # n_lith = len(['shale', 'sand'])
+        # Issue 4: initialise lith/ng/depth directly in their backing zarr stores
+        # instead of allocating four full in-memory cubes (saves ~1.35 GB per cube at
+        # production size).  work_cube_sealed has no zarr backing and stays in RAM.
+        self.faulted_lithology[:] = -1.0   # water / unset sentinel
+        self.faulted_net_to_gross[:] = 0.0
+        self.faulted_depth[:] = 0.0
+        work_cube_sealed = np.zeros(self.faulted_age_volume.shape, dtype="float32")
         cube_shape = self.faulted_age_volume.shape
         # randomised_depth = np.zeros(cube_shape, 'float32')
 
@@ -397,7 +394,7 @@ class Faults(Horizons, Geomodel):
                         sublayer_fraction = fraction_of_voxel[valid_k == 1]
 
                         # Lithology cube
-                        input_cube = work_cube_lith[
+                        input_cube = self.faulted_lithology[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
                         ]
                         values = facies[i] * sublayer_fraction
@@ -405,7 +402,7 @@ class Faults(Horizons, Geomodel):
                             values[input_cube == -1.0] * 1.0
                         )
                         input_cube[input_cube != -1.0] += values[input_cube != -1.0]
-                        work_cube_lith[
+                        self.faulted_lithology[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
                         ] = input_cube * 1.0
                         del input_cube
@@ -426,11 +423,11 @@ class Faults(Horizons, Geomodel):
                         del values
 
                         # Depth cube
-                        work_cube_depth[
+                        self.faulted_depth[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
                         ] += sublayer_tvdml_map * sublayer_fraction
                         # Net to Gross cube
-                        work_cube_net_to_gross[
+                        self.faulted_net_to_gross[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
                         ] += sublayer_ng_map * sublayer_fraction
 
@@ -450,17 +447,17 @@ class Faults(Horizons, Geomodel):
                         sublayer_tvdml_map = tvdml_map[thickness_map > k]
                         sublayer_ng_map = ng_map[thickness_map > k]
 
-                        work_cube_lith[
+                        self.faulted_lithology[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
                         ] = facies[i]
                         work_cube_sealed[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
                         ] = 1 - facies[i - 1]
 
-                        work_cube_depth[
+                        self.faulted_depth[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
                         ] = sublayer_tvdml_map
-                        work_cube_net_to_gross[
+                        self.faulted_net_to_gross[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
                         ] += sublayer_ng_map
                         # randomised_depth[sublayer_ii, sublayer_jj, sublayer_depth_map_int] += (sublayer_tvdml_map + random_z_perturbation)
@@ -471,14 +468,14 @@ class Faults(Horizons, Geomodel):
         if self.cfg.verbose:
             print("\n\n ... After infilling ...")
         self.write_cube_to_disk(work_cube_sealed.astype("uint8"), "sealed_label")
+        del work_cube_sealed  # no longer needed
 
-        # Clip cubes and convert from samples to units
-        work_cube_lith = np.clip(work_cube_lith, -1.0, 1.0)  # clip lith to [-1, +1]
-        work_cube_net_to_gross = np.clip(
-            work_cube_net_to_gross, 0, 1.0
-        )  # clip n/g to [0, 1]
-        work_cube_depth = np.clip(work_cube_depth, a_min=0, a_max=None)
-        work_cube_depth *= self.cfg.digi
+        # Issue 4: clip and post-process by loading zarr once per cube.
+        # This keeps only one cube in RAM at a time (vs. 3 simultaneously before).
+        _lith = np.clip(self.faulted_lithology[:], -1.0, 1.0)
+        _ng = np.clip(self.faulted_net_to_gross[:], 0, 1.0)
+        _depth = np.clip(self.faulted_depth[:], a_min=0, a_max=None)
+        _depth *= self.cfg.digi
 
         if self.cfg.include_salt:
             # Update age model after horizons have been modified by salt inclusion
@@ -487,30 +484,26 @@ class Faults(Horizons, Geomodel):
                 out=self.faulted_age_volume,
             )
             # Set lith code for salt
-            work_cube_lith[self.salt_model.salt_segments[:] > 0.0] = 2.0
+            _lith[self.salt_model.salt_segments[:] > 0.0] = 2.0
             # Fix deepest part of facies in case salt inclusion has shifted base horizon
             # This can leave default (water) facies codes at the base
             last_50_samples = self.cfg.cube_shape[-1] - 50
-            work_cube_lith[..., last_50_samples:][
-                work_cube_lith[..., last_50_samples:] == -1.0
-            ] = 0.0
+            _lith[..., last_50_samples:][_lith[..., last_50_samples:] == -1.0] = 0.0
 
         if self.cfg.qc_plots:
             from datagenerator.util import plot_xsection
             import matplotlib as mpl
 
-            line_number = int(
-                work_cube_lith.shape[0] / 2
-            )  # pick centre line for all plots
+            line_number = int(_lith.shape[0] / 2)  # pick centre line for all plots
 
-            if self.cfg.include_salt and np.max(work_cube_lith[line_number, ...]) > 1:
+            if self.cfg.include_salt and np.max(_lith[line_number, ...]) > 1:
                 lith_cmap = mpl.colors.ListedColormap(
                     ["blue", "saddlebrown", "gold", "grey"]
                 )
             else:
                 lith_cmap = mpl.colors.ListedColormap(["blue", "saddlebrown", "gold"])
             plot_xsection(
-                work_cube_lith,
+                _lith,
                 self.faulted_depth_maps[:],
                 line_num=line_number,
                 title="Example Trav through 3D model\nLithology",
@@ -519,7 +512,7 @@ class Faults(Horizons, Geomodel):
                 cmap=lith_cmap,
             )
             plot_xsection(
-                work_cube_depth,
+                _depth,
                 self.faulted_depth_maps,
                 line_num=line_number,
                 title="Example Trav through 3D model\nDepth Below Mudline",
@@ -527,15 +520,15 @@ class Faults(Horizons, Geomodel):
                 cfg=self.cfg,
                 cmap="cubehelix_r",
             )
-        self.faulted_lithology[:] = work_cube_lith
-        self.faulted_net_to_gross[:] = work_cube_net_to_gross
-        self.faulted_depth[:] = work_cube_depth
-        # self.randomised_depth[:] = randomised_depth
+        # Write clipped cubes back to zarr stores
+        self.faulted_lithology[:] = _lith
+        self.faulted_net_to_gross[:] = _ng
+        self.faulted_depth[:] = _depth
 
         # Write the % sand in model to logfile
         sand_fraction = (
-            work_cube_lith[work_cube_lith == 1].size
-            / work_cube_lith[work_cube_lith >= 0].size
+            _lith[_lith == 1].size
+            / max(_lith[_lith >= 0].size, 1)  # avoid division by zero
         )
         self.cfg.write_to_logfile(
             f"Sand voxel % in model {100 * sand_fraction:.1f}%",
@@ -544,10 +537,11 @@ class Faults(Horizons, Geomodel):
             val=100 * sand_fraction,
         )
 
-
         # Save out reservoir volume for XAI-NBDT
-        reservoir = (work_cube_lith == 1) * 1.0
+        reservoir = (_lith == 1) * 1.0
+        del _lith, _ng, _depth
         reservoir_dilated = binary_dilation(reservoir)
+        del reservoir
         self.reservoir[:] = reservoir_dilated
 
         if self.cfg.model_qc_volumes:
@@ -1588,37 +1582,28 @@ class Faults(Horizons, Geomodel):
                     faulted_depth_maps[i, j, :] = unfaulted_geologic_age[i, j, :]
         # Waterbottom horizon has been set to 0. Re-insert this from the original depth_maps array
         if np.count_nonzero(faulted_depth_maps[:, :, 0]) == 0:
-            faulted_depth_maps[:, :, 0] = self.faulted_depth_maps[:, :, 0] * 1.0
+            faulted_depth_maps[:, :, 0] = self.faulted_depth_maps[:, :, 0]
 
-        # Shift re-interpolated horizons to replace first horizon (of 0's) with the second, etc
-        zmaps = np.zeros_like(faulted_depth_maps)
-        zmaps[..., :-1] = faulted_depth_maps[..., 1:]
-        # Fix the deepest re-interpolated horizon by adding a constant thickness to the shallower horizon
-        zmaps[..., -1] = self.faulted_depth_maps[..., -1] + 10
+        # Shift re-interpolated horizons in-place: replace horizon k with k+1.
+        # numpy handles the overlap safely (temporary is made for the rhs).
+        faulted_depth_maps[..., :-1] = faulted_depth_maps[..., 1:]
+        # Fix the deepest re-interpolated horizon by adding a constant thickness
+        faulted_depth_maps[..., -1] = self.faulted_depth_maps[..., -1] + 10
         # Clip this last horizon to the one above
-        thickness_map = zmaps[..., -1] - zmaps[..., -2]
-        zmaps[..., -1][np.where(thickness_map <= 0.0)] = zmaps[..., -2][
-            np.where(thickness_map <= 0.0)
-        ]
-        faulted_depth_maps = zmaps.copy()
+        thickness_map = faulted_depth_maps[..., -1] - faulted_depth_maps[..., -2]
+        faulted_depth_maps[..., -1][np.where(thickness_map <= 0.0)] = faulted_depth_maps[
+            ..., -2
+        ][np.where(thickness_map <= 0.0)]
 
         if self.cfg.qc_plots:
             self._qc_plot_check_faulted_horizons_match_fault_segments(
                 faulted_depth_maps, faulted_geologic_age
             )
 
-        # Re-apply old gaps to improved depth_maps
-        zmaps_imp = faulted_depth_maps.copy()
-        merged = zmaps_imp.copy()
-        _depth_maps_gaps_improved = merged.copy()
-        _depth_maps_gaps_improved[np.isnan(self.faulted_depth_maps_gaps)] = np.nan
-        depth_maps_gaps = _depth_maps_gaps_improved.copy()
-
-        # for zero-thickness layers, set depth_maps_gaps to nan
-        for i in range(depth_maps_gaps.shape[-1] - 1):
-            thickness_map = depth_maps_gaps[:, :, i + 1] - depth_maps_gaps[:, :, i]
-            # set thicknesses < zero to NaN. Use NaNs in thickness_map to 0 to avoid runtime warning when indexing
-            depth_maps_gaps[:, :, i][np.nan_to_num(thickness_map) <= 0.0] = np.nan
+        # Issue 5 fix: use faulted_depth_maps directly as 'merged'.
+        # The six-copy chain (zmaps_imp, merged, _depth_maps_gaps_improved, etc.)
+        # is collapsed to two live arrays at any time.
+        merged = faulted_depth_maps  # alias — no copy
 
         # restore zero thickness from faulted horizons to improved (interpolated) depth maps
         ii, jj = np.meshgrid(
@@ -1627,7 +1612,6 @@ class Faults(Horizons, Geomodel):
             sparse=False,
             indexing="ij",
         )
-        merged = zmaps_imp.copy()
 
         # create temporary copy of fault_segments with dilation
         from scipy.ndimage.morphology import grey_dilation
@@ -1635,7 +1619,7 @@ class Faults(Horizons, Geomodel):
         _dilated_fault_planes = grey_dilation(self.fault_planes, size=(3, 3, 1))
 
         _onlap_segments = self.vols.onlap_segments[:]
-        for ihor in range(depth_maps_gaps.shape[-1] - 1, 2, -1):
+        for ihor in range(merged.shape[-1] - 1, 2, -1):
             # filter upper horizon being used for thickness if shallower events onlap it, except at faults
             improved_zmap_thickness = merged[:, :, ihor] - merged[:, :, ihor - 1]
             depth_map_int = ((merged[:, :, ihor]).astype(int)).clip(
@@ -1678,10 +1662,10 @@ class Faults(Horizons, Geomodel):
 
         del _dilated_fault_planes
 
-        # Re-apply gaps to improved depth_maps
-        _depth_maps_gaps_improved = merged.copy()
-        _depth_maps_gaps_improved[np.isnan(self.faulted_depth_maps_gaps)] = np.nan
-        depth_maps_gaps = _depth_maps_gaps_improved.copy()
+        # Build depth_maps_gaps as the only second live array (Issue 5).
+        # One .copy() to get an independent mutable array, then in-place NaN writes.
+        depth_maps_gaps = merged.copy()
+        depth_maps_gaps[np.isnan(self.faulted_depth_maps_gaps)] = np.nan
 
         # for zero-thickness layers, set depth_maps_gaps to nan
         for i in range(depth_maps_gaps.shape[-1] - 1):

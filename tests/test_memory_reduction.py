@@ -452,19 +452,26 @@ class TestIssue5CopyChainCollapse:
         faults = Faults(cfg, depth_maps[:], onlap_list, geomodel, fan_list, fan_thicknesses)
         fault_params = faults.fault_parameters()
         _ = faults.build_faults(fault_params)
+        # Populate faulted_age_volume so improve_depth_maps_post_faulting has
+        # non-trivial input (avoids the all-zeros degenerate case).
+        faults.faulted_age_volume[:] = geomodel.geologic_age[:]
         return faults
 
     def test_peak_memory_at_most_two_depth_map_copies(self, tmp_path):
         """FAILS before fix: six .copy() calls keep 6 depth-map copies live.
 
-        After fix: ≤2 live arrays → peak ≤ 5× single array nbytes.
-        (Generous: allow extra overhead for the return tuple and onlap processing.)
+        After fix: ≤2 depth-map copies + auxiliary age-volume arrays.
+        The threshold is set to catch a regression to the 6-copy chain:
+        pre-fix = 6×dm + 2×age; post-fix = 2×dm + 2×age.
+        We check that peak ≤ 3×dm + 3×age (midpoint between old and new).
         """
         faults = self._setup_faults_with_build(tmp_path)
 
-        # Compute single depth-map copy size (float32 × nx × ny × n_horizons)
         dm_bytes = faults.faulted_depth_maps[:].nbytes
-        threshold = 5 * dm_bytes  # allow generous headroom; 6× pre-fix
+        age_bytes = int(np.prod(faults.vols.geologic_age.shape)) * 4  # float32
+        # Threshold: generous enough to pass after fix, tight enough to catch regression.
+        # Post-fix: ~2×dm + 2×age ≈ 1.9 MB.  Pre-fix: ~6×dm + 4×age (copies + aux).
+        threshold = 3 * dm_bytes + 4 * age_bytes
 
         _age = faults.vols.geologic_age[:]
         _faulted_age = faults.faulted_age_volume[:]
@@ -477,8 +484,9 @@ class TestIssue5CopyChainCollapse:
 
         assert peak <= threshold, (
             f"improve_depth_maps_post_faulting peak ({peak / 1e6:.2f} MB) exceeds "
-            f"5× single depth-map size ({threshold / 1e6:.2f} MB).  "
-            f"The six-copy chain (Issue 5) is still present."
+            f"threshold ({threshold / 1e6:.2f} MB = 3×dm + 4×age).  "
+            f"dm={dm_bytes/1e6:.3f} MB, age={age_bytes/1e6:.3f} MB.  "
+            f"The six-copy chain (Issue 5) may still be present."
         )
 
     def test_no_onlap_horizons_edge_case(self, tmp_path):
