@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import tracemalloc
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -117,8 +116,6 @@ class TestIssue1GeologicAgeMemory:
 
         from datagenerator.Geomodels import Geomodel
 
-        nx, ny, nz = cfg.cube_shape
-        cube_shape = (nx, ny, nz + cfg.pad_samples)
         geomodel = Geomodel(cfg, depth_maps, [], np.zeros(depth_maps.shape[-1]))
 
         result = geomodel.create_geologic_age_3d_from_infilled_horizons(depth_maps)
@@ -141,7 +138,6 @@ class TestIssue1GeologicAgeMemory:
         ret = geomodel.create_geologic_age_3d_from_infilled_horizons(depth_maps)
         if ret is not None:
             geomodel.geologic_age[:] = ret  # legacy call-site pattern
-
         arr = geomodel.geologic_age[:]
         assert arr.shape == (
             cfg.cube_shape[0],
@@ -166,14 +162,13 @@ class TestIssue1GeologicAgeMemory:
 
         nx, ny, nz = cfg.cube_shape
         nz_pad = nz + cfg.pad_samples
-        nz_infill = nz_pad * cfg.infill_factor
         # Expected final output size in bytes (float32)
         output_bytes = nx * ny * nz_pad * 4
         # Threshold: 4× the output to allow for slab overhead
         threshold_bytes = 4 * output_bytes
 
         tracemalloc.start()
-        ret = geomodel.create_geologic_age_3d_from_infilled_horizons(depth_maps)
+        geomodel.create_geologic_age_3d_from_infilled_horizons(depth_maps)
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
@@ -498,7 +493,6 @@ class TestIssue5CopyChainCollapse:
         from datagenerator.Horizons import build_unfaulted_depth_maps
         from datagenerator.Geomodels import Geomodel
         from datagenerator.Faults import Faults
-        import zarr
 
         cfg = _make_cfg(tmp_path, overrides={
             "cube_shape": [20, 20, 500],
