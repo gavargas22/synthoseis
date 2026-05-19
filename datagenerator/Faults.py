@@ -70,7 +70,7 @@ class Faults(Horizons, Geomodel):
             "faulted_depth_maps_gaps", shape=unfaulted_depth_maps.shape
         )
         # Volumes
-        cube_shape = geomodels.geologic_age[:].shape
+        cube_shape = geomodels.geologic_age.shape
         self.vols = geomodels
         self.faulted_age_volume = self.cfg.create_array(
             "faulted_age_volume", shape=cube_shape
@@ -144,13 +144,19 @@ class Faults(Horizons, Geomodel):
         )
         _ = self.generate_faults()
 
+        # Issue 6: cache zarr materialisations as locals to avoid loading twice.
+        _geologic_age = self.vols.geologic_age[:]
+
         # Apply faulting to age model, net_to_gross cube & onlap segments
         self.faulted_age_volume[:] = self.apply_xyz_displacement(
-            self.vols.geologic_age[:]
+            _geologic_age
         ).astype("float")
         self.faulted_onlap_segments[:] = self.apply_xyz_displacement(
             self.vols.onlap_segments[:]
         )
+
+        # Cache faulted age volume once it has been written
+        _faulted_age = self.faulted_age_volume[:]
 
         # Improve the depth maps post faulting by
         # re-interpolating across faulted age model
@@ -158,8 +164,11 @@ class Faults(Horizons, Geomodel):
             self.faulted_depth_maps[:],
             self.faulted_depth_maps_gaps[:],
         ) = self.improve_depth_maps_post_faulting(
-            self.vols.geologic_age[:], self.faulted_age_volume[:], onlap_clip_dict
+            _geologic_age, _faulted_age, onlap_clip_dict
         )
+
+        # Release large local arrays
+        del _geologic_age, _faulted_age
 
         if self.cfg.include_salt:
             from datagenerator.Salt import SaltModel
@@ -473,10 +482,9 @@ class Faults(Horizons, Geomodel):
 
         if self.cfg.include_salt:
             # Update age model after horizons have been modified by salt inclusion
-            self.faulted_age_volume[:] = (
-                self.create_geologic_age_3d_from_infilled_horizons(
-                    self.faulted_depth_maps[:] * 10.0
-                )
+            self.create_geologic_age_3d_from_infilled_horizons(
+                self.faulted_depth_maps[:] * 10.0,
+                out=self.faulted_age_volume,
             )
             # Set lith code for salt
             work_cube_lith[self.salt_model.salt_segments[:] > 0.0] = 2.0
@@ -792,13 +800,17 @@ class Faults(Horizons, Geomodel):
         print("   ... self.cfg.verbose = " + str(self.cfg.verbose))
         cube_shape = np.array(self.cfg.cube_shape)
         cube_shape[-1] += self.cfg.pad_samples
-        samples_in_cube = self.vols.geologic_age[:].size
+        # Cache shape and dtype once — never materialise the full zarr array
+        # just to get these metadata values.
+        _age_shape = self.vols.geologic_age.shape
+        _age_dtype = self.vols.geologic_age.dtype
+        samples_in_cube = int(np.prod(_age_shape))
         wb = self.copy_and_divide_depth_maps_by_infill(
             self.unfaulted_depth_maps[..., 0]
         )
 
-        sum_displacements = np.zeros_like(self.vols.geologic_age[:])
-        displacements_class = np.zeros_like(self.vols.geologic_age[:])
+        sum_displacements = np.zeros(_age_shape, _age_dtype)
+        displacements_class = np.zeros(_age_shape, _age_dtype)
         hockey_sticks = []
         fault_voxel_count_list = []
         number_fault_intersections = 0
@@ -811,13 +823,11 @@ class Faults(Horizons, Geomodel):
         )
 
         # Create depth indices cube (moved from inside loop)
-        faulted_depths = np.zeros_like(self.vols.geologic_age[:])
+        faulted_depths = np.zeros(_age_shape, _age_dtype)
         for k in range(faulted_depths.shape[-1]):
             faulted_depths[:, :, k] = k
-        unfaulted_depths = faulted_depths * 1.0
-        _faulted_depths = (
-            unfaulted_depths * 1.0
-        )  # in case there are 0 faults, prepare _faulted_depths here
+        unfaulted_depths = faulted_depths.copy()
+        _faulted_depths = unfaulted_depths.copy()  # in case there are 0 faults
 
         for ifault in tqdm(range(self.cfg.number_faults)):
             semi_axes = [
@@ -1017,7 +1027,7 @@ class Faults(Horizons, Geomodel):
 
             if ifault == 0:
                 print("      .... set _unfaulted_depths to array with all zeros...")
-                _faulted_depths = unfaulted_depths * 1.0
+                _faulted_depths = unfaulted_depths.copy()
                 self.fault_plane_azimuth[:] = strike_angle * 1.0
 
             print("   ... interpolation = " + str(interpolation))
@@ -1046,7 +1056,7 @@ class Faults(Horizons, Geomodel):
                 # apply fault to depth_cube
                 if ifault == 0:
                     print("      .... set _unfaulted_depths to array with all zeros...")
-                    _faulted_depths = unfaulted_depths * 1.0
+                    _faulted_depths = unfaulted_depths.copy()
                     adjusted_faulted_depths = (unfaulted_depths - displacement).clip(
                         0, ellipsoid.shape[-1] - 1
                     )
@@ -1081,7 +1091,7 @@ class Faults(Horizons, Geomodel):
                             + str(_faulted_depths.mean())
                         )
                     except:
-                        _faulted_depths = unfaulted_depths * 1.0
+                        _faulted_depths = unfaulted_depths.copy()
                     adjusted_faulted_depths = (unfaulted_depths - displacement).clip(
                         0, ellipsoid.shape[-1] - 1
                     )
@@ -1442,15 +1452,15 @@ class Faults(Horizons, Geomodel):
                 msg=None, mainkey="model_parameters", subkey=k, val=v
             )
 
-        dis_class = _faulted_depths * 1
+        dis_class = _faulted_depths.copy()
         self.fault_intersections[:] = _fault_intersections
         del _fault_intersections
         self.fault_planes[:] = _fault_planes
         del _fault_planes
-        self.displacement_vectors[:] = _faulted_depths * 1.0
+        self.displacement_vectors[:] = _faulted_depths
 
         # TODO: check if next line of code modifies 'displacement' properly
-        self.sum_map_displacements[:] = _faulted_depths * 1.0
+        self.sum_map_displacements[:] = _faulted_depths
 
         # Save faulted maps
         self.faulted_depth_maps[:] = depth_maps_faulted_infilled
@@ -1817,7 +1827,7 @@ class Faults(Horizons, Geomodel):
             print("    ... Computing fault depth at max displacement")
             print("    ... depth at max displacement  = {}".format(z_idx[2]))
             down = float(ellipsoid[ellipsoid < 1.0].size) / np.prod(
-                self.vols.geologic_age[:].shape
+                self.vols.geologic_age.shape
             )
             """
             down = np.int16(len(np.where(ellipsoid < 1.)[0]) / 1.0 * (self.vols.geologic_age.shape[2] *
@@ -1840,7 +1850,9 @@ class Faults(Horizons, Geomodel):
         else:
             print("  ... Ellipsoid larger than cube no fault inserted")
             stretch_times = np.ones_like(ellipsoid)
-            stretch_times_classification = np.ones_like(self.vols.geologic_age[:])
+            stretch_times_classification = np.ones(
+                self.vols.geologic_age.shape, dtype=self.vols.geologic_age.dtype
+            )
 
         max_fault_throw = self.max_fault_throw[:]
         max_fault_throw[ellipsoid < 1.0] += int(throw)
