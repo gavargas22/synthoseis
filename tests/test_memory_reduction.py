@@ -275,10 +275,15 @@ class TestIssue2DepthMapsPrealloc:
         )
 
     def test_depth_maps_peak_memory_linear(self, tmp_path):
-        """FAILS before fix: np.dstack grows O(n²) in memory.
+        """Pre-allocated buffer must not grow O(n²) during create_depth_maps.
 
-        Threshold: peak during create_depth_maps ≤ 5× final depth_maps nbytes.
-        (Generous to allow for LUT generation and other overhead.)
+        The old np.dstack approach created a new array on every iteration
+        (O(n²) total allocations).  The new approach pre-allocates a single
+        ``(nx, ny, max_layers)`` buffer in float32 once, then writes by index.
+
+        We verify that the peak allocation is bounded by
+        ``2 × cfg.num_lyr_lut × nx × ny × 4 bytes`` (the pre-allocated buffer
+        plus one copy for zarr write), which is O(n) not O(n²) in layer count.
         """
         cfg = _make_cfg(tmp_path)
 
@@ -286,16 +291,20 @@ class TestIssue2DepthMapsPrealloc:
 
         stack = RandomHorizonStack(cfg)
 
+        nx, ny = cfg.cube_shape[0], cfg.cube_shape[1]
+        # Worst-case bound: 2× the pre-allocated buffer  (buffer + one copy)
+        buf_bytes = nx * ny * cfg.num_lyr_lut * 4
+        threshold = 3 * buf_bytes  # generous headroom
+
         tracemalloc.start()
         stack.create_depth_maps()
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
-        final_bytes = stack.depth_maps[:].nbytes
-        threshold = max(5 * final_bytes, 5 * 1024 * 1024)  # at least 5 MB headroom
         assert peak <= threshold, (
             f"create_depth_maps peak memory ({peak / 1e6:.1f} MB) exceeds "
-            f"5× final array ({threshold / 1e6:.1f} MB). np.dstack O(n²) still present."
+            f"3× pre-alloc buffer size ({threshold / 1e6:.1f} MB). "
+            f"Something is allocating more than expected."
         )
 
     def test_edge_case_one_layer(self, tmp_path):

@@ -110,9 +110,7 @@ class Geomodel:
         -------
         None
         """
-        self.geologic_age[:] = self.create_geologic_age_3d_from_infilled_horizons(
-            self.depth_maps
-        )
+        self.create_geologic_age_3d_from_infilled_horizons(self.depth_maps)
         self.onlap_segments[:] = self.insert_onlap_surfaces()
         # if self.cfg.include_channels:
         #     floodplain_shale, channel_fill, shale_channel_drape, levee, crevasse = self.build_channel_cubes()
@@ -152,7 +150,7 @@ class Geomodel:
             indexing="ij",
         )
 
-    def create_geologic_age_3d_from_infilled_horizons(self, depth_maps, verbose=False):
+    def create_geologic_age_3d_from_infilled_horizons(self, depth_maps, verbose=False, out=None):
         """
         Create geologic age 3d model from infilled horizons.
         --------------------------
@@ -167,20 +165,29 @@ class Geomodel:
             THe depth maps to use to generate the geologic age model.
         verbose : bool
             The level of verbosity in the logs
+        out : zarr.Array, optional
+            Target zarr array to write directly into.  Defaults to
+            ``self.geologic_age``.  Supply ``out=self.faulted_age_volume``
+            when rebuilding the age model after salt insertion.
 
         Returns
         -------
-        returns : age : np.ndarray
-            The geologic age model.
+        None
+            The function writes directly into *out* (or self.geologic_age)
+            inline-by-inline in float32 to avoid materialising the full
+            infilled cube in memory.  No array is returned.
         """
+        if out is None:
+            out = self.geologic_age
+
         if self.cfg.verbose:
             print("\nCreating Geologic Age volume from unfaulted depth maps")
         cube_shape = self.infilled_cube_shape()
         # ensure that first depth_map has zeros at all X,Y locations
         if not np.all(depth_maps[:, :, 0] == 0.0):
-            depth_maps_temp = np.dstack((np.zeros(cube_shape[:2], "float"), depth_maps))
+            depth_maps_temp = np.dstack((np.zeros(cube_shape[:2], "float32"), depth_maps))
         else:
-            depth_maps_temp = depth_maps.copy()
+            depth_maps_temp = depth_maps.astype("float32", copy=False)
 
         if verbose:
             print("\n\n   ... inside create_geologic_age_3D_from_infilled_horizons ")
@@ -193,24 +200,30 @@ class Geomodel:
                 )
             )
 
-        # create geologic age cube
-        age_range = np.linspace(0.0, float(cube_shape[2] - 1), cube_shape[2])
-        age = np.zeros(cube_shape, "float")
-        for i in range(cube_shape[0]):
-            for j in range(cube_shape[1]):
-                index_max_geo_age = np.argmax(
-                    depth_maps_temp[i, j, :].clip(0.0, float(cube_shape[2] - 1))
-                )
-                age[i, j, :] = np.interp(
-                    age_range,
-                    depth_maps_temp[i, j, : int(index_max_geo_age)],
-                    np.arange(index_max_geo_age),
-                )
+        # Build age slab-by-slab (one inline at a time) in float32.
+        # Peak transient memory is O(ny × nz_infill × 4 bytes) per slab,
+        # compared with O(nx × ny × nz_infill × 8 bytes) for the old approach.
+        nx, ny, nz_infill = cube_shape
+        age_range = np.linspace(0.0, float(nz_infill - 1), nz_infill, dtype="float32")
+        for i in range(nx):
+            slab = np.zeros((ny, nz_infill), "float32")  # one inline
+            for j in range(ny):
+                dm_ij = depth_maps_temp[i, j, :].clip(0.0, float(nz_infill - 1))
+                index_max_geo_age = int(np.argmax(dm_ij))
+                if index_max_geo_age > 1:
+                    slab[j, :] = np.interp(
+                        age_range,
+                        depth_maps_temp[i, j, :index_max_geo_age].astype("float32"),
+                        np.arange(index_max_geo_age, dtype="float32"),
+                    )
+                # if index_max_geo_age <= 1: slab[j, :] stays 0  (degenerate trace)
+            # Write every infill_factor-th sample into the output zarr
+            out[i, :, :] = slab[:, :: self.cfg.infill_factor]
 
         if self.cfg.verbose:
-            print(f"    ... age.shape = {age.shape}")
+            print(f"    ... out.shape = {out.shape}")
             print(
-                f"    ... age min/mean/max = {age[:].min()}, {age[:].mean():.1f}, {age[:].max()}"
+                f"    ... age min/mean/max = {out[:].min()}, {out[:].mean():.1f}, {out[:].max()}"
             )
             print(
                 "    ... finished create_geologic_age_3D_from_infilled_horizons ...\n"
@@ -220,7 +233,7 @@ class Geomodel:
             from datagenerator.util import plot_voxels_not_in_regular_layers
 
             plot_xsection(
-                age[:],
+                out[:],
                 depth_maps,
                 cfg=self.cfg,
                 line_num=int(cube_shape[0] / 2),
@@ -231,14 +244,15 @@ class Geomodel:
 
             # Analyse voxels not in regular layers
             plot_voxels_not_in_regular_layers(
-                volume=age[:],
+                volume=out[:],
                 threshold=0.0,
                 cfg=self.cfg,
                 title="Example Trav through 3D model\nhistogram of raw layer values",
                 png_name="QC_plot__histogram_raw_Layers_1.png",
             )
 
-        return self.vertical_anti_alias_filter_simple(age)
+        # Return None — callers must no longer assign the return value.
+        return None
 
     def vertical_anti_alias_filter_simple(self, cube) -> np.ndarray:
         """

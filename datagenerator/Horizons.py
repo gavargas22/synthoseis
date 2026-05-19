@@ -647,6 +647,15 @@ class RandomHorizonStack(Horizons):
             self.cfg.seabed_min_depth / float(self.cfg.digi)
         ) * self.cfg.infill_factor
 
+        # Pre-allocate a fixed-size buffer to avoid O(n²) np.dstack allocations.
+        # cfg.num_lyr_lut = cube_shape[2] * 2 * infill_factor; the loop rarely
+        # exceeds ~600 iterations in practice, but we use num_lyr_lut as an
+        # upper bound to be safe.
+        nx, ny = self.cfg.cube_shape[0], self.cfg.cube_shape[1]
+        max_layers = self.cfg.num_lyr_lut
+        _buf = np.empty((nx, ny, max_layers), dtype="float32")
+        _idx = 0  # number of layers written so far
+
         # Build layers in a loop from deep to shallow until the minimum depth is reached and then break out.
         for i in range(20000):
             # Do the special case for the random_thickness_factor_map for the initial layer (at base)
@@ -680,15 +689,24 @@ class RandomHorizonStack(Horizons):
 
             # replace previous depth map for next iteration
             previous_depth_map = current_depth_map.copy()
-            # save depth map in (top of) 3d array. Resulting order is shallow at top
-            try:
-                depth_maps = np.dstack((current_depth_map, depth_maps))
-            except UnboundLocalError:
-                # There is no stack of horizons yet - write the base.
-                depth_maps = current_depth_map.copy()
+
+            # Write current_depth_map into the pre-allocated buffer.
+            # Horizons are prepended (shallow-first order) via index counting:
+            # After the loop we reverse the filled slice.
+            _buf[:, :, _idx] = current_depth_map.astype("float32")
+            _idx += 1
+
             if self.cfg.verbose:
-                print(f"Layer {i}, depth_maps.shape = {depth_maps.shape}")
+                print(f"Layer {i}, layers so far: {_idx}")
             self.max_layers = i + 1
+
+        # Reverse the filled slice to restore shallowest-first order
+        # (the old np.dstack prepend kept index 0 as the shallowest layer).
+        if _idx == 0:
+            # Edge case: no layers were added — create a minimal single-layer map.
+            depth_maps = np.zeros((nx, ny, 1), dtype="float32")
+        else:
+            depth_maps = _buf[:, :, :_idx][:, :, ::-1].copy()  # copy to own contiguous memory
 
         if self.cfg.verbose:
             print("\n ... finished creating horizon layers ...")
