@@ -693,6 +693,11 @@ class RandomHorizonStack(Horizons):
             # Write current_depth_map into the pre-allocated buffer.
             # Horizons are prepended (shallow-first order) via index counting:
             # After the loop we reverse the filled slice.
+            if _idx >= max_layers:
+                raise RuntimeError(
+                    f"create_depth_maps: exceeded pre-allocated buffer ({max_layers} layers). "
+                    "Increase cfg.num_lyr_lut."
+                )
             _buf[:, :, _idx] = current_depth_map.astype("float32")
             _idx += 1
 

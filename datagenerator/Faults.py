@@ -404,7 +404,7 @@ class Faults(Horizons, Geomodel):
                         input_cube[input_cube != -1.0] += values[input_cube != -1.0]
                         self.faulted_lithology[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
-                        ] = input_cube * 1.0
+                        ] = input_cube.copy()
                         del input_cube
                         del values
 
@@ -418,7 +418,7 @@ class Faults(Horizons, Geomodel):
                         input_cube[input_cube != -1.0] += values[input_cube != -1.0]
                         work_cube_sealed[
                             sublayer_ii, sublayer_jj, sublayer_depth_map_int
-                        ] = input_cube * 1.0
+                        ] = input_cube.copy()
                         del input_cube
                         del values
 
@@ -470,12 +470,25 @@ class Faults(Horizons, Geomodel):
         self.write_cube_to_disk(work_cube_sealed.astype("uint8"), "sealed_label")
         del work_cube_sealed  # no longer needed
 
-        # Issue 4: clip and post-process by loading zarr once per cube.
-        # This keeps only one cube in RAM at a time (vs. 3 simultaneously before).
+        # Sequential clip phase — process one cube at a time to keep peak memory low.
+        # Lithology
         _lith = np.clip(self.faulted_lithology[:], -1.0, 1.0)
-        _ng = np.clip(self.faulted_net_to_gross[:], 0, 1.0)
+        self.faulted_lithology[:] = _lith
+        del _lith
+
+        # Net to gross
+        _ng = np.clip(self.faulted_net_to_gross[:], 0.0, 1.0)
+        self.faulted_net_to_gross[:] = _ng
+        del _ng
+
+        # Depth (convert samples → units)
         _depth = np.clip(self.faulted_depth[:], a_min=0, a_max=None)
         _depth *= self.cfg.digi
+        self.faulted_depth[:] = _depth
+        del _depth
+
+        # Reload lith for salt handling, QC plots, and downstream computations
+        _lith = self.faulted_lithology[:]
 
         if self.cfg.include_salt:
             # Update age model after horizons have been modified by salt inclusion
@@ -511,6 +524,7 @@ class Faults(Horizons, Geomodel):
                 cfg=self.cfg,
                 cmap=lith_cmap,
             )
+            _depth = self.faulted_depth[:]
             plot_xsection(
                 _depth,
                 self.faulted_depth_maps,
@@ -520,10 +534,8 @@ class Faults(Horizons, Geomodel):
                 cfg=self.cfg,
                 cmap="cubehelix_r",
             )
-        # Write clipped cubes back to zarr stores
+        # Write back lith (may have been modified by salt handling above)
         self.faulted_lithology[:] = _lith
-        self.faulted_net_to_gross[:] = _ng
-        self.faulted_depth[:] = _depth
 
         # Write the % sand in model to logfile
         sand_fraction = (
@@ -539,7 +551,7 @@ class Faults(Horizons, Geomodel):
 
         # Save out reservoir volume for XAI-NBDT
         reservoir = (_lith == 1) * 1.0
-        del _lith, _ng, _depth
+        del _lith
         reservoir_dilated = binary_dilation(reservoir)
         del reservoir
         self.reservoir[:] = reservoir_dilated
