@@ -120,8 +120,9 @@ async def launch_run(run_id: str, config_json_path: str, repo_root: Path) -> Non
     import json as _json
     # Derive the expected output folder from the config so we can persist it
     # to runs.db once the run completes (needed by GET /api/runs/{id}/manifest).
+    _project_folder = None
     try:
-        _cfg = _json.loads(pathlib.Path(config_json_path).read_text())
+        _cfg = _json.loads(Path(config_json_path).read_text())
         _project_folder = _cfg.get("project_folder", "")
         _run_id_suffix = f"_{run_id}" if run_id else ""
         # Parameters.py names the subfolder seismic__{datestamp}_{runid};
@@ -162,11 +163,11 @@ async def launch_run(run_id: str, config_json_path: str, repo_root: Path) -> Non
     resolved_folder = _output_folder  # fallback to project root
     if _project_folder and run_id:
         import glob as _glob
-        pattern = str(pathlib.Path(_project_folder) / f"seismic__*_{run_id}")
+        pattern = str(Path(_project_folder) / f"seismic__*_{run_id}")
         matches = _glob.glob(pattern)
         if matches:
             # Pick the most recently modified match in case of duplicates
-            resolved_folder = max(matches, key=lambda p: pathlib.Path(p).stat().st_mtime)
+            resolved_folder = max(matches, key=lambda p: Path(p).stat().st_mtime)
 
     _update_status(run_id, final_status, output_folder=resolved_folder)
 
