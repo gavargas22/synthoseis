@@ -17,9 +17,20 @@ Read our documentation: https://sede-open.github.io/synthoseis/datagenerator.htm
 
 ## Installation
 
-We provide an [environment.yml](environment.yml) to install the required packages for synthoseis.
+Install with [uv](https://docs.astral.sh/uv/) (recommended). Dependencies are declared in `pyproject.toml` / `uv.lock` — there is no `environment.yml`.
 
-> **Python version:** Synthoseis requires Python 3.10 or later. Use whichever version and environment manager you prefer (conda, pyenv, uv, system Python, etc.).
+```bash
+# Install uv if needed: https://docs.astral.sh/uv/getting-started/installation/
+uv sync
+```
+
+For development (includes pytest):
+
+```bash
+uv sync --group dev
+```
+
+> **Python version:** Synthoseis requires **Python 3.11 or later** (`requires-python` in `pyproject.toml`).
 
 ## Resources
 
@@ -27,9 +38,9 @@ We provide an [environment.yml](environment.yml) to install the required package
 
 Run a model with parameters provided in the example config file
 
-```
-conda activate synthoseis
-python main.py --config config/example.json --num_runs 1 --run_id seismic_example
+```bash
+uv sync
+uv run python main.py --config config/example.json --num_runs 1 --run_id seismic_example
 ```
 
 ### Interactive Dashboard
