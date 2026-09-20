@@ -1,4 +1,5 @@
-//! Core: config, RNG, job partition, single-worker runner, **parity harness**.
+//! Core: config, RNG, job partition, single-worker runner, **parity harness**,
+//! and **e2e tiny-cube pipeline** (MDIO → geo → closures → RPM → seismic → MDIO).
 //!
 //! Algorithm ports (geo / seismic / RPM) live in sibling crates.
 //! Parity compares **label volumes** and **angle-stack volumes** — not bit-identical
@@ -68,7 +69,7 @@ impl JobPartition {
     }
 }
 
-/// Placeholder result from a single-worker run (no full pipeline yet).
+/// Summary from a single-worker run (placeholder or e2e).
 #[derive(Debug, Clone)]
 pub struct RunSummary {
     pub seed: u64,
@@ -98,9 +99,29 @@ impl SingleWorkerRunner {
             status: "ok-placeholder",
         }
     }
+
+    /// Run the tiny-cube e2e pipeline (CPU, single worker).
+    ///
+    /// When `store` is `Some`, writes labels + angle stack to MDIO and checks
+    /// round-trip parity.
+    pub fn run_e2e(
+        &self,
+        store: Option<std::path::PathBuf>,
+    ) -> Result<pipeline::E2eReport, String> {
+        // Tiny-cube floor: bump sub-8³ defaults (CLI smoke uses 8³).
+        let cfg = pipeline::E2eConfig {
+            seed: self.config.seed,
+            inline_count: self.config.inline_count.max(pipeline::TINY_DIM),
+            crossline_count: self.config.crossline_count.max(pipeline::TINY_DIM),
+            samples: self.config.samples.max(pipeline::TINY_DIM),
+            store_path: store,
+        };
+        pipeline::run_e2e(&cfg)
+    }
 }
 
 pub mod parity;
+pub mod pipeline;
 
 #[cfg(test)]
 mod tests {
@@ -136,6 +157,23 @@ mod tests {
         assert!((parity::label_agreement(&labels, &labels) - 1.0).abs() < 1e-12);
         assert!(parity::mean_absolute_error(&angles, &angles) == 0.0);
         assert!(parity::max_abs_diff(&angles, &angles) == 0.0);
+    }
+
+    #[test]
+    fn runner_e2e_tiny_self_parity() {
+        let cfg = RunConfig {
+            seed: 42,
+            workers: 1,
+            inline_count: 8,
+            crossline_count: 8,
+            samples: 8,
+        };
+        let part = JobPartition::single_worker(&cfg);
+        let report = SingleWorkerRunner::new(cfg, part)
+            .run_e2e(None)
+            .expect("e2e");
+        assert_eq!(report.status, "ok-e2e");
+        assert!(report.parity.passes_defaults());
     }
 
     #[test]
