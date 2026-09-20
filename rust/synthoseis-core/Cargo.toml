@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Config, RNG, job partition, parity harness, and single-worker e2e pipeline"
+description = "Config, RNG, multi-worker job partition, parity harness, and e2e pipeline"
 
 [dependencies]
 rand.workspace = true
