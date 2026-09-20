@@ -6,8 +6,10 @@
 //! `metadata/` + `data/`, `live_mask`, and `chunked_012` (uncompressed LE f32).
 //! We emit Zarr v2 JSON + raw chunks directly (`zarrs` is V3-first / high MSRV).
 //!
-//! Known gaps vs full mdio-python: no Blosc/ZFP, no trace headers, no consolidated
-//! `.zmetadata`, no cloud backends. Bit-identical Python open is a stretch goal.
+//! Interop: Python `mdio` (multidimio) opens this hierarchy via `MDIOReader` (0.9.x).
+//! We write consolidated `.zmetadata` and a stub `chunked_012_trace_headers` array so
+//! open succeeds. Known gaps: no Blosc/ZFP, headers are stub (not SEG-Y-faithful),
+//! no cloud backends. mdio 1.x `open_mdio` (xarray-flat) is a later slice.
 
 
 mod zarr;
@@ -177,6 +179,12 @@ mod tests {
             .join(PRIMARY_VARIABLE)
             .join(".zarray")
             .is_file());
+        assert!(root.join(".zmetadata").is_file());
+        assert!(root
+            .join("metadata")
+            .join(format!("{PRIMARY_VARIABLE}_trace_headers"))
+            .join(".zarray")
+            .is_file());
 
         let attrs: Value = read_json(root.join(".zattrs")).unwrap();
         assert_eq!(attrs["api_version"], API_VERSION);
@@ -258,4 +266,3 @@ mod tests {
         assert_eq!(store.read_live_mask().unwrap().iter().filter(|&&b| b == 1).count(), 16);
     }
 }
-
