@@ -1,6 +1,7 @@
 //! MDIO store create / open / read / write.
 mod create;
-mod rw;
+mod write;
+mod read;
 
 use crate::CreateConfig;
 use std::path::{Path, PathBuf};
@@ -25,4 +26,4 @@ impl MdioStore {
     }
 }
 
-pub use rw::DeliverableWriter;
+pub use write::DeliverableWriter;
