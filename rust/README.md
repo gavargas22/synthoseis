@@ -13,8 +13,8 @@ The Python tree at the repository root stays intact; this workspace lives under 
 | `synthoseis-py` | **maturin / PyO3** Python extension (`synthoseis_mdio`) over `synthoseis-io` |
 | `synthoseis-geo` | Geology / horizons kernels (plane fit, thickness clip, label fill) |
 | `synthoseis-closures` | Closure / trap kernels (label sizes, flood-fill, fluid masks) |
-| `synthoseis-seismic` | Future seismic modeling port |
-| `synthoseis-rpm` | Future rock-physics model port |
+| `synthoseis-seismic` | Seismic kernels (Zoeppritz RFC, wavelets, SNR) |
+| `synthoseis-rpm` | RPM depth-trend kernels (example + Tagilsk) |
 | `synthoseis-gpu` | Future GPU acceleration port |
 
 ## I/O: honest MDIO (Zarr v2)
@@ -118,11 +118,21 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
   `closure_size_filter_sizes`, `parse_closure_codes`, `assign_fluid_types`,
   `get_top_of_closure`, `bbox_for_label_and_fault`, `flood_fill_heap_2d`
   — golden fixtures in `tests/fixtures/closure_cubes_8.json`
+- First seismic kernels in `synthoseis-seismic` (from
+  `datagenerator/zoeppritz_kernel.py`, `wavelets.py`, `Seismic.py`):
+  `zoeppritz_pp`, `compute_rfc_volumes`, `ricker`, `hanflat`,
+  `convolve_same_1d`, `apply_wavelet_traces`, `snr_std_ratio`,
+  `hilterman_noise_weights` — goldens in `tests/fixtures/seismic_kernels.json`;
+  angle-stack MAE wired through `synthoseis-core::parity`
+- First RPM depth-trend kernels in `synthoseis-rpm` (from
+  `rockphysics/rpm_example.py` + `rpm_tagilsk_trends.py`):
+  `RpmExampleTrends::*`, `tagilsk_shale_*` / `tagilsk_brine_sand_*` /
+  `tagilsk_gas_sand_*`, `polyval` — goldens in `tests/fixtures/rpm_trends.json`
 
 **Still out of scope / next**
 
-- Seismic convolution / Zoeppritz / bandpass / noise (`synthoseis-seismic`)
-- RPM depth trends (`synthoseis-rpm`)
+- Full Butterworth bandpass / lateral filter / RMO / end-to-end SeismicVolume
+- Full Tagilsk oil-sand polys + EndMemberMixing / Backus moduli
 - Full geology stack / faults / GPU
 - Replacing Parameters Python zarr store end-to-end
 - Multi-worker / cloud job partition

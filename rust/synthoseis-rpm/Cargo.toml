@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Future rock-physics model (RPM) port from the Python rockphysics package."
+description = "Rock-physics model (RPM) depth-trend ports from the Python rockphysics package."
 
 [dependencies]
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+synthoseis-core = { workspace = true }
