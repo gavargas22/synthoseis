@@ -31,9 +31,18 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "maturin>=1.7,<2.0",
 ]
 
 [tool.pytest.ini_options]
 markers = [
     "slow: marks tests as slow end-to-end integration tests (deselect with '-m not slow')",
 ]
+
+# Rust-backed MDIO extension (maturin / PyO3). Not the default build-system so
+# `uv sync` stays pure-Python for existing CI; build with:
+#   maturin develop --manifest-path rust/synthoseis-py/Cargo.toml
+# Preferred Python entry for Rust MDIO; see rust/synthoseis-py/README.md.
+[tool.maturin]
+manifest-path = "rust/synthoseis-py/Cargo.toml"
+module-name = "synthoseis_mdio"
