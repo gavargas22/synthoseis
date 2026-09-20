@@ -1,6 +1,8 @@
-//! Core stubs: config, RNG, job partition, single-worker runner, parity harness placeholder.
+//! Core: config, RNG, job partition, single-worker runner, **parity harness**.
 //!
-//! Algorithm ports (geo / seismic / RPM) live in sibling crates and are not implemented here.
+//! Algorithm ports (geo / seismic / RPM) live in sibling crates.
+//! Parity compares **label volumes** and **angle-stack volumes** — not bit-identical
+//! full seismic.
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -66,7 +68,7 @@ impl JobPartition {
     }
 }
 
-/// Placeholder result from a single-worker run (no algorithms yet).
+/// Placeholder result from a single-worker run (no full pipeline yet).
 #[derive(Debug, Clone)]
 pub struct RunSummary {
     pub seed: u64,
@@ -98,31 +100,7 @@ impl SingleWorkerRunner {
     }
 }
 
-/// Fixed-seed golden comparison **placeholder**.
-///
-/// Python baseline vs Rust MAE/IoU will be wired in a later PR. This stub only
-/// checks that a fixed seed produces a stable deterministic float sequence so
-/// CI has a parity-harness hook without claiming numeric product parity.
-pub mod parity {
-    use super::SeededRng;
-
-    pub const GOLDEN_SEED: u64 = 0x5EED_CAFE;
-
-    /// Placeholder golden values for the first three draws of [`GOLDEN_SEED`].
-    /// Recomputed once and locked for the skeleton; replace with real volume metrics later.
-    pub fn golden_stub_draws() -> [f64; 3] {
-        let mut rng = SeededRng::from_seed(GOLDEN_SEED);
-        [rng.next_f64(), rng.next_f64(), rng.next_f64()]
-    }
-
-    /// Compare stub draws within absolute tolerance. Not MAE/IoU vs Python.
-    pub fn compare_stub(actual: &[f64; 3], expected: &[f64; 3], atol: f64) -> bool {
-        actual
-            .iter()
-            .zip(expected.iter())
-            .all(|(a, e)| (a - e).abs() <= atol)
-    }
-}
+pub mod parity;
 
 #[cfg(test)]
 mod tests {
@@ -138,18 +116,6 @@ mod tests {
     }
 
     #[test]
-    fn parity_harness_stub_is_deterministic() {
-        let a = parity::golden_stub_draws();
-        let b = parity::golden_stub_draws();
-        assert!(parity::compare_stub(&a, &b, 0.0));
-        // Document: Python baseline MAE/IoU comparison is deferred.
-        assert!(
-            parity::compare_stub(&a, &parity::golden_stub_draws(), 1e-12),
-            "fixed-seed stub must be bit-stable across calls"
-        );
-    }
-
-    #[test]
     fn runner_placeholder() {
         let cfg = RunConfig {
             seed: 7,
@@ -160,5 +126,43 @@ mod tests {
         let summary = SingleWorkerRunner::new(cfg, part).run_placeholder();
         assert_eq!(summary.status, "ok-placeholder");
         assert_eq!(summary.workers, 1);
+    }
+
+    #[test]
+    fn parity_metrics_identity() {
+        let labels = [0u8, 1, 1, 2, 255];
+        let angles = [0.0f32, 1.0, -0.5];
+        assert!((parity::macro_label_iou(&labels, &labels, 255) - 1.0).abs() < 1e-12);
+        assert!((parity::label_agreement(&labels, &labels) - 1.0).abs() < 1e-12);
+        assert!(parity::mean_absolute_error(&angles, &angles) == 0.0);
+        assert!(parity::max_abs_diff(&angles, &angles) == 0.0);
+    }
+
+    #[test]
+    fn parity_harness_fixture_near_parity() {
+        let (lab_ref, lab_pert, ang_ref, ang_pert) =
+            parity::load_parity_cubes_8().expect("fixture");
+        assert_eq!(lab_ref.len(), 8 * 8 * 8);
+        assert_eq!(ang_ref.len(), 8 * 8 * 8);
+
+        // Self-parity must be exact.
+        let self_report = parity::compare_volumes(&lab_ref, &lab_ref, &ang_ref, &ang_ref);
+        assert!(self_report.passes_defaults());
+        assert!((self_report.label_iou - 1.0).abs() < 1e-12);
+        assert!(self_report.angle_mae == 0.0);
+
+        // Perturbed fixture stays within documented near-parity tolerances.
+        let report = parity::compare_volumes(&lab_ref, &lab_pert, &ang_ref, &ang_pert);
+        assert!(
+            report.passes_defaults(),
+            "near-parity failed: {report:?} (tolerances iou>={}, agr>={}, mae<={}, maxabs<={})",
+            parity::LABEL_IOU_MIN,
+            parity::LABEL_AGREEMENT_MIN,
+            parity::ANGLE_MAE_MAX,
+            parity::ANGLE_MAX_ABS_MAX
+        );
+        // Ensure metrics are real comparisons, not stubs.
+        assert!(report.label_agreement < 1.0);
+        assert!(report.angle_mae > 0.0);
     }
 }
