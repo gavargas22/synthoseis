@@ -41,7 +41,15 @@ struct ClipBlock {
 
 #[derive(Debug, Deserialize)]
 struct LabelBlock {
-    reference: Vec<u8>,
+    reference_rle: Vec<[u8; 2]>,
+}
+
+fn expand_rle(pairs: &[[u8; 2]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for [value, count] in pairs {
+        out.extend(std::iter::repeat(*value).take(*count as usize));
+    }
+    out
 }
 
 fn load_fixture() -> FixtureFile {
@@ -110,12 +118,13 @@ fn fill_layer_labels_matches_python_and_parity_iou() {
     let mut maps = fix.horizon_clip.input.clone();
     enforce_nonnegative_thicknesses(&mut maps, fix.horizon_clip.shape);
     let labels = fill_layer_labels(&maps, fix.horizon_clip.shape, 8);
-    assert_eq!(labels, fix.labels.reference);
+    let expected = expand_rle(&fix.labels.reference_rle);
+    assert_eq!(labels, expected);
 
     // Wire geo labels into the core parity harness (self IoU = 1).
     let report = parity::compare_volumes(
         &labels,
-        &fix.labels.reference,
+        &expected,
         &[0.0f32; 1],
         &[0.0f32; 1],
     );
