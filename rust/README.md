@@ -12,7 +12,7 @@ The Python tree at the repository root stays intact; this workspace lives under 
 | `synthoseis-io` | **Honest MDIO** (Zarr v2) create / write / read |
 | `synthoseis-py` | **maturin / PyO3** Python extension (`synthoseis_mdio`) over `synthoseis-io` |
 | `synthoseis-geo` | Geology / horizons kernels (plane fit, thickness clip, label fill) |
-| `synthoseis-closures` | Future closure / trap geometry port |
+| `synthoseis-closures` | Closure / trap kernels (label sizes, flood-fill, fluid masks) |
 | `synthoseis-seismic` | Future seismic modeling port |
 | `synthoseis-rpm` | Future rock-physics model port |
 | `synthoseis-gpu` | Future GPU acceleration port |
@@ -106,16 +106,24 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 
 ## Next ports
 
-**Landed in this slice**
+**Landed**
 
 - Parity harness wired (label IoU / agreement + angle-stack MAE / max-abs)
 - First geo kernels in `synthoseis-geo`: `fit_plane_lsq`, `eval_plane`,
   `rotate_point`, `enforce_nonnegative_thicknesses` (from
   `datagenerator/Horizons.py`), plus `fill_layer_labels` feeding the harness
+- First closure kernels in `synthoseis-closures` (from
+  `datagenerator/_closures_vectorised.py` + `Closures.py`):
+  `bincount_label_sizes`, `relabel_consecutive`, `filter_labels_by_min_voxels`,
+  `closure_size_filter_sizes`, `parse_closure_codes`, `assign_fluid_types`,
+  `get_top_of_closure`, `bbox_for_label_and_fault`, `flood_fill_heap_2d`
+  — golden fixtures in `tests/fixtures/closure_cubes_8.json`
 
-**Still out of scope**
+**Still out of scope / next**
 
-- Full geology stack / faults / closures / seismic convolution / RPM / GPU
+- Seismic convolution / Zoeppritz / bandpass / noise (`synthoseis-seismic`)
+- RPM depth trends (`synthoseis-rpm`)
+- Full geology stack / faults / GPU
 - Replacing Parameters Python zarr store end-to-end
 - Multi-worker / cloud job partition
 - Publishing wheels
