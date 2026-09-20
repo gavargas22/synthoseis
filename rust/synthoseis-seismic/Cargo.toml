@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Future seismic modeling / wavelet / convolution port."
+description = "Seismic modeling ports: Zoeppritz RFC, wavelets, convolution, SNR helpers."
 
 [dependencies]
+num-complex.workspace = true
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+synthoseis-core = { workspace = true }
