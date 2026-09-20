@@ -1,9 +1,20 @@
-//! Future geology / horizons / structural model port from the Python datagenerator.
+//! Geology / horizons ports from `datagenerator/Horizons.py`.
 //!
-//! This crate is an empty library stub for the Rust rewrite skeleton.
-//! Algorithm ports land in later PRs; keep the Python tree as source of truth until then.
+//! # First landed kernels
+//! - [`fit_plane_lsq`] / [`eval_plane`] — dipping-plane helpers used for layer thickness
+//! - [`rotate_point`] — 2-D rotation about origin
+//! - [`enforce_nonnegative_thicknesses`] — negative-thickness clip from
+//!   `Horizons.insert_feature_into_horizon_stack`
+//! - [`fill_layer_labels`] — discrete labels between successive horizon depths
+//!
+//! The Python generator remains the reference baseline; these kernels are covered by
+//! golden fixtures in `tests/fixtures/parity_cubes_8.json`.
 
-#![allow(dead_code)]
+mod kernels;
+#[cfg(test)]
+#[path = "tests_kernels.rs"]
+mod tests_kernels;
 
-/// Placeholder marker so the crate is non-empty and documents intent.
-pub const CRATE_STUB: &str = "synthoseis-geo";
+pub use kernels::{
+    enforce_nonnegative_thicknesses, eval_plane, fill_layer_labels, fit_plane_lsq, rotate_point,
+};

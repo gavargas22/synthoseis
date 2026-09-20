@@ -11,7 +11,7 @@ The Python tree at the repository root stays intact; this workspace lives under 
 | `synthoseis-core` | Config, RNG, job partition, single-worker path stubs |
 | `synthoseis-io` | **Honest MDIO** (Zarr v2) create / write / read |
 | `synthoseis-py` | **maturin / PyO3** Python extension (`synthoseis_mdio`) over `synthoseis-io` |
-| `synthoseis-geo` | Future geology / horizons port |
+| `synthoseis-geo` | Geology / horizons kernels (plane fit, thickness clip, label fill) |
 | `synthoseis-closures` | Future closure / trap geometry port |
 | `synthoseis-seismic` | Future seismic modeling port |
 | `synthoseis-rpm` | Future rock-physics model port |
@@ -65,8 +65,17 @@ data_vars — that flattening is a later slice.
 
 ## Parity harness
 
-`synthoseis-core` includes a fixed-seed golden comparison **placeholder**.
-Python baseline vs Rust MAE/IoU metrics come later — do not treat the stub as numeric parity.
+`synthoseis-core::parity` compares **label volumes** and **angle-stack volumes**
+(not bit-identical full seismic):
+
+| Volume | Metrics | Default tolerances |
+|--------|---------|-------------------|
+| Labels (u8) | macro IoU (skip unset=255), per-voxel agreement | IoU ≥ 0.99, agreement ≥ 0.99 |
+| Angle stacks (f32) | MAE, max-abs | MAE ≤ 1e-3, max-abs ≤ 5e-3 |
+
+Fixed-seed **8³** fixtures: `tests/fixtures/parity_cubes_8.json`
+(labels RLE-compressed; angle stacks synthesized from `0.1*i+0.05*j+0.02*k`).
+Regenerate with `python tests/fixtures/generate_parity_cubes.py`.
 
 ## Single-worker path
 
@@ -95,8 +104,18 @@ pytest tests/test_mdio_bindings.py -q
 CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/` on push/PR.
 `.github/workflows/maturin-bindings.yml` builds the extension and runs the binding pytest.
 
-## Next ports (out of scope here)
+## Next ports
 
-- Geology / closures / seismic / RPM algorithms
-- Python MDIOReader parity harness wiring
+**Landed in this slice**
+
+- Parity harness wired (label IoU / agreement + angle-stack MAE / max-abs)
+- First geo kernels in `synthoseis-geo`: `fit_plane_lsq`, `eval_plane`,
+  `rotate_point`, `enforce_nonnegative_thicknesses` (from
+  `datagenerator/Horizons.py`), plus `fill_layer_labels` feeding the harness
+
+**Still out of scope**
+
+- Full geology stack / faults / closures / seismic convolution / RPM / GPU
+- Replacing Parameters Python zarr store end-to-end
 - Multi-worker / cloud job partition
+- Publishing wheels

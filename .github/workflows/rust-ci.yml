@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "rust/**"
+      - "tests/fixtures/**"
       - ".github/workflows/rust-ci.yml"
   pull_request:
     paths:
       - "rust/**"
+      - "tests/fixtures/**"
       - ".github/workflows/rust-ci.yml"
 
 jobs:

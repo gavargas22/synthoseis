@@ -5,11 +5,12 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Config, RNG, job partition, and parity harness stubs"
+description = "Config, RNG, job partition, and parity harness (labels IoU / angle-stack MAE)"
 
 [dependencies]
 rand.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

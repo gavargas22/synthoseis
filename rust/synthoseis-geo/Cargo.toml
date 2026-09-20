@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Future geology / horizons / structural model port from the Python datagenerator."
+description = "Geology / horizons ports from the Python datagenerator (first kernels)."
 
 [dependencies]
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+synthoseis-core = { workspace = true }
