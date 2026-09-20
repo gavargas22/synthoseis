@@ -8,7 +8,7 @@ The Python tree at the repository root stays intact; this workspace lives under 
 | Crate | Role |
 |-------|------|
 | `synthoseis` | CLI binary (`synthoseis --help`, `synthoseis run`) |
-| `synthoseis-core` | Config, RNG, job partition, single-worker path stubs |
+| `synthoseis-core` | Config, RNG, job partition, parity harness, **e2e single-worker pipeline** |
 | `synthoseis-io` | **Honest MDIO** (Zarr v2) create / write / read |
 | `synthoseis-py` | **maturin / PyO3** Python extension (`synthoseis_mdio`) over `synthoseis-io` |
 | `synthoseis-geo` | Geology / horizons kernels (plane fit, thickness clip, label fill) |
@@ -41,6 +41,7 @@ Public API (see `synthoseis-io`):
 
 - `MdioStore::create_empty(path, &CreateConfig)` — empty MDIO hierarchy (dims / dtype float32 / chunks)
 - `MdioStore::write_volume` / `write_chunk` — float32 samples; volume also updates `live_mask`
+- `MdioStore::write_labels_u8` / `read_labels_u8` — uint8 label deliverable under `data/labels`
 - `MdioStore::read_volume` / `read_live_mask` / `open` — round-trip
 
 **Zarr v2 vs v3 / `zarrs`:** mdio-python commonly writes Zarr **v2**. We emit v2 JSON + raw
@@ -77,9 +78,27 @@ Fixed-seed **8³** fixtures: `tests/fixtures/parity_cubes_8.json`
 (labels RLE-compressed; angle stacks synthesized from `0.1*i+0.05*j+0.02*k`).
 Regenerate with `python tests/fixtures/generate_parity_cubes.py`.
 
-## Single-worker path
+## Single-worker e2e path
 
-CLI / `synthoseis-core` stubs a **one local worker** run path. No cloud orchestration yet.
+**Landed:** one local worker runs a **tiny 8³ cube** end-to-end:
+
+```text
+MDIO create → geo (horizons/labels) → closures (relabel/filter)
+  → RPM (elastic depth trends) → seismic (Zoeppritz + Ricker)
+  → MDIO write (data/chunked_012 = angle stack, data/labels = u8)
+  → parity (second deterministic pass + MDIO round-trip)
+```
+
+Parity = **labels + angle stacks** (IoU / agreement / MAE / max-abs), not bit-identical
+full seismic. CPU only — **no** GPU / multi-worker / cloud yet.
+
+```bash
+cd rust
+cargo run -p synthoseis -- run --e2e --store /tmp/e2e.mdio
+```
+
+`synthoseis-core::pipeline::{generate_tiny_cube, run_e2e}` is the library entry;
+CLI `--e2e` is the CI-friendly smoke.
 
 ## Develop
 
@@ -89,6 +108,7 @@ cargo check
 cargo test
 cargo run -p synthoseis -- --help
 cargo run -p synthoseis -- run --store /tmp/smoke.mdio
+cargo run -p synthoseis -- run --e2e --store /tmp/e2e.mdio
 ```
 
 ### Python extension (maturin)
@@ -129,11 +149,16 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
   `RpmExampleTrends::*`, `tagilsk_shale_*` / `tagilsk_brine_sand_*` /
   `tagilsk_gas_sand_*`, `polyval` — goldens in `tests/fixtures/rpm_trends.json`
 
+**Landed (e2e)**
+
+- Single-worker tiny-cube wiring: MDIO → geo → closures → RPM → seismic → MDIO
+  with parity harness checks (`synthoseis run --e2e`)
+
 **Still out of scope / next**
 
 - Full Butterworth bandpass / lateral filter / RMO / end-to-end SeismicVolume
 - Full Tagilsk oil-sand polys + EndMemberMixing / Backus moduli
-- Full geology stack / faults / GPU
-- Replacing Parameters Python zarr store end-to-end
-- Multi-worker / cloud job partition
+- Full geology stack / faults / **GPU**
+- Replacing Parameters Python zarr store / dropping the Python generator
+- **Multi-worker / cloud** job partition
 - Publishing wheels
