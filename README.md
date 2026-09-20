@@ -59,7 +59,127 @@ uv run python main.py --config config/example.json --num_runs 1 --run_id seismic
 
 ### Interactive Dashboard
 
-See repository docs / `scripts/dev.sh` for the FastAPI + Vite dashboard.
+Synthoseis ships with an interactive web dashboard that lets you configure and launch generation runs, monitor progress in real time, and explore outputs.
+
+#### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) — Python package/project manager  
+- [Node.js](https://nodejs.org) (includes `npm`) — required for the web frontend
+
+#### Start the dashboard
+
+From the repository root run the single dev-launch script:
+
+```bash
+./scripts/dev.sh
+```
+
+This starts both services in parallel and shuts them both down cleanly on `Ctrl-C`:
+
+| Service | URL |
+|---------|-----|
+| REST API (FastAPI / uvicorn) | http://localhost:8000 |
+| Web app (Vite / React) | http://localhost:5173 |
+
+On first run `dev.sh` will automatically install the webapp's Node dependencies if `webapp/node_modules` is not present.
+
+#### What you can do in the dashboard
+
+- Fill in a generation config via a guided form (no manual JSON editing required)
+- Kick off one or more generation runs and watch live log output
+- Browse completed models and QC images directly in the browser
+
+### Overview of workflow
+
+```
+Load user-parameters from config file
+Build initial horizon at base and deposit layers of random thickness on top until some minimum depth is reached
+Choose facies for each layer
+Convert stack of horizons into a geologic age model
+Generate faults and apply to age model
+Identify closures using flood-filling algorithm
+Fill closures randomly with fluids
+Calculate elastic rock properties
+Calculate reflection coefficients for each required incident angle
+Apply random noise
+Convolve using Butterworth bandpass filter to generate bandlimited seismic reflectivity
+Apply geophysical augmentation (such as lateral smoothing, trace integration, amplitude balancing, RMO)
+```
+
+### User parameters
+
+An example user-parameter json format file is provided in the config folder, and is used to set parameters for generating a batch of training data.
+
+See `config/example.json` for the full parameter set (cube_shape, faults, closures, bandwidth, rock-physics project, QC flags, etc.).
+
+### Rock properties
+
+An example rock property model is provided in [rpm_example.py](rockphysics/rpm_example.py). Add new models under `rockphysics/` and point `project` in the config at the module name.
+
+## Examples Gallery
+
+### Geologic Age
+
+<table>
+<tr>
+  <td><img src="img/geologic_age_01.png" width=300></td>
+  <td><img src="img/geologic_age_02.png" width=300></td>
+  <td><img src="img/geologic_age_03.png" width=300></td>
+</tr>
+</table>
+
+### Basin Floor Fans
+
+<table>
+<tr>
+  <td><img src="img/fan_01.png" width=300></td>
+  <td><img src="img/fan_02.png" width=300></td>
+  <td><img src="img/fan_03.png" width=300></td>
+</tr>
+</table>
+
+### Salt Bodies
+
+Cross-section through example salt bodies, coloured by lithology, where shale=0, sand=1, salt=2
+
+<table>
+<tr>
+  <td><img src="img/salt_01.png" width=300></td>
+  <td><img src="img/salt_02.png" width=300></td>
+  <td><img src="img/salt_03.png" width=300></td>
+</tr>
+</table>
+
+### Faulting Styles
+
+Faulting style is chosen from self branching, stair case, horst graben or relay ramp (left to right).
+
+<table><tr>
+  <td><img src="img/fault_self_branching_01.png" width=300></td>
+  <td><img src="img/fault_stair_case_01.png" width=300></td>
+  <td><img src="img/fault_horst_graben_01.png" width=300></td>
+  <td><img src="img/fault_relay_ramp_01.png" width=300></td>
+</tr></table>
+
+### Closures
+
+<table>
+<tr>
+  <td><img src="img/closures_01.png" width=300></td>
+  <td><img src="img/closures_02.png" width=300></td>
+  <td><img src="img/closures_03.png" width=300></td>
+</tr>
+</table>
+
+### Seismic Data
+
+<table>
+<tr>
+  <td><img src="img/seismic_01.png" width=300></td>
+  <td><img src="img/seismic_02.png" width=300></td>
+  <td><img src="img/seismic_03.png" width=300></td>
+</tr>
+</table>
 
 ## Contributing
 
