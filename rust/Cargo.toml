@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "synthoseis",
+    "synthoseis-core",
+    "synthoseis-io",
+    "synthoseis-geo",
+    "synthoseis-closures",
+    "synthoseis-seismic",
+    "synthoseis-rpm",
+    "synthoseis-gpu",
+]
+default-members = ["synthoseis"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/gavargas22/synthoseis"
+rust-version = "1.75"
+
+[workspace.dependencies]
+synthoseis-core = { path = "synthoseis-core" }
+synthoseis-io = { path = "synthoseis-io" }
+synthoseis-geo = { path = "synthoseis-geo" }
+synthoseis-closures = { path = "synthoseis-closures" }
+synthoseis-seismic = { path = "synthoseis-seismic" }
+synthoseis-rpm = { path = "synthoseis-rpm" }
+synthoseis-gpu = { path = "synthoseis-gpu" }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rand = "0.8"
+tempfile = "3"
