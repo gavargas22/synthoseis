@@ -1,30 +1,24 @@
-//! MDIO-only I/O stubs for the Rust rewrite.
+//! Honest MDIO working-store I/O (Zarr v2 hierarchy).
 //!
-//! # Why not crates.io `mdio`?
-//! The `mdio` crate is an Ethernet PHY driver, unrelated to seismic MDIO
-//! ([mdio.dev](https://mdio.dev)), which is a Zarr-based volume format.
+//! There is no seismic MDIO crate on crates.io (`mdio` is Ethernet PHY).
+//! MDIO ([mdio.dev](https://mdio.dev) / mdio-python) is Zarr-backed.
+//! This crate writes **Zarr v2** matching mdio-python `create_empty`:
+//! `metadata/` + `data/`, `live_mask`, and `chunked_012` (uncompressed LE f32).
+//! We emit Zarr v2 JSON + raw chunks directly (`zarrs` is V3-first / high MSRV).
 //!
-//! # Smoke store
-//! This crate writes a **minimal Zarr v2-like** on-disk layout that captures the
-//! *intent* of an MDIO working store: chunked array data plus JSON metadata
-//! attributes (`dims`, `digi`, `seed`, `units`). Full MDIO / Python interop and
-//! a production Zarr crate (`zarrs` or similar) are follow-ups.
-//!
-//! Layout created under `<root>/`:
-//! ```text
-//! .zgroup
-//! .zattrs                 # digi, seed, units, dims
-//! volume/
-//!   .zarray               # shape, chunks, dtype, order
-//!   0.0.0                 # raw little-endian f32 chunk
-//! ```
+//! Known gaps vs full mdio-python: no Blosc/ZFP, no trace headers, no consolidated
+//! `.zmetadata`, no cloud backends. Bit-identical Python open is a stretch goal.
 
-use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+
+mod zarr;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub const PRIMARY_VARIABLE: &str = "chunked_012";
+
+/// Declared API version attribute (synthoseis Rust MDIO writer).
+pub const API_VERSION: &str = "0.1.0-synthoseis-rust";
 
 #[derive(Debug, Error)]
 pub enum IoError {
@@ -32,13 +26,90 @@ pub enum IoError {
     Io(#[from] std::io::Error),
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("shape mismatch: expected {expected} samples, got {got}")]
-    ShapeMismatch { expected: usize, got: usize },
+    #[error("{0}")]
+    Msg(String),
 }
 
 pub type Result<T> = std::result::Result<T, IoError>;
 
-/// Metadata attrs stored alongside the chunked volume (MDIO-intent).
+fn err(msg: impl Into<String>) -> IoError {
+    IoError::Msg(msg.into())
+}
+
+/// One grid axis: name + coordinate vector (mdio-python `Dimension.to_dict`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Dimension {
+    pub name: String,
+    pub coords: Vec<f64>,
+}
+
+impl Dimension {
+    pub fn sized(name: impl Into<String>, size: usize) -> Self {
+        Self {
+            name: name.into(),
+            coords: (0..size).map(|i| i as f64).collect(),
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.coords.len()
+    }
+}
+
+/// Configuration for [`MdioStore::create_empty`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CreateConfig {
+    /// Three dimensions, last is the sample/time axis.
+    pub dimensions: [Dimension; 3],
+    /// Chunk shape for `chunked_012` (C-order). Defaults to full array if `None`.
+    pub chunks: Option<[usize; 3]>,
+    /// Sample interval / digi (stored as root attr for synthoseis).
+    pub digi: f64,
+    pub seed: u64,
+    pub units: String,
+    /// Dataset display name (root attr).
+    pub name: String,
+}
+
+impl CreateConfig {
+    pub fn shape(&self) -> [usize; 3] {
+        [
+            self.dimensions[0].size(),
+            self.dimensions[1].size(),
+            self.dimensions[2].size(),
+        ]
+    }
+
+    pub fn chunks_or_shape(&self) -> [usize; 3] {
+        self.chunks.unwrap_or_else(|| self.shape())
+    }
+
+    pub fn spatial_shape(&self) -> [usize; 2] {
+        let s = self.shape();
+        [s[0], s[1]]
+    }
+}
+
+impl Default for CreateConfig {
+    fn default() -> Self {
+        Self {
+            dimensions: [
+                Dimension::sized("inline", 2),
+                Dimension::sized("crossline", 2),
+                Dimension::sized("time", 4),
+            ],
+            chunks: None,
+            digi: 4.0,
+            seed: 42,
+            units: "ms".into(),
+            name: "synthoseis".into(),
+        }
+    }
+}
+
+/// Backward-compatible smoke metadata used by the CLI skeleton.
+///
+/// Prefer [`CreateConfig`] for new code (explicit coords + chunking).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StoreMeta {
     pub dims: [String; 3],
@@ -60,186 +131,131 @@ impl Default for StoreMeta {
     }
 }
 
-/// Handle to an on-disk MDIO-intent store root.
-#[derive(Debug, Clone)]
-pub struct MdioStore {
-    root: PathBuf,
-    meta: StoreMeta,
-}
-
-impl MdioStore {
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn meta(&self) -> &StoreMeta {
-        &self.meta
-    }
-
-    /// Create a new store directory with Zarr-v2-like group metadata.
-    pub fn create(root: impl AsRef<Path>, meta: &StoreMeta) -> Result<Self> {
-        let root = root.as_ref().to_path_buf();
-        fs::create_dir_all(&root)?;
-        fs::create_dir_all(root.join("volume"))?;
-
-        write_json(
-            root.join(".zgroup"),
-            &serde_json::json!({ "zarr_format": 2 }),
-        )?;
-        write_json(
-            root.join(".zattrs"),
-            &serde_json::json!({
-                "dims": meta.dims,
-                "digi": meta.digi,
-                "seed": meta.seed,
-                "units": meta.units,
-                "mdio_intent": true,
-                "note": "Minimal Zarr-v2-like layout; full MDIO/Python interop is a follow-up."
-            }),
-        )?;
-
-        let chunks = meta.shape; // single chunk for smoke
-        write_json(
-            root.join("volume").join(".zarray"),
-            &serde_json::json!({
-                "zarr_format": 2,
-                "shape": meta.shape,
-                "chunks": chunks,
-                "dtype": "<f4",
-                "compressor": null,
-                "fill_value": 0.0,
-                "order": "C",
-                "filters": null,
-                "dimension_separator": "."
-            }),
-        )?;
-
-        Ok(Self {
-            root,
-            meta: meta.clone(),
-        })
-    }
-
-    /// Load `.zattrs` and confirm the store looks like our smoke layout.
-    pub fn open(root: impl AsRef<Path>) -> Result<Self> {
-        let root = root.as_ref().to_path_buf();
-        let attrs: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(root.join(".zattrs"))?)?;
-        let dims_val = attrs
-            .get("dims")
-            .and_then(|d| d.as_array())
-            .ok_or_else(|| {
-                IoError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "missing dims in .zattrs",
-                ))
-            })?;
-        let dims = [
-            dims_val
-                .first()
-                .and_then(|v| v.as_str())
-                .unwrap_or("inline")
-                .to_string(),
-            dims_val
-                .get(1)
-                .and_then(|v| v.as_str())
-                .unwrap_or("crossline")
-                .to_string(),
-            dims_val
-                .get(2)
-                .and_then(|v| v.as_str())
-                .unwrap_or("time")
-                .to_string(),
-        ];
-        let zarray: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(root.join("volume").join(".zarray"))?)?;
-        let shape = [
-            zarray["shape"][0].as_u64().unwrap_or(0) as usize,
-            zarray["shape"][1].as_u64().unwrap_or(0) as usize,
-            zarray["shape"][2].as_u64().unwrap_or(0) as usize,
-        ];
-        let meta = StoreMeta {
-            dims,
-            shape,
-            digi: attrs.get("digi").and_then(|v| v.as_f64()).unwrap_or(0.0),
-            seed: attrs.get("seed").and_then(|v| v.as_u64()).unwrap_or(0),
-            units: attrs
-                .get("units")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-        };
-        Ok(Self { root, meta })
-    }
-}
-
-/// Deliverable write API stub (MDIO-intent only).
-pub struct DeliverableWriter;
-
-impl DeliverableWriter {
-    /// Write a tiny contiguous f32 volume as a single Zarr chunk `0.0.0`.
-    pub fn write_smoke_volume(store: &MdioStore, samples: &[f32]) -> Result<()> {
-        let expected = store.meta.shape.iter().product::<usize>();
-        if samples.len() != expected {
-            return Err(IoError::ShapeMismatch {
-                expected,
-                got: samples.len(),
-            });
+impl From<&StoreMeta> for CreateConfig {
+    fn from(m: &StoreMeta) -> Self {
+        Self {
+            dimensions: [
+                Dimension::sized(&m.dims[0], m.shape[0]),
+                Dimension::sized(&m.dims[1], m.shape[1]),
+                Dimension::sized(&m.dims[2], m.shape[2]),
+            ],
+            chunks: Some(m.shape),
+            digi: m.digi,
+            seed: m.seed,
+            units: m.units.clone(),
+            name: "synthoseis".into(),
         }
-        let chunk_path = store.root.join("volume").join("0.0.0");
-        let mut file = fs::File::create(&chunk_path)?;
-        for v in samples {
-            file.write_all(&v.to_le_bytes())?;
-        }
-        Ok(())
     }
 }
 
-fn write_json(path: PathBuf, value: &serde_json::Value) -> Result<()> {
-    let mut file = fs::File::create(path)?;
-    serde_json::to_writer_pretty(&mut file, value)?;
-    file.write_all(b"\n")?;
-    Ok(())
-}
+
+
+mod store;
+
+pub use store::{DeliverableWriter, MdioStore};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::zarr::read_json;
+    use serde_json::Value;
     use tempfile::tempdir;
 
     #[test]
-    fn smoke_writes_on_disk_store_with_metadata() {
-        let dir = tempdir().expect("tempdir");
-        let root = dir.path().join("smoke.mdio");
-        let meta = StoreMeta::default();
-        let store = MdioStore::create(&root, &meta).expect("create");
-
-        let n = meta.shape.iter().product::<usize>();
-        let mut data = vec![0.0_f32; n];
-        data[0] = 1.5;
-        data[n - 1] = -2.25;
-        DeliverableWriter::write_smoke_volume(&store, &data).expect("write");
+    fn create_empty_writes_mdio_hierarchy() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("demo.mdio");
+        let cfg = CreateConfig::default();
+        let store = MdioStore::create_empty(&root, &cfg).unwrap();
 
         assert!(root.join(".zgroup").is_file());
         assert!(root.join(".zattrs").is_file());
-        assert!(root.join("volume").join(".zarray").is_file());
-        assert!(root.join("volume").join("0.0.0").is_file());
+        assert!(root.join("metadata").join(".zgroup").is_file());
+        assert!(root.join("metadata").join("live_mask").join(".zarray").is_file());
+        assert!(root
+            .join("data")
+            .join(PRIMARY_VARIABLE)
+            .join(".zarray")
+            .is_file());
 
-        let opened = MdioStore::open(&root).expect("open");
-        assert_eq!(opened.meta().dims, meta.dims);
-        assert_eq!(opened.meta().shape, meta.shape);
-        assert_eq!(opened.meta().digi, meta.digi);
-        assert_eq!(opened.meta().seed, meta.seed);
-        assert_eq!(opened.meta().units, meta.units);
+        let attrs: Value = read_json(root.join(".zattrs")).unwrap();
+        assert_eq!(attrs["api_version"], API_VERSION);
+        assert_eq!(attrs["dimension"][0]["name"], "inline");
+        assert_eq!(attrs["dimension"][1]["name"], "crossline");
+        assert_eq!(attrs["dimension"][2]["name"], "time");
+        assert_eq!(attrs["digi"], 4.0);
+        assert_eq!(attrs["seed"], 42);
+        assert_eq!(attrs["units"], "ms");
+        assert_eq!(store.shape(), [2, 2, 4]);
 
-        let attrs: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(root.join(".zattrs")).unwrap()).unwrap();
-        assert_eq!(attrs["dims"][0], "inline");
-        assert_eq!(attrs["dims"][1], "crossline");
-        assert_eq!(attrs["dims"][2], "time");
-        assert!(attrs["mdio_intent"].as_bool().unwrap_or(false));
+        let mask = store.read_live_mask().unwrap();
+        assert_eq!(mask, vec![0, 0, 0, 0]);
+    }
 
-        let chunk = fs::read(root.join("volume").join("0.0.0")).unwrap();
-        assert_eq!(chunk.len(), n * 4);
+    #[test]
+    fn write_read_volume_round_trip_updates_live_mask() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("rt.mdio");
+        let cfg = CreateConfig {
+            chunks: Some([2, 2, 4]),
+            ..CreateConfig::default()
+        };
+        let store = MdioStore::create_empty(&root, &cfg).unwrap();
+        let n = 2 * 2 * 4;
+        let mut data = vec![0.0f32; n];
+        data[0] = 1.5;
+        data[n - 1] = -2.25;
+        DeliverableWriter::write_volume(&store, &data).unwrap();
+
+        let opened = MdioStore::open(&root).unwrap();
+        assert_eq!(opened.shape(), [2, 2, 4]);
+        let back = opened.read_volume().unwrap();
+        assert_eq!(back.len(), n);
+        assert_eq!(back[0], 1.5);
+        assert_eq!(back[n - 1], -2.25);
+        for (a, b) in data.iter().zip(back.iter()) {
+            assert_eq!(a, b);
+        }
+
+        let mask = opened.read_live_mask().unwrap();
+        assert_eq!(mask, vec![1, 1, 1, 1]);
+
+        let attrs: Value = read_json(root.join(".zattrs")).unwrap();
+        assert_eq!(attrs["trace_count"], 4);
+        assert!(attrs["min"].as_f64().unwrap() <= -2.25);
+        assert!(attrs["max"].as_f64().unwrap() >= 1.5);
+
+        // Chunk file present (single chunk for this config).
+        assert!(root
+            .join("data")
+            .join(PRIMARY_VARIABLE)
+            .join("0.0.0")
+            .is_file());
+    }
+
+    #[test]
+    fn multi_chunk_round_trip() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("chunked.mdio");
+        let cfg = CreateConfig {
+            dimensions: [
+                Dimension::sized("inline", 4),
+                Dimension::sized("crossline", 4),
+                Dimension::sized("sample", 8),
+            ],
+            chunks: Some([2, 2, 4]),
+            digi: 2.0,
+            seed: 7,
+            units: "ms".into(),
+            name: "multi".into(),
+        };
+        let store = MdioStore::create_empty(&root, &cfg).unwrap();
+        let n = 4 * 4 * 8;
+        let data: Vec<f32> = (0..n).map(|i| i as f32 * 0.5).collect();
+        store.write_volume(&data).unwrap();
+        let back = store.read_volume().unwrap();
+        assert_eq!(data, back);
+        assert_eq!(store.read_live_mask().unwrap().iter().filter(|&&b| b == 1).count(), 16);
     }
 }
+

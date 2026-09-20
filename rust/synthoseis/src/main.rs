@@ -20,7 +20,7 @@ enum Commands {
         /// RNG seed for reproducible stubs.
         #[arg(long, default_value_t = 42)]
         seed: u64,
-        /// Optional path for a tiny MDIO-intent smoke store.
+        /// Optional path for a tiny MDIO smoke store (create + write + read round-trip).
         #[arg(long)]
         store: Option<std::path::PathBuf>,
     },
@@ -30,8 +30,11 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         None => {
-            // clap prints help when invoked with --help; bare invocation shows a short banner.
-            println!("synthoseis {} — Rust skeleton. Try `synthoseis --help` or `synthoseis run`.", env!("CARGO_PKG_VERSION"));
+            // clap prints help for --help; bare invocation shows a short banner.
+            println!(
+                "synthoseis {} — Rust skeleton. Try `synthoseis --help` or `synthoseis run`.",
+                env!("CARGO_PKG_VERSION")
+            );
         }
         Some(Commands::Run { seed, store }) => {
             let config = RunConfig {
@@ -55,10 +58,17 @@ fn main() {
                     seed,
                     units: "ms".into(),
                 };
-                let mdio = MdioStore::create(&path, &meta).expect("create MDIO-intent store");
-                DeliverableWriter::write_smoke_volume(&mdio, &[0.0_f32; 16])
-                    .expect("write smoke volume");
-                println!("wrote MDIO-intent smoke store at {}", path.display());
+                let mdio = MdioStore::create(&path, &meta).expect("create MDIO store");
+                DeliverableWriter::write_smoke_volume(&mdio, &[0.0_f32; 16]).expect("write volume");
+                let back = mdio.read_volume().expect("read volume");
+                assert_eq!(back.len(), 16);
+                assert_eq!(mdio.shape(), [2, 2, 4]);
+                assert_eq!(mdio.read_live_mask().expect("live_mask"), vec![1, 1, 1, 1]);
+                println!(
+                    "wrote MDIO store at {} (shape {:?}, live traces marked)",
+                    path.display(),
+                    mdio.shape()
+                );
             }
         }
     }
