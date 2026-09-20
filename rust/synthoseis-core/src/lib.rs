@@ -1,4 +1,4 @@
-//! Core: config, RNG, job partition, single-worker runner, **parity harness**,
+//! Core: config, RNG, job partition, multi-worker runner, **parity harness**,
 //! and **e2e tiny-cube pipeline** (MDIO → geo → closures → RPM → seismic → MDIO).
 //!
 //! Algorithm ports (geo / seismic / RPM) live in sibling crates.
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunConfig {
     pub seed: u64,
-    /// Worker count. Skeleton locks to a single local worker (`1`).
+    /// Local / planned worker count (`1` = single-worker path).
     pub workers: usize,
     pub inline_count: usize,
     pub crossline_count: usize,
@@ -49,26 +49,6 @@ impl SeededRng {
     }
 }
 
-/// Job partition stub. Cloud / multi-worker sharding comes later.
-#[derive(Debug, Clone)]
-pub struct JobPartition {
-    pub worker_id: usize,
-    pub worker_count: usize,
-    pub job_ids: Vec<u64>,
-}
-
-impl JobPartition {
-    /// Single local worker owns the full job list.
-    pub fn single_worker(config: &RunConfig) -> Self {
-        let n = (config.inline_count * config.crossline_count) as u64;
-        Self {
-            worker_id: 0,
-            worker_count: 1.max(config.workers),
-            job_ids: (0..n.max(1)).collect(),
-        }
-    }
-}
-
 /// Summary from a single-worker run (placeholder or e2e).
 #[derive(Debug, Clone)]
 pub struct RunSummary {
@@ -78,7 +58,7 @@ pub struct RunSummary {
     pub status: &'static str,
 }
 
-/// One local worker path — no cloud yet.
+/// One local worker path — used by [`MultiWorkerRunner`] fan-out and CLI.
 #[derive(Debug, Clone)]
 pub struct SingleWorkerRunner {
     pub config: RunConfig,
@@ -100,7 +80,7 @@ impl SingleWorkerRunner {
         }
     }
 
-    /// Run the tiny-cube e2e pipeline (CPU, single worker).
+    /// Run the tiny-cube e2e pipeline (CPU, full cube).
     ///
     /// When `store` is `Some`, writes labels + angle stack to MDIO and checks
     /// round-trip parity.
@@ -121,7 +101,12 @@ impl SingleWorkerRunner {
 }
 
 pub mod parity;
+pub mod partition;
 pub mod pipeline;
+
+pub use partition::{
+    partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary, MultiWorkerRunner,
+};
 
 #[cfg(test)]
 mod tests {
@@ -173,6 +158,23 @@ mod tests {
             .run_e2e(None)
             .expect("e2e");
         assert_eq!(report.status, "ok-e2e");
+        assert!(report.parity.passes_defaults());
+    }
+
+    #[test]
+    fn multi_e2e_still_full_cube() {
+        let cfg = RunConfig {
+            seed: 42,
+            workers: 4,
+            inline_count: 8,
+            crossline_count: 8,
+            samples: 8,
+        };
+        let report = MultiWorkerRunner::new(cfg)
+            .run_e2e(None)
+            .expect("e2e");
+        assert_eq!(report.status, "ok-e2e");
+        assert_eq!(report.volumes.shape, [8, 8, 8]);
         assert!(report.parity.passes_defaults());
     }
 
