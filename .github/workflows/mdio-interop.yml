@@ -1,0 +1,37 @@
+name: mdio-interop
+
+on:
+  push:
+    paths:
+      - "rust/**"
+      - "tests/test_mdio_rust_interop.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/mdio-interop.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "tests/test_mdio_rust_interop.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/mdio-interop.yml"
+
+jobs:
+  rust-mdio-python-open:
+    name: Rust MDIO → Python mdio open
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      - name: Interop smoke (cargo create + mdio open)
+        # Marked slow in pytest; this job is the dedicated runner.
+        run: uv run pytest tests/test_mdio_rust_interop.py -m slow -q
