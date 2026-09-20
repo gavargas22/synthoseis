@@ -1,0 +1,17 @@
+[package]
+name = "synthoseis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Synthoseis CLI — synthetic seismic generation (Rust rewrite skeleton)"
+
+[[bin]]
+name = "synthoseis"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+synthoseis-core.workspace = true
+synthoseis-io.workspace = true
