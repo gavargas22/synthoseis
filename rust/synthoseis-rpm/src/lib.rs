@@ -1,9 +1,20 @@
-//! Future rock-physics model (RPM) port from the Python rockphysics package.
+//! Rock-physics model (RPM) depth-trend ports from `rockphysics/`.
 //!
-//! This crate is an empty library stub for the Rust rewrite skeleton.
-//! Algorithm ports land in later PRs; keep the Python tree as source of truth until then.
+//! # First landed kernels
+//! - [`polyval`] — numpy-compatible polynomial evaluation
+//! - [`RpmExampleTrends`] — example shale / brine / oil / gas sand trends
+//! - Tagilsk shale / brine / gas sand helpers (`tagilsk_*`)
+//!
+//! Golden fixtures: `tests/fixtures/rpm_trends.json`
+//! (regenerate via `tests/fixtures/generate_seismic_kernels.py`).
 
-#![allow(dead_code)]
+mod kernels;
+#[cfg(test)]
+#[path = "tests_kernels.rs"]
+mod tests_kernels;
 
-/// Placeholder marker so the crate is non-empty and documents intent.
-pub const CRATE_STUB: &str = "synthoseis-rpm";
+pub use kernels::{
+    polyval, tagilsk_brine_sand_rho, tagilsk_brine_sand_vp, tagilsk_brine_sand_vs,
+    tagilsk_gas_sand_vp, tagilsk_gas_sand_vs, tagilsk_shale_rho, tagilsk_shale_vp,
+    tagilsk_shale_vs, RpmExampleTrends, TagilskTrends,
+};
