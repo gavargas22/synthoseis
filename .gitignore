@@ -31,3 +31,6 @@ geocrawler.log
 node_modules/
 .steward/
 *.db
+
+# Rust build artifacts (keep rust/Cargo.lock for reproducible CI)
+rust/target/

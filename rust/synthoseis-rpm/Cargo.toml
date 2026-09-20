@@ -1,0 +1,10 @@
+[package]
+name = "synthoseis-rpm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Future rock-physics model (RPM) port from the Python rockphysics package."
+
+[dependencies]
