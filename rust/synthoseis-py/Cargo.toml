@@ -1,0 +1,16 @@
+[package]
+name = "synthoseis-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "PyO3 / maturin bindings for synthoseis MDIO (synthoseis-io)"
+
+[lib]
+name = "synthoseis_mdio"
+crate-type = ["cdylib"]
+
+[dependencies]
+synthoseis-io = { workspace = true }
+pyo3 = { version = "0.23", features = ["extension-module"] }

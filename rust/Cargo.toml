@@ -4,6 +4,7 @@ members = [
     "synthoseis",
     "synthoseis-core",
     "synthoseis-io",
+    "synthoseis-py",
     "synthoseis-geo",
     "synthoseis-closures",
     "synthoseis-seismic",
