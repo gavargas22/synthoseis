@@ -74,7 +74,7 @@ data_vars — that flattening is a later slice.
 | Angle stacks (f32) | MAE, max-abs | MAE ≤ 1e-3, max-abs ≤ 5e-3 |
 
 Fixed-seed **8³** fixtures: `tests/fixtures/parity_cubes_8.json`
-(loaded by Rust tests via relative path from crate manifests).
+(labels RLE-compressed; angle stacks synthesized from `0.1*i+0.05*j+0.02*k`).
 Regenerate with `python tests/fixtures/generate_parity_cubes.py`.
 
 ## Single-worker path
