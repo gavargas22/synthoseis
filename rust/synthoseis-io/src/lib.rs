@@ -19,6 +19,9 @@ use thiserror::Error;
 
 pub const PRIMARY_VARIABLE: &str = "chunked_012";
 
+/// Extra deliverable array name for discrete label volumes (uint8).
+pub const LABELS_VARIABLE: &str = "labels";
+
 /// Declared API version attribute (synthoseis Rust MDIO writer).
 pub const API_VERSION: &str = "0.1.0-synthoseis-rust";
 
@@ -264,5 +267,32 @@ mod tests {
         let back = store.read_volume().unwrap();
         assert_eq!(data, back);
         assert_eq!(store.read_live_mask().unwrap().iter().filter(|&&b| b == 1).count(), 16);
+    }
+
+    #[test]
+    fn labels_u8_round_trip() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("labels.mdio");
+        let cfg = CreateConfig {
+            dimensions: [
+                Dimension::sized("inline", 4),
+                Dimension::sized("crossline", 4),
+                Dimension::sized("sample", 4),
+            ],
+            chunks: Some([4, 4, 4]),
+            digi: 4.0,
+            seed: 1,
+            units: "ms".into(),
+            name: "labels".into(),
+        };
+        let store = MdioStore::create_empty(&root, &cfg).unwrap();
+        let n = 4 * 4 * 4;
+        let labels: Vec<u8> = (0..n).map(|i| (i % 7) as u8).collect();
+        store.write_labels_u8(&labels).unwrap();
+        let angles: Vec<f32> = (0..n).map(|i| i as f32 * 0.1).collect();
+        store.write_volume(&angles).unwrap();
+        let back = store.read_labels_u8().unwrap();
+        assert_eq!(labels, back);
+        assert!(root.join("data").join(LABELS_VARIABLE).join(".zarray").is_file());
     }
 }
