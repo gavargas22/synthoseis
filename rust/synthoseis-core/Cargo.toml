@@ -5,12 +5,18 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Config, RNG, job partition, and parity harness (labels IoU / angle-stack MAE)"
+description = "Config, RNG, job partition, parity harness, and single-worker e2e pipeline"
 
 [dependencies]
 rand.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
+synthoseis-geo.workspace = true
+synthoseis-closures.workspace = true
+synthoseis-seismic.workspace = true
+synthoseis-rpm.workspace = true
+synthoseis-io.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
