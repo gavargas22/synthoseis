@@ -30,7 +30,21 @@ For development (includes pytest):
 uv sync --group dev
 ```
 
-> **Python version:** Synthoseis requires **Python 3.11 or later** (`requires-python` in `pyproject.toml`).
+### Rust-backed MDIO (maturin / PyO3)
+
+Preferred Python entry for Rust MDIO create / write / read (no `cargo` subprocess).
+Requires a **Rust** toolchain and [maturin](https://www.maturin.rs/):
+
+```bash
+uv sync --group dev
+maturin develop --manifest-path rust/synthoseis-py/Cargo.toml
+uv run pytest tests/test_mdio_bindings.py -q
+```
+
+Details: [`rust/synthoseis-py/README.md`](rust/synthoseis-py/README.md). The `#8` Python
+`mdio` open interop workflow remains available separately.
+
+> **Python version:** Synthoseis requires **Python 3.12 or later** (`requires-python` in `pyproject.toml`).
 
 ## Resources
 

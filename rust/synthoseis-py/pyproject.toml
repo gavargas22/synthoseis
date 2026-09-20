@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "synthoseis-mdio"
+version = "0.1.0"
+description = "Rust-backed MDIO create/write/read for synthoseis (PyO3 / maturin)"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+module-name = "synthoseis_mdio"
+# From repo root:
+#   maturin develop --manifest-path rust/synthoseis-py/Cargo.toml
+# Or from this directory:
+#   maturin develop

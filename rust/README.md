@@ -10,6 +10,7 @@ The Python tree at the repository root stays intact; this workspace lives under 
 | `synthoseis` | CLI binary (`synthoseis --help`, `synthoseis run`) |
 | `synthoseis-core` | Config, RNG, job partition, single-worker path stubs |
 | `synthoseis-io` | **Honest MDIO** (Zarr v2) create / write / read |
+| `synthoseis-py` | **maturin / PyO3** Python extension (`synthoseis_mdio`) over `synthoseis-io` |
 | `synthoseis-geo` | Future geology / horizons port |
 | `synthoseis-closures` | Future closure / trap geometry port |
 | `synthoseis-seismic` | Future seismic modeling port |
@@ -46,12 +47,16 @@ Public API (see `synthoseis-io`):
 little-endian chunks directly (no Blosc) so the hierarchy stays recognizable. The maintained
 `zarrs` crate is V3-first with a high MSRV; swapping the backend to `zarrs` is a follow-up.
 
-**Python `mdio` interop gate:** Rust creates/writes the MDIO store; Python
-`multidimio` (`import mdio`) is open/interop only (not the long-term writer). Maturin/PyO3
-comes later. `tests/test_mdio_rust_interop.py` builds this CLI smoke store, calls
-`mdio.open_mdio` (must not raise), and asserts `chunked_012` / `live_mask` via zarr.
-Consolidated `.zmetadata` + stub `chunked_012_trace_headers` also let multidimio 0.9.x
-`MDIOReader` open the same hierarchy.
+**Preferred Python entry (maturin / PyO3):** `rust/synthoseis-py` builds the
+`synthoseis_mdio` extension so Python can create / write / read without shelling out to
+`cargo`. See `rust/synthoseis-py/README.md` and `tests/test_mdio_bindings.py`.
+
+**Python `mdio` interop gate (#8):** Rust creates/writes the MDIO store; Python
+`multidimio` (`import mdio`) remains open/interop only (not the long-term writer).
+`tests/test_mdio_rust_interop.py` builds a CLI smoke store, calls `mdio.open_mdio`
+(must not raise), and asserts `chunked_012` / `live_mask` via zarr. Consolidated
+`.zmetadata` + stub `chunked_012_trace_headers` also let multidimio 0.9.x `MDIOReader`
+open the same hierarchy.
 
 **Known gaps vs full mdio-python:** no Blosc/ZFP compressors, stub (not SEG-Y-faithful)
 trace headers, no full SEG-Y text/binary header fidelity, no cloud object-store backends.
@@ -77,7 +82,18 @@ cargo run -p synthoseis -- --help
 cargo run -p synthoseis -- run --store /tmp/smoke.mdio
 ```
 
+### Python extension (maturin)
+
+Prerequisites: Rust stable + Python ≥ 3.12 + maturin.
+
+```bash
+# from repo root
+maturin develop --manifest-path rust/synthoseis-py/Cargo.toml
+pytest tests/test_mdio_bindings.py -q
+```
+
 CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/` on push/PR.
+`.github/workflows/maturin-bindings.yml` builds the extension and runs the binding pytest.
 
 ## Next ports (out of scope here)
 
