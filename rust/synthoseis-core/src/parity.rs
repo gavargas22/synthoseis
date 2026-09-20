@@ -15,7 +15,7 @@
 
 use serde::Deserialize;
 
-/// Fixture seed documented in `parity_cubes_8.json`.
+/// Historical fixture tag; angle stacks are now fully deterministic (no RNG).
 pub const GOLDEN_SEED: u64 = 0x5EED_CAFE;
 
 /// Default acceptance thresholds for near-parity checks.
@@ -150,17 +150,46 @@ struct FixtureFile {
 
 #[derive(Debug, Deserialize)]
 struct LabelBlock {
-    reference: Vec<u8>,
-    perturbed: Vec<u8>,
+    reference_rle: Vec<[u8; 2]>,
+    perturbed_rle: Vec<[u8; 2]>,
 }
 
 #[derive(Debug, Deserialize)]
 struct AngleBlock {
-    reference: Vec<f32>,
-    perturbed: Vec<f32>,
+    shape: [usize; 3],
+    /// Documented as `0.1*i + 0.05*j + 0.02*k` (deterministic; no RNG).
+    #[allow(dead_code)]
+    #[serde(default)]
+    formula: Option<String>,
+    pert_delta: f32,
+}
+
+fn expand_rle(pairs: &[[u8; 2]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for [value, count] in pairs {
+        out.extend(std::iter::repeat(*value).take(*count as usize));
+    }
+    out
+}
+
+fn synth_angle_stack(shape: [usize; 3], pert_delta: f32) -> (Vec<f32>, Vec<f32>) {
+    let [ni, nj, nk] = shape;
+    let mut reference = Vec::with_capacity(ni * nj * nk);
+    for i in 0..ni {
+        for j in 0..nj {
+            for k in 0..nk {
+                reference.push(0.1 * i as f32 + 0.05 * j as f32 + 0.02 * k as f32);
+            }
+        }
+    }
+    let perturbed: Vec<f32> = reference.iter().map(|v| v + pert_delta).collect();
+    (reference, perturbed)
 }
 
 /// Load the checked-in 8^3 fixture from `tests/fixtures/parity_cubes_8.json`.
+///
+/// Labels are stored RLE-compressed; angle stacks are synthesized from the
+/// documented deterministic formula (`0.1*i + 0.05*j + 0.02*k`).
 pub fn load_parity_cubes_8() -> Result<(Vec<u8>, Vec<u8>, Vec<f32>, Vec<f32>), String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/parity_cubes_8.json");
@@ -168,10 +197,9 @@ pub fn load_parity_cubes_8() -> Result<(Vec<u8>, Vec<u8>, Vec<f32>, Vec<f32>), S
         .map_err(|e| format!("read {}: {e}", path.display()))?;
     let fix: FixtureFile =
         serde_json::from_str(&text).map_err(|e| format!("parse fixture: {e}"))?;
-    Ok((
-        fix.labels.reference,
-        fix.labels.perturbed,
-        fix.angle_stack.reference,
-        fix.angle_stack.perturbed,
-    ))
+    let labels_ref = expand_rle(&fix.labels.reference_rle);
+    let labels_pert = expand_rle(&fix.labels.perturbed_rle);
+    let (angles_ref, angles_pert) =
+        synth_angle_stack(fix.angle_stack.shape, fix.angle_stack.pert_delta);
+    Ok((labels_ref, labels_pert, angles_ref, angles_pert))
 }
