@@ -93,6 +93,38 @@ impl MdioStore {
             json!(0.0),
         )?;
 
+        // Stub trace headers so mdio-python MDIOReader can open (it always loads
+        // `chunked_{pattern}_trace_headers` under metadata/). Uncompressed i4 zeros.
+        let header_name = format!("{PRIMARY_VARIABLE}_trace_headers");
+        let header_dir = root.join("metadata").join(&header_name);
+        fs::create_dir_all(&header_dir)?;
+        let header_chunks = [live_shape[0], live_shape[1]];
+        write_zarray(
+            header_dir.join(".zarray"),
+            &live_shape,
+            &header_chunks,
+            "<i4",
+            json!(0),
+        )?;
+        write_json(header_dir.join(".zattrs"), &json!({}))?;
+        write_chunk_bytes(
+            &header_dir,
+            &chunk_key(&[0, 0]),
+            &vec![0u8; live_n * 4],
+        )?;
+
+        // Empty .zattrs on data arrays (xarray/mdio often expect the file to exist).
+        write_json(
+            root.join("data").join(PRIMARY_VARIABLE).join(".zattrs"),
+            &json!({}),
+        )?;
+        write_json(
+            root.join("metadata").join("live_mask").join(".zattrs"),
+            &json!({}),
+        )?;
+
+        write_consolidated_metadata(&root)?;
+
         Ok(Self {
             root,
             config: config.clone(),
