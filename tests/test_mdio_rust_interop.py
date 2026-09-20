@@ -2,7 +2,7 @@
 
 Rust owns create/write (synthoseis CLI / synthoseis-io). Python `mdio`
 (multidimio) is the open/interop gate only — not the long-term writer.
-Maturin/PyO3 comes later.
+Preferred Python create/write/read entry is the maturin extension (`synthoseis_mdio`; see `tests/test_mdio_bindings.py`).
 
 The Rust store is the mdio-python *create_empty*-shaped Zarr v2 hierarchy
 (`metadata/` + `data/`, `live_mask`, `chunked_012`). multidimio 1.x
