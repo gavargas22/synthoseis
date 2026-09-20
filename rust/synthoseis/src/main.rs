@@ -59,7 +59,8 @@ fn main() {
                     units: "ms".into(),
                 };
                 let mdio = MdioStore::create(&path, &meta).expect("create MDIO store");
-                DeliverableWriter::write_smoke_volume(&mdio, &[0.0_f32; 16]).expect("write volume");
+                let samples: Vec<f32> = (0..16).map(|i| i as f32 * 0.5).collect();
+                DeliverableWriter::write_smoke_volume(&mdio, &samples).expect("write volume");
                 let back = mdio.read_volume().expect("read volume");
                 assert_eq!(back.len(), 16);
                 assert_eq!(mdio.shape(), [2, 2, 4]);

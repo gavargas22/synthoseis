@@ -46,9 +46,17 @@ Public API (see `synthoseis-io`):
 little-endian chunks directly (no Blosc) so the hierarchy stays recognizable. The maintained
 `zarrs` crate is V3-first with a high MSRV; swapping the backend to `zarrs` is a follow-up.
 
-**Known gaps vs full mdio-python:** no Blosc/ZFP compressors, no `chunked_012_trace_headers`,
-no consolidated `.zmetadata`, no SEG-Y text/binary header fidelity, no cloud object-store
-backends. Bit-identical Python `MDIOReader` open is a stretch goal.
+**Python `mdio` interop gate:** Rust creates/writes the MDIO store; Python
+`multidimio` (`import mdio`) is open/interop only (not the long-term writer). Maturin/PyO3
+comes later. `tests/test_mdio_rust_interop.py` builds this CLI smoke store, calls
+`mdio.open_mdio` (must not raise), and asserts `chunked_012` / `live_mask` via zarr.
+Consolidated `.zmetadata` + stub `chunked_012_trace_headers` also let multidimio 0.9.x
+`MDIOReader` open the same hierarchy.
+
+**Known gaps vs full mdio-python:** no Blosc/ZFP compressors, stub (not SEG-Y-faithful)
+trace headers, no full SEG-Y text/binary header fidelity, no cloud object-store backends.
+mdio 1.x `open_mdio` does not yet flatten nested create_empty arrays into xarray
+data_vars — that flattening is a later slice.
 
 ## Parity harness
 

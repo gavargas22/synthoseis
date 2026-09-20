@@ -174,3 +174,48 @@ pub(crate) fn iso8601_now_approx() -> String {
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
+
+/// Write Zarr v2 consolidated `.zmetadata` so mdio-python `MDIOReader` can open.
+///
+/// Classic format: `{"zarr_consolidated_format": 1, "metadata": { "<path>": <json>, ... }}`.
+pub(crate) fn write_consolidated_metadata(root: &Path) -> Result<()> {
+    use std::collections::BTreeMap;
+
+    let mut metadata: BTreeMap<String, Value> = BTreeMap::new();
+
+    fn collect(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Value>) -> Result<()> {
+        for name in [".zgroup", ".zattrs", ".zarray"] {
+            let path = dir.join(name);
+            if path.is_file() {
+                let key = if prefix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                out.insert(key, read_json(path)?);
+            }
+        }
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let child_prefix = if prefix.is_empty() {
+                        name
+                    } else {
+                        format!("{prefix}/{name}")
+                    };
+                    collect(&path, &child_prefix, out)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    collect(root, "", &mut metadata)?;
+    let doc = json!({
+        "zarr_consolidated_format": 1,
+        "metadata": metadata,
+    });
+    write_json(root.join(".zmetadata"), &doc)
+}

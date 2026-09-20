@@ -133,6 +133,8 @@ impl MdioStore {
         )?;
         update_root_attr_u64(&self.root, "trace_count", live_n as u64)?;
         update_stats(&self.root, samples)?;
+        // Refresh consolidated metadata after attr / live_mask updates.
+        write_consolidated_metadata(&self.root)?;
         Ok(())
     }
 }
