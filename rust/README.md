@@ -8,7 +8,7 @@ The Python tree at the repository root stays intact; this workspace lives under 
 | Crate | Role |
 |-------|------|
 | `synthoseis` | CLI binary (`synthoseis --help`, `synthoseis run`) |
-| `synthoseis-core` | Config, RNG, job partition, parity harness, **e2e single-worker pipeline** |
+| `synthoseis-core` | Config, RNG, **multi-worker job partition**, parity harness, e2e pipeline |
 | `synthoseis-io` | **Honest MDIO** (Zarr v2) create / write / read |
 | `synthoseis-py` | **maturin / PyO3** Python extension (`synthoseis_mdio`) over `synthoseis-io` |
 | `synthoseis-geo` | Geology / horizons kernels (plane fit, thickness clip, label fill) |
@@ -90,7 +90,8 @@ MDIO create → geo (horizons/labels) → closures (relabel/filter)
 ```
 
 Parity = **labels + angle stacks** (IoU / agreement / MAE / max-abs), not bit-identical
-full seismic. CPU only — **no** GPU / multi-worker / cloud yet.
+full seismic. CPU only — **no** GPU. Local multi-worker partition is landed (below);
+cloud execution is still later.
 
 ```bash
 cd rust
@@ -100,6 +101,27 @@ cargo run -p synthoseis -- run --e2e --store /tmp/e2e.mdio
 `synthoseis-core::pipeline::{generate_tiny_cube, run_e2e}` is the library entry;
 CLI `--e2e` is the CI-friendly smoke.
 
+
+## Multi-worker job partition (local)
+
+**Landed:** `JobPartition` / `partition_jobs` / `JobPartitionPlan` (serde JSON) +
+`MultiWorkerRunner` in `synthoseis-core`.
+
+- Contiguous chunks over `job_ids` `0..inline×crossline` across `--workers N`
+- Union covers all jobs with no overlap; when `jobs < workers`, empty worker
+  slots are **kept** (not dropped) for stable cloud handoff
+- Placeholder mode fans out locally via `std::thread::scope`
+- `--partition-plan path.json` writes a cloud-ready plan artifact
+- **E2e** still runs the full tiny cube once this slice (strip-stitched multi-worker
+  e2e is a follow-up); `--workers` on `--e2e` records plan metadata only
+
+```bash
+cd rust
+cargo run -p synthoseis -- run --workers 4
+cargo run -p synthoseis -- run --workers 4 --partition-plan /tmp/plan.json
+cargo run -p synthoseis -- run --e2e --workers 4 --store /tmp/e2e.mdio
+```
+
 ## Develop
 
 ```bash
@@ -108,6 +130,7 @@ cargo check
 cargo test
 cargo run -p synthoseis -- --help
 cargo run -p synthoseis -- run --store /tmp/smoke.mdio
+cargo run -p synthoseis -- run --workers 4 --partition-plan /tmp/plan.json
 cargo run -p synthoseis -- run --e2e --store /tmp/e2e.mdio
 ```
 
@@ -154,11 +177,18 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 - Single-worker tiny-cube wiring: MDIO → geo → closures → RPM → seismic → MDIO
   with parity harness checks (`synthoseis run --e2e`)
 
+**Landed (multi-worker partition)**
+
+- Local `partition_jobs` + `JobPartitionPlan` (serde) + `MultiWorkerRunner`
+- CLI `--workers` / `--partition-plan` (cloud handoff smoke)
+- E2e remains full-cube single pass; strip-stitched worker e2e is next
+
 **Still out of scope / next**
 
+- Strip-stitched multi-worker e2e (per-worker inline strips → stitch → MDIO)
+- **Cloud** execution (AWS/K8s) consuming `JobPartitionPlan`
 - Full Butterworth bandpass / lateral filter / RMO / end-to-end SeismicVolume
 - Full Tagilsk oil-sand polys + EndMemberMixing / Backus moduli
 - Full geology stack / faults / **GPU**
 - Replacing Parameters Python zarr store / dropping the Python generator
-- **Multi-worker / cloud** job partition
 - Publishing wheels
