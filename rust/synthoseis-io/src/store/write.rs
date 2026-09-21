@@ -199,7 +199,89 @@ impl MdioStore {
         write_consolidated_metadata(&self.root)?;
         Ok(())
     }
+
+    /// Ensure `data/labels` Zarr array exists with the store's chunk shape.
+    pub fn ensure_labels_array(&self) -> Result<()> {
+        let shape = self.shape();
+        let chunks = self.config.chunks_or_shape();
+        let array_dir = self.root.join("data").join(LABELS_VARIABLE);
+        std::fs::create_dir_all(&array_dir)?;
+        write_zarray(
+            array_dir.join(".zarray"),
+            &shape,
+            &chunks,
+            "|u1",
+            serde_json::json!(255),
+        )?;
+        write_json(
+            array_dir.join(".zattrs"),
+            &serde_json::json!({
+                "long_name": "layer_labels",
+                "synthoseis_deliverable": "labels"
+            }),
+        )?;
+        Ok(())
+    }
+
+    /// Write one uint8 labels chunk (same indexing as [`Self::write_chunk`]).
+    pub fn write_labels_chunk(&self, chunk_indices: [usize; 3], labels: &[u8]) -> Result<()> {
+        self.ensure_labels_array()?;
+        let shape = self.shape();
+        let chunks = self.config.chunks_or_shape();
+        let start = [
+            chunk_indices[0] * chunks[0],
+            chunk_indices[1] * chunks[1],
+            chunk_indices[2] * chunks[2],
+        ];
+        if start[0] >= shape[0] || start[1] >= shape[1] || start[2] >= shape[2] {
+            return Err(err(format!(
+                "labels chunk indices {:?} out of range",
+                chunk_indices
+            )));
+        }
+        let end = [
+            (start[0] + chunks[0]).min(shape[0]),
+            (start[1] + chunks[1]).min(shape[1]),
+            (start[2] + chunks[2]).min(shape[2]),
+        ];
+        let cshape = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];
+        let expected = cshape[0] * cshape[1] * cshape[2];
+        if labels.len() != expected {
+            return Err(err(format!(
+                "labels chunk {:?} expects {expected} samples, got {}",
+                chunk_indices,
+                labels.len()
+            )));
+        }
+        write_chunk_bytes(
+            &self.root.join("data").join(LABELS_VARIABLE),
+            &chunk_key(&chunk_indices),
+            labels,
+        )
+    }
+
+    /// Mark all traces live and refresh root stats after chunked primary writes.
+    ///
+    /// Call once after streaming [`Self::write_chunk`] / [`Self::write_labels_chunk`].
+    /// `samples` may be a running concatenation of written chunk samples (order
+    /// does not matter for min/max/mean/std/rms).
+    pub fn finalize_after_chunked_write(&self, samples: &[f32]) -> Result<()> {
+        let live_shape = self.config.spatial_shape();
+        let live_n = live_shape[0] * live_shape[1];
+        write_chunk_bytes(
+            &self.root.join("metadata").join("live_mask"),
+            &chunk_key(&[0, 0]),
+            &vec![1u8; live_n],
+        )?;
+        update_root_attr_u64(&self.root, "trace_count", live_n as u64)?;
+        if !samples.is_empty() {
+            update_stats(&self.root, samples)?;
+        }
+        write_consolidated_metadata(&self.root)?;
+        Ok(())
+    }
 }
+
 
 pub struct DeliverableWriter;
 
