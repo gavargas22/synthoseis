@@ -95,6 +95,7 @@ impl SingleWorkerRunner {
             crossline_count: self.config.crossline_count.max(pipeline::TINY_DIM),
             samples: self.config.samples.max(pipeline::TINY_DIM),
             store_path: store,
+            chunk_shape: None,
         };
         pipeline::run_e2e(&cfg)
     }
@@ -103,7 +104,9 @@ impl SingleWorkerRunner {
 pub mod parity;
 pub mod partition;
 pub mod pipeline;
+pub mod pipeline_stream;
 
+pub use pipeline_stream::{generate_chunked, resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming, WorkingSetStats};
 pub use partition::{
     partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary, MultiWorkerRunner,
 };
