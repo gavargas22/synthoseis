@@ -31,3 +31,5 @@ jobs:
         run: cargo run -p synthoseis -- run --e2e --store /tmp/synthoseis-e2e.mdio
       - name: multi-worker partition smoke
         run: cargo run -p synthoseis -- run --workers 4 --partition-plan /tmp/synthoseis-plan.json
+      - name: chunked e2e smoke
+        run: cargo run -p synthoseis -- run --e2e --chunked --chunk-i 4 --chunk-j 4 --store /tmp/synthoseis-e2e-chunked.mdio
