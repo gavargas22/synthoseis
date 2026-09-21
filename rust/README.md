@@ -99,7 +99,7 @@ cargo run -p synthoseis -- run --e2e --store /tmp/e2e.mdio
 ```
 
 `synthoseis-core::pipeline::{generate_tiny_cube, run_e2e}` is the library entry;
-CLI `--e2e` is the CI-friendly smoke.
+CLI `--e2e` is the CI-friendly smoke; `--chunked` selects the fused memory-bounded path.
 
 
 ## Multi-worker job partition (local)
@@ -121,6 +121,31 @@ cargo run -p synthoseis -- run --workers 4
 cargo run -p synthoseis -- run --workers 4 --partition-plan /tmp/plan.json
 cargo run -p synthoseis -- run --e2e --workers 4 --store /tmp/e2e.mdio
 ```
+
+
+## Memory-bounded chunked e2e (single-worker)
+
+**Landed:** fused elastic → Zoeppritz RFC → Ricker wavelet per spatial tile so the
+working set stays ≈ chunk (plus O(ni×nj) horizon maps and the u8 label deliverable).
+MDIO create/write uses **sub-volume** chunk shapes (never full-array `[ni,nj,nk]` when
+the grid allows). Deliverables remain labels + angle stacks only.
+
+```bash
+cd rust
+# Default e2e still works (8³); MDIO now uses sub-volume chunks (e.g. 4×4×8).
+cargo run -p synthoseis -- run --e2e --store /tmp/e2e.mdio
+
+# Explicit fused chunked path + chunk sizes (strip-friendly keys for later multi-worker).
+cargo run -p synthoseis -- run --e2e --chunked --chunk-i 4 --chunk-j 4 --store /tmp/e2e-chunked.mdio
+```
+
+Library entry points: `synthoseis_core::pipeline_stream::{generate_chunked, run_e2e_chunked,
+run_e2e_streaming, resolve_chunk_shape}`.
+
+**Arbitrary size** is now a time/disk bound for the Rust path, not a RAM bound for
+elastic/RFC/stack temps. The Python generator is still wasteful and untouched.
+Multi-worker strip partition **against** this streaming writer is a follow-up
+(chunk keys are already `(i,j,k)` so workers can own inline strips later).
 
 ## Develop
 
@@ -183,8 +208,15 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 - CLI `--workers` / `--partition-plan` (cloud handoff smoke)
 - E2e remains full-cube single pass; strip-stitched worker e2e is next
 
+**Landed (chunked streaming e2e)**
+
+- Single-worker fused chunked pipeline (no full elastic/RFC/stack temps)
+- MDIO sub-volume chunks + `--chunked` / `--chunk-i/j/k` CLI
+- Working-set bound tests on 32×32×64 with 8×8×64 tiles
+
 **Still out of scope / next**
 
+- Multi-worker strip partition **stitched onto** the streaming writer
 - Strip-stitched multi-worker e2e (per-worker inline strips → stitch → MDIO)
 - **Cloud** execution (AWS/K8s) consuming `JobPartitionPlan`
 - Full Butterworth bandpass / lateral filter / RMO / end-to-end SeismicVolume

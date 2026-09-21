@@ -29,7 +29,7 @@ pub const TINY_DIM: usize = 8;
 pub const TINY_DIGI: f64 = 4.0;
 
 /// Synthetic depth scale (m per sample index) for RPM trends.
-const DEPTH_PER_SAMPLE: f64 = 100.0;
+pub(crate) const DEPTH_PER_SAMPLE: f64 = 100.0;
 
 /// Configuration for the single-worker e2e pipeline.
 #[derive(Debug, Clone)]
@@ -40,6 +40,12 @@ pub struct E2eConfig {
     pub samples: usize,
     /// Optional MDIO root; when set, labels + angle stack are written.
     pub store_path: Option<PathBuf>,
+    /// Optional MDIO / fused-generation chunk shape `[ci, cj, ck]`.
+    ///
+    /// When `None`, [`crate::pipeline_stream::resolve_chunk_shape`] picks a
+    /// sub-volume default (never full-array when the grid allows). Chunk keys
+    /// are strip-friendly for a later multi-worker partition.
+    pub chunk_shape: Option<[usize; 3]>,
 }
 
 impl Default for E2eConfig {
@@ -50,6 +56,7 @@ impl Default for E2eConfig {
             crossline_count: TINY_DIM,
             samples: TINY_DIM,
             store_path: None,
+            chunk_shape: None,
         }
     }
 }
@@ -208,7 +215,7 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
             Dimension::sized("crossline", nj),
             Dimension::sized("sample", nk),
         ],
-        chunks: Some([ni, nj, nk]),
+        chunks: Some(crate::pipeline_stream::resolve_chunk_shape(cfg)),
         digi: TINY_DIGI,
         seed: cfg.seed,
         units: "ms".into(),
@@ -286,6 +293,7 @@ mod tests {
         let path = dir.path().join("e2e.mdio");
         let cfg = E2eConfig {
             store_path: Some(path.clone()),
+            chunk_shape: None,
             ..E2eConfig::tiny(7)
         };
         let report = run_e2e(&cfg).expect("e2e");

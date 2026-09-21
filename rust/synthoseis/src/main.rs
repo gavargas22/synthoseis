@@ -48,6 +48,18 @@ enum Commands {
         /// Run the end-to-end tiny-cube (8³) pipeline with parity.
         #[arg(long, default_value_t = false)]
         e2e: bool,
+        /// Use memory-bounded fused chunked e2e (elastic+RFC+wavelet per tile).
+        #[arg(long, default_value_t = false)]
+        chunked: bool,
+        /// Chunk size along inline (with --chunked / --e2e MDIO sub-volume chunks).
+        #[arg(long)]
+        chunk_i: Option<usize>,
+        /// Chunk size along crossline.
+        #[arg(long)]
+        chunk_j: Option<usize>,
+        /// Chunk size along samples (default: full nk).
+        #[arg(long)]
+        chunk_k: Option<usize>,
     },
 }
 
@@ -66,6 +78,10 @@ fn main() {
             store,
             partition_plan,
             e2e,
+            chunked,
+            chunk_i,
+            chunk_j,
+            chunk_k,
         }) => {
             let workers = workers.max(1);
             // Grid: e2e / multi-worker placeholder use 8³; single-worker smoke stays 2×2×4.
@@ -103,6 +119,62 @@ fn main() {
             }
 
             if e2e {
+                let chunk_shape = match (chunk_i, chunk_j, chunk_k) {
+                    (None, None, None) if !chunked => None,
+                    _ => {
+                        let (ni, nj, nk) = (inline_count, crossline_count, samples);
+                        Some([
+                            chunk_i.unwrap_or(ni / 2).max(1).min(ni),
+                            chunk_j.unwrap_or(nj / 2).max(1).min(nj),
+                            chunk_k.unwrap_or(nk).max(1).min(nk),
+                        ])
+                    }
+                };
+                if chunked || chunk_shape.is_some() {
+                    let cfg = synthoseis_core::pipeline::E2eConfig {
+                        seed,
+                        inline_count,
+                        crossline_count,
+                        samples,
+                        store_path: store.clone(),
+                        chunk_shape: chunk_shape.or_else(|| {
+                            Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
+                                &synthoseis_core::pipeline::E2eConfig {
+                                    seed,
+                                    inline_count,
+                                    crossline_count,
+                                    samples,
+                                    store_path: None,
+                                    chunk_shape: None,
+                                },
+                            ))
+                        }),
+                    };
+                    let (report, stats) = synthoseis_core::pipeline_stream::run_e2e_chunked(&cfg)
+                        .unwrap_or_else(|e| {
+                            eprintln!("chunked e2e failed: {e}");
+                            std::process::exit(1);
+                        });
+                    println!(
+                        "chunked e2e complete: seed={}, workers={}, shape={:?}, chunks={:?}, status={}, peak_temp_bytes={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
+                        seed,
+                        workers,
+                        report.volumes.shape,
+                        cfg.chunk_shape,
+                        report.status,
+                        stats.peak_temp_bytes,
+                        report.parity.label_iou,
+                        report.parity.label_agreement,
+                        report.parity.angle_mae,
+                        report.parity.angle_max_abs
+                    );
+                    if let Some(path) = report.store_path {
+                        println!(
+                            "wrote MDIO labels+angle-stack at {} (sub-volume chunks, parity round-trip ok)",
+                            path.display()
+                        );
+                    }
+                } else {
                 let config = config.clone();
                 let runner = MultiWorkerRunner::new(config);
                 let report = runner.run_e2e(store.clone()).unwrap_or_else(|e| {
@@ -130,6 +202,7 @@ fn main() {
                         "wrote MDIO labels+angle-stack at {} (parity round-trip ok)",
                         path.display()
                     );
+                }
                 }
             } else if workers == 1 {
                 let partition = JobPartition::single_worker(&config);
