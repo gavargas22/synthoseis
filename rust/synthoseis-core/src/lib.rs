@@ -106,9 +106,10 @@ pub mod partition;
 pub mod pipeline;
 pub mod pipeline_stream;
 
-pub use pipeline_stream::{generate_chunked, resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming, WorkingSetStats};
+pub use pipeline_stream::{generate_chunked, resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming, run_e2e_strip_stitched, WorkingSetStats};
 pub use partition::{
-    partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary, MultiWorkerRunner,
+    partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
+    MultiWorkerRunner, SpatialStrip,
 };
 
 #[cfg(test)]
@@ -165,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_e2e_still_full_cube() {
+    fn multi_e2e_full_cube_legacy_path() {
         let cfg = RunConfig {
             seed: 42,
             workers: 4,
@@ -179,6 +180,25 @@ mod tests {
         assert_eq!(report.status, "ok-e2e");
         assert_eq!(report.volumes.shape, [8, 8, 8]);
         assert!(report.parity.passes_defaults());
+    }
+
+    #[test]
+    fn multi_runner_strip_stitch_e2e() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi-strip.mdio");
+        let cfg = RunConfig {
+            seed: 42,
+            workers: 4,
+            inline_count: 8,
+            crossline_count: 8,
+            samples: 8,
+        };
+        let (report, stats) = MultiWorkerRunner::new(cfg)
+            .run_e2e_strip_stitched(Some(path), Some([2, 4, 8]))
+            .expect("strip-stitch");
+        assert_eq!(report.status, "ok-e2e-strip-stitch");
+        assert!(report.parity.passes_defaults());
+        assert!(stats.tiles_processed >= 4);
     }
 
     #[test]
