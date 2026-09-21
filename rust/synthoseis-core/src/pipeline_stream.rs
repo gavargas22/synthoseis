@@ -1,1 +1,1 @@
-LOAD_FROM_DISK_WORKSPACE_C06_TXT
+FILE:/workspace/pipeline_stream_EXACT.rs
