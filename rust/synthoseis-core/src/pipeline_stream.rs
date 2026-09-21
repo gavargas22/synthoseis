@@ -1,1 +1,1 @@
-FILE:/workspace/pipeline_stream_EXACT.rs
+LOAD_FROM_/workspace/c06.txt_DO_NOT_USE
