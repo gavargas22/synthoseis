@@ -1,6 +1,6 @@
 //! Synthoseis CLI binary.
 //!
-//! Local multi-worker partition + single-cube e2e; cloud execution is out of scope.
+//! Local multi-worker partition + chunked strip-stitch e2e; cloud execution is out of scope.
 
 use std::path::PathBuf;
 
@@ -26,8 +26,8 @@ enum Commands {
     /// Run a local generation job (single- or multi-worker partition).
     ///
     /// Without `--e2e`: placeholder summary (+ optional MDIO smoke write).
-    /// With `--e2e`: tiny-cube pipeline geo→closures→RPM→seismic→MDIO + parity
-    /// (full cube; strip-stitched multi-worker e2e is a follow-up).
+    /// With `--e2e`: tiny-cube pipeline geo→closures→RPM→seismic→MDIO + parity.
+    /// With `--e2e --chunked --workers N` (N>1): strip-stitch multi-worker fused path.
     Run {
         /// RNG seed for reproducible stubs / e2e.
         #[arg(long, default_value_t = 42)]
@@ -130,7 +130,53 @@ fn main() {
                         ])
                     }
                 };
-                if chunked || chunk_shape.is_some() {
+                // Strip-stitch: --e2e --chunked --workers N>1
+                if chunked && workers > 1 {
+                    let store_path = store.clone().unwrap_or_else(|| {
+                        std::env::temp_dir().join(format!(
+                            "synthoseis-strip-{}-{}.mdio",
+                            seed, workers
+                        ))
+                    });
+                    let resolved = chunk_shape.or_else(|| {
+                        Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
+                            &synthoseis_core::pipeline::E2eConfig {
+                                seed,
+                                inline_count,
+                                crossline_count,
+                                samples,
+                                store_path: None,
+                                chunk_shape: None,
+                            },
+                        ))
+                    });
+                    let runner = MultiWorkerRunner::new(config.clone());
+                    let (report, stats) = runner
+                        .run_e2e_strip_stitched(Some(store_path), resolved)
+                        .unwrap_or_else(|e| {
+                            eprintln!("strip-stitch e2e failed: {e}");
+                            std::process::exit(1);
+                        });
+                    println!(
+                        "strip-stitch e2e complete: seed={}, workers={}, shape={:?}, chunks={:?}, status={}, peak_temp_bytes={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
+                        seed,
+                        workers,
+                        report.volumes.shape,
+                        resolved,
+                        report.status,
+                        stats.peak_temp_bytes,
+                        report.parity.label_iou,
+                        report.parity.label_agreement,
+                        report.parity.angle_mae,
+                        report.parity.angle_max_abs
+                    );
+                    if let Some(path) = report.store_path {
+                        println!(
+                            "wrote shared MDIO labels+angle-stack at {} (strip-stitch, parity vs single-worker ok)",
+                            path.display()
+                        );
+                    }
+                } else if chunked || chunk_shape.is_some() {
                     let cfg = synthoseis_core::pipeline::E2eConfig {
                         seed,
                         inline_count,
@@ -175,34 +221,34 @@ fn main() {
                         );
                     }
                 } else {
-                let config = config.clone();
-                let runner = MultiWorkerRunner::new(config);
-                let report = runner.run_e2e(store.clone()).unwrap_or_else(|e| {
-                    eprintln!("e2e failed: {e}");
-                    std::process::exit(1);
-                });
-                println!(
-                    "e2e complete: seed={}, workers={}, shape={:?}, status={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
-                    seed,
-                    workers,
-                    report.volumes.shape,
-                    report.status,
-                    report.parity.label_iou,
-                    report.parity.label_agreement,
-                    report.parity.angle_mae,
-                    report.parity.angle_max_abs
-                );
-                if workers > 1 {
+                    let config = config.clone();
+                    let runner = MultiWorkerRunner::new(config);
+                    let report = runner.run_e2e(store.clone()).unwrap_or_else(|e| {
+                        eprintln!("e2e failed: {e}");
+                        std::process::exit(1);
+                    });
                     println!(
-                        "note: e2e still runs the full cube once this slice; --workers exercises partition plan / placeholder fan-out"
+                        "e2e complete: seed={}, workers={}, shape={:?}, status={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
+                        seed,
+                        workers,
+                        report.volumes.shape,
+                        report.status,
+                        report.parity.label_iou,
+                        report.parity.label_agreement,
+                        report.parity.angle_mae,
+                        report.parity.angle_max_abs
                     );
-                }
-                if let Some(path) = report.store_path {
-                    println!(
-                        "wrote MDIO labels+angle-stack at {} (parity round-trip ok)",
-                        path.display()
-                    );
-                }
+                    if workers > 1 {
+                        println!(
+                            "note: non-chunked e2e runs the full cube once; use --chunked --workers N for strip-stitch"
+                        );
+                    }
+                    if let Some(path) = report.store_path {
+                        println!(
+                            "wrote MDIO labels+angle-stack at {} (parity round-trip ok)",
+                            path.display()
+                        );
+                    }
                 }
             } else if workers == 1 {
                 let partition = JobPartition::single_worker(&config);
