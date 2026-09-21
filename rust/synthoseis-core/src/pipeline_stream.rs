@@ -547,6 +547,259 @@ pub fn run_e2e_chunked(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats), 
     ))
 }
 
+
+/// Strip-stitch multi-worker e2e on the chunked fused path.
+///
+/// - `workers <= 1`: delegates to [`run_e2e_streaming`] when `store_path` is set,
+///   else [`run_e2e_chunked`].
+/// - `workers > 1`: creates **one** shared MDIO store with sub-volume chunks;
+///   each local worker owns a contiguous inline strip snapped to `chunk_i`,
+///   fuse-generates its tiles, and `write_chunk` / `write_labels_chunk` into the
+///   shared store (no overlapping chunk keys). After join: finalize + full-volume
+///   parity vs a single-worker [`generate_chunked`] reference.
+pub fn run_e2e_strip_stitched(
+    cfg: &E2eConfig,
+    workers: usize,
+) -> Result<(E2eReport, WorkingSetStats), String> {
+    let workers = workers.max(1);
+    if workers <= 1 {
+        return if cfg.store_path.is_some() {
+            run_e2e_streaming(cfg)
+        } else {
+            run_e2e_chunked(cfg)
+        };
+    }
+
+    let path = cfg
+        .store_path
+        .clone()
+        .ok_or_else(|| "run_e2e_strip_stitched requires store_path when workers > 1".to_string())?;
+
+    let (labels, shape) = generate_labels(cfg);
+    let [ni, nj, nk] = shape;
+    let chunks = resolve_chunk_shape(cfg);
+    let [ci, _cj, _ck] = chunks;
+
+    let run_cfg = crate::RunConfig {
+        seed: cfg.seed,
+        workers,
+        inline_count: ni,
+        crossline_count: nj,
+        samples: nk,
+    };
+    let plan = crate::partition::JobPartitionPlan::from_config_chunk_aligned(&run_cfg, ci);
+
+    let create = CreateConfig {
+        dimensions: [
+            Dimension::sized("inline", ni),
+            Dimension::sized("crossline", nj),
+            Dimension::sized("sample", nk),
+        ],
+        chunks: Some(chunks),
+        digi: TINY_DIGI,
+        seed: cfg.seed,
+        units: "ms".into(),
+        name: "synthoseis-e2e".into(),
+    };
+    let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
+    store.ensure_labels_array().map_err(|e| e.to_string())?;
+
+    let labels = std::sync::Arc::new(labels);
+    let trends = depth_trends(nk);
+    let wavelet = ricker(40.0, TINY_DIGI, 1);
+
+    // Track written chunk keys to prove no overlap across workers.
+    let written: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<[usize; 3]>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new()));
+
+    let worker_results: Vec<Result<(WorkingSetStats, Vec<f32>), String>> =
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(plan.partitions.len());
+            for part in &plan.partitions {
+                let part = part.clone();
+                let labels = labels.clone();
+                let wavelet = wavelet.clone();
+                let trends = trends.clone();
+                let store_path = path.clone();
+                let written = written.clone();
+                handles.push(scope.spawn(move || {
+                    worker_strip_fuse_write(
+                        &store_path,
+                        &part,
+                        &labels,
+                        shape,
+                        chunks,
+                        &trends,
+                        &wavelet,
+                        &written,
+                    )
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("strip worker thread"))
+                .collect()
+        });
+
+    let mut stats = WorkingSetStats {
+        chunk_shape: chunks,
+        volume_shape: shape,
+        ..WorkingSetStats::default()
+    };
+    let mut all_samples: Vec<f32> = Vec::new();
+    for r in worker_results {
+        let (ws, samples) = r?;
+        stats.peak_temp_bytes = stats.peak_temp_bytes.max(ws.peak_temp_bytes);
+        stats.tiles_processed += ws.tiles_processed;
+        all_samples.extend_from_slice(&samples);
+    }
+
+    // Re-open for finalize (same root); workers only wrote chunk files.
+    let store = MdioStore::open(&path).map_err(|e| e.to_string())?;
+    store
+        .finalize_after_chunked_write(&all_samples)
+        .map_err(|e| e.to_string())?;
+
+    let (reference, _) = generate_chunked(cfg);
+    let opened = MdioStore::open(&path).map_err(|e| e.to_string())?;
+    let back_angles = opened.read_volume().map_err(|e| e.to_string())?;
+    let back_labels = opened.read_labels_u8().map_err(|e| e.to_string())?;
+    let parity = parity::compare_volumes(
+        &reference.labels,
+        &back_labels,
+        &reference.angle_stack,
+        &back_angles,
+    );
+    if !parity.passes_defaults() {
+        return Err(format!(
+            "strip-stitch MDIO parity failed: iou={:.6} agr={:.6} mae={:.6e} maxabs={:.6e}",
+            parity.label_iou, parity.label_agreement, parity.angle_mae, parity.angle_max_abs
+        ));
+    }
+
+    // Bit-identical labels vs reference (same generate_labels).
+    if *labels != reference.labels {
+        return Err("strip-stitch labels diverged from chunked reference".into());
+    }
+
+    Ok((
+        E2eReport {
+            volumes: reference,
+            parity,
+            store_path: Some(path),
+            status: "ok-e2e-strip-stitch",
+        },
+        stats,
+    ))
+}
+
+fn worker_strip_fuse_write(
+    store_path: &Path,
+    part: &crate::partition::JobPartition,
+    labels: &[u8],
+    shape: [usize; 3],
+    chunks: [usize; 3],
+    trends: &[Vec<f64>; 9],
+    wavelet: &[f64],
+    written: &std::sync::Mutex<std::collections::BTreeSet<[usize; 3]>>,
+) -> Result<(WorkingSetStats, Vec<f32>), String> {
+    let [ni, nj, nk] = shape;
+    let [ci, cj, ck] = chunks;
+    let mut stats = WorkingSetStats {
+        chunk_shape: chunks,
+        volume_shape: shape,
+        ..WorkingSetStats::default()
+    };
+    stats.observe(wavelet.len() * 8 + 9 * nk * 8);
+
+    let Some(strip) = part.to_spatial_strip(nj) else {
+        return Ok((stats, Vec::new()));
+    };
+    if strip.is_empty() {
+        return Ok((stats, Vec::new()));
+    }
+
+    let store = MdioStore::open(store_path).map_err(|e| e.to_string())?;
+    let mut tile_angles = vec![0.0f32; ci * cj * nk];
+    let mut chunk_angles = Vec::new();
+    let mut chunk_labels = Vec::new();
+    let mut samples: Vec<f32> = Vec::new();
+    stats.observe(tile_angles.capacity() * 4);
+
+    let i_chunk_start = strip.i0 / ci.max(1);
+    let mut i0 = strip.i0;
+    let mut i_chunk = i_chunk_start;
+    while i0 < strip.i1 {
+        let i1 = (i0 + ci).min(strip.i1).min(ni);
+        let ti = i1 - i0;
+        let mut j0 = 0usize;
+        let mut j_chunk = 0usize;
+        while j0 < nj {
+            let j1 = (j0 + cj).min(nj);
+            let tj = j1 - j0;
+            fuse_tile_local(
+                labels,
+                shape,
+                i0,
+                i1,
+                j0,
+                j1,
+                trends,
+                wavelet,
+                &mut tile_angles,
+                &mut stats,
+            );
+            stats.tiles_processed += 1;
+
+            let mut k0 = 0usize;
+            let mut k_chunk = 0usize;
+            while k0 < nk {
+                let k1 = (k0 + ck).min(nk);
+                let tk = k1 - k0;
+                let n = ti * tj * tk;
+                chunk_angles.resize(n, 0.0);
+                chunk_labels.resize(n, 0);
+                let mut bi = 0;
+                for di in 0..ti {
+                    for dj in 0..tj {
+                        for dk in 0..tk {
+                            let local = (di * tj + dj) * nk + (k0 + dk);
+                            chunk_angles[bi] = tile_angles[local];
+                            let gi = i0 + di;
+                            let gj = j0 + dj;
+                            let gk = k0 + dk;
+                            chunk_labels[bi] = labels[(gi * nj + gj) * nk + gk];
+                            bi += 1;
+                        }
+                    }
+                }
+                let key = [i_chunk, j_chunk, k_chunk];
+                {
+                    let mut guard = written.lock().map_err(|e| e.to_string())?;
+                    if !guard.insert(key) {
+                        return Err(format!("overlapping chunk write at {key:?}"));
+                    }
+                }
+                store
+                    .write_chunk(key, &chunk_angles)
+                    .map_err(|e| e.to_string())?;
+                store
+                    .write_labels_chunk(key, &chunk_labels)
+                    .map_err(|e| e.to_string())?;
+                samples.extend_from_slice(&chunk_angles);
+                k0 = k1;
+                k_chunk += 1;
+            }
+            j0 = j1;
+            j_chunk += 1;
+        }
+        i0 = i1;
+        i_chunk += 1;
+    }
+
+    Ok((stats, samples))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,5 +896,66 @@ mod tests {
     fn default_chunks_are_subvolume_for_8() {
         assert_eq!(default_subvolume_chunks([8, 8, 8]), [4, 4, 8]);
         assert_eq!(default_subvolume_chunks([32, 32, 64]), [8, 8, 64]);
+    }
+    #[test]
+    fn strip_stitch_workers4_parity_vs_single() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("strip.mdio");
+        let cfg = E2eConfig {
+            seed: 42,
+            inline_count: 8,
+            crossline_count: 8,
+            samples: 8,
+            store_path: Some(path.clone()),
+            // chunk_i=2 → 4 i-chunks → one per worker
+            chunk_shape: Some([2, 4, 8]),
+        };
+        let (report, stats) = run_e2e_strip_stitched(&cfg, 4).expect("strip-stitch");
+        assert_eq!(report.status, "ok-e2e-strip-stitch");
+        assert!(report.parity.passes_defaults());
+        assert!((report.parity.label_iou - 1.0).abs() < 1e-12);
+        assert_eq!(report.parity.angle_mae, 0.0);
+        assert!(stats.tiles_processed >= 4);
+
+        let (single, _) = generate_chunked(&cfg);
+        assert_eq!(report.volumes.labels, single.labels);
+        assert_eq!(report.volumes.angle_stack, single.angle_stack);
+    }
+
+    #[test]
+    fn strip_stitch_16x16x32_workers4_near_parity() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("strip16.mdio");
+        let cfg = E2eConfig {
+            seed: 7,
+            inline_count: 16,
+            crossline_count: 16,
+            samples: 32,
+            store_path: Some(path.clone()),
+            chunk_shape: Some([4, 4, 32]),
+        };
+        let (report, _) = run_e2e_strip_stitched(&cfg, 4).expect("strip-stitch 16");
+        assert_eq!(report.status, "ok-e2e-strip-stitch");
+        assert!(report.parity.passes_defaults());
+        let (single, _) = generate_chunked(&cfg);
+        assert_eq!(report.volumes.labels, single.labels);
+        assert_eq!(report.volumes.angle_stack, single.angle_stack);
+    }
+
+    #[test]
+    fn strip_stitch_workers_one_matches_chunked() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("one.mdio");
+        let cfg = E2eConfig {
+            seed: 3,
+            inline_count: 8,
+            crossline_count: 8,
+            samples: 8,
+            store_path: Some(path),
+            chunk_shape: Some([4, 4, 8]),
+        };
+        let (a, _) = run_e2e_strip_stitched(&cfg, 1).expect("w1");
+        assert_eq!(a.status, "ok-e2e-chunked");
+        assert!(a.parity.passes_defaults());
     }
 }
