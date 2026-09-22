@@ -1,4 +1,4 @@
-fn fuse_tile_local(
+pub(crate) fn fuse_tile_local(
     labels: &[u8],
     shape: [usize; 3],
     i0: usize,
