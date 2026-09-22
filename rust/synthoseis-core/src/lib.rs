@@ -104,6 +104,7 @@ impl SingleWorkerRunner {
 pub mod parity;
 pub mod partition;
 pub mod pipeline;
+pub mod pipeline_geometry_many;
 pub mod pipeline_mp;
 pub mod pipeline_overlap;
 pub mod pipeline_stream;
@@ -112,14 +113,20 @@ pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
     MultiWorkerRunner, SpatialStrip,
 };
+pub use pipeline_geometry_many::{
+    angle_store_path, angles_from_seismic_many, parse_angles_csv, run_e2e_geometry_once_as_report,
+    run_e2e_geometry_once_seismic_many, AngleStackDeliverable, GeometryOnceReport,
+    DEFAULT_ANGLE_LIST_DEG,
+};
 pub use pipeline_mp::{
     finalize_multiprocess_e2e, multiprocess_plan_path, prepare_multiprocess_store,
     run_e2e_multiprocess, run_worker_partition,
 };
 pub use pipeline_overlap::run_e2e_streaming_overlapped;
 pub use pipeline_stream::{
-    generate_chunked, resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming,
-    run_e2e_strip_stitched, write_strip_partition, WorkingSetStats,
+    generate_angle_stack_from_labels, generate_chunked, generate_chunked_at_angle, generate_labels,
+    resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming, run_e2e_strip_stitched,
+    write_strip_partition, WorkingSetStats, DEFAULT_INCIDENCE_DEG, GENERATE_LABELS_CALLS,
 };
 
 #[cfg(test)]
