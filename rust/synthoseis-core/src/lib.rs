@@ -106,7 +106,11 @@ pub mod partition;
 pub mod pipeline;
 pub mod pipeline_stream;
 
-pub use pipeline_stream::{generate_chunked, resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming, run_e2e_strip_stitched, WorkingSetStats};
+pub use pipeline_stream::{
+    finalize_multiprocess_e2e, generate_chunked, multiprocess_plan_path, prepare_multiprocess_store,
+    resolve_chunk_shape, run_e2e_chunked, run_e2e_multiprocess, run_e2e_streaming,
+    run_e2e_strip_stitched, run_worker_partition, write_strip_partition, WorkingSetStats,
+};
 pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
     MultiWorkerRunner, SpatialStrip,
@@ -197,6 +201,24 @@ mod tests {
             .run_e2e_strip_stitched(Some(path), Some([2, 4, 8]))
             .expect("strip-stitch");
         assert_eq!(report.status, "ok-e2e-strip-stitch");
+        assert!(report.parity.passes_defaults());
+        assert!(stats.tiles_processed >= 4);
+    }
+
+    #[test]
+    fn multiprocess_api_parity_via_exports() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mp-api.mdio");
+        let cfg = pipeline::E2eConfig {
+            seed: 42,
+            inline_count: 8,
+            crossline_count: 8,
+            samples: 8,
+            store_path: Some(path),
+            chunk_shape: Some([2, 4, 8]),
+        };
+        let (report, stats) = run_e2e_multiprocess(&cfg, 4).expect("mp");
+        assert_eq!(report.status, "ok-e2e-multiprocess");
         assert!(report.parity.passes_defaults());
         assert!(stats.tiles_processed >= 4);
     }
