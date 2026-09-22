@@ -10,8 +10,8 @@ I/O saturates. Labels stay a compact u8 deliverable; horizon maps are O(ni×nj).
 |---|-------|--------|--------------|
 | 1 | **Chunked fused streaming** | **Landed** (#15) | Fuse elastic → Zoeppritz RFC → wavelet per spatial tile; MDIO sub-volume chunks. Peak temps ≈ one tile (plus O(ni×nj) maps + u8 labels), not three full elastic volumes. |
 | 2 | **Strip-stitch multi-worker (local)** | **Landed** (#16) | N local threads own contiguous **inline strips** snapped to `chunk_i`, fuse-generate, and `write_chunk` / `write_labels_chunk` into **one shared store** with no overlapping keys. Parity vs single-worker chunked reference. |
-| 3 | **JobPartitionPlan → multi-process** | **This PR** | Serialize `JobPartitionPlan` (serde JSON) to non-overlapping writers on **separate OS processes** sharing one FS store. Same chunk-key ownership; prove multi-process without K8s/AWS. |
-| 4 | **Async compute / write overlap** | Later | Pipeline tile fuse on CPU while previous chunk bytes flush (io_uring / async runtime). Hides store latency without changing ownership rules. |
+| 3 | **JobPartitionPlan → multi-process** | **Landed** (#17) | Serialize `JobPartitionPlan` (serde JSON) to non-overlapping writers on **separate OS processes** sharing one FS store. Same chunk-key ownership; prove multi-process without K8s/AWS. |
+| 4 | **Async compute / write overlap** | **This PR** | A one-deep `std::sync::mpsc::sync_channel(1)` writer overlaps CPU tile fusion with the previous chunk flush. No Tokio/io_uring; single-worker first cut. |
 | 5 | **GPU tile kernels** | Later | Port per-tile Zoeppritz + wavelet (and optionally RPM trends) to GPU; host still owns strip partition + MDIO writes. |
 | 6 | **Zarr sharding / compression** | Later | Blosc/ZFP (or Zarr v3 sharding) to cut disk and network; interchangeable with today’s raw LE chunks once writers stay non-overlapping. |
 
@@ -40,7 +40,11 @@ cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 4 \
 # synthoseis run --e2e --chunked --worker-id K --partition-plan PLAN \
 #   --store STORE --seed S --workers N --chunk-i CI --chunk-j CJ --chunk-k CK
 
-# (4) plan artifact only (chunk-aligned when --chunked / --chunk-i set)
+# (4) single-worker compute/write overlap (one-deep std writer)
+cargo run -p synthoseis -- run --e2e --chunked --overlap \
+  --store /tmp/overlap.mdio
+
+# Plan artifact only (chunk-aligned when --chunked / --chunk-i set)
 cargo run -p synthoseis -- run --workers 4 --chunked --chunk-i 2 \
   --partition-plan /tmp/plan.json
 ```
