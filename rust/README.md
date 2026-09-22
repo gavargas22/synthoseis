@@ -112,8 +112,8 @@ CLI `--e2e` is the CI-friendly smoke; `--chunked` selects the fused memory-bound
   slots are **kept** (not dropped) for stable cloud handoff
 - Placeholder mode fans out locally via `std::thread::scope`
 - `--partition-plan path.json` writes a cloud-ready plan artifact
-- **E2e** still runs the full tiny cube once this slice (strip-stitched multi-worker
-  e2e is a follow-up); `--workers` on `--e2e` records plan metadata only
+- Non-chunked `--e2e --workers N` still runs the full tiny cube once; use
+  `--e2e --chunked --workers N` for strip-stitch (below)
 
 ```bash
 cd rust
@@ -144,8 +144,29 @@ run_e2e_streaming, resolve_chunk_shape}`.
 
 **Arbitrary size** is now a time/disk bound for the Rust path, not a RAM bound for
 elastic/RFC/stack temps. The Python generator is still wasteful and untouched.
-Multi-worker strip partition **against** this streaming writer is a follow-up
-(chunk keys are already `(i,j,k)` so workers can own inline strips later).
+
+## Strip-stitch multi-worker e2e (local)
+
+**Landed:** wire `partition_inline_strips` / `JobPartition` onto the chunked fused
+path so N local workers each own contiguous **inline strips** snapped to MDIO
+`chunk_i`, fuse-generate their tiles, and `write_chunk` / `write_labels_chunk`
+into **one shared store** (no overlapping chunk keys). After join: finalize +
+full-volume parity vs a single-worker chunked reference.
+
+```bash
+cd rust
+# workers=1 stays today's chunked/single path
+cargo run -p synthoseis -- run --e2e --chunked --workers 1 --store /tmp/e2e-c.mdio
+
+# strip-stitch (N>1): shared MDIO, chunk-aligned inline ownership
+cargo run -p synthoseis -- run --e2e --chunked --workers 4 --chunk-i 2 --chunk-j 4 \
+  --store /tmp/e2e-strip.mdio
+```
+
+Library: `MultiWorkerRunner::run_e2e_strip_stitched` /
+`pipeline_stream::run_e2e_strip_stitched`. Cloud job example and GPU remain next.
+
+See also [`SCALE.md`](./SCALE.md) for the RAM → strip-stitch → cloud → GPU ladder.
 
 ## Develop
 
@@ -195,7 +216,8 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 - First RPM depth-trend kernels in `synthoseis-rpm` (from
   `rockphysics/rpm_example.py` + `rpm_tagilsk_trends.py`):
   `RpmExampleTrends::*`, `tagilsk_shale_*` / `tagilsk_brine_sand_*` /
-  `tagilsk_gas_sand_*`, `polyval` — goldens in `tests/fixtures/rpm_trends.json`
+  `tagilsk_gas_sand_*`, `polyval`
+  — goldens in `tests/fixtures/rpm_trends.json`
 
 **Landed (e2e)**
 
@@ -206,7 +228,7 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 
 - Local `partition_jobs` + `JobPartitionPlan` (serde) + `MultiWorkerRunner`
 - CLI `--workers` / `--partition-plan` (cloud handoff smoke)
-- E2e remains full-cube single pass; strip-stitched worker e2e is next
+- Non-chunked e2e remains full-cube single pass; strip-stitch uses `--chunked`
 
 **Landed (chunked streaming e2e)**
 
@@ -214,11 +236,14 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 - MDIO sub-volume chunks + `--chunked` / `--chunk-i/j/k` CLI
 - Working-set bound tests on 32×32×64 with 8×8×64 tiles
 
+**Landed (strip-stitch multi-worker e2e)**
+
+- Local N-worker inline strips → shared MDIO chunk writes → parity vs single-worker
+- CLI `--e2e --chunked --workers N` (N>1)
+
 **Still out of scope / next**
 
-- Multi-worker strip partition **stitched onto** the streaming writer
-- Strip-stitched multi-worker e2e (per-worker inline strips → stitch → MDIO)
-- **Cloud** execution (AWS/K8s) consuming `JobPartitionPlan`
+- **Cloud** job example / AWS/K8s execution consuming `JobPartitionPlan`
 - Full Butterworth bandpass / lateral filter / RMO / end-to-end SeismicVolume
 - Full Tagilsk oil-sand polys + EndMemberMixing / Backus moduli
 - Full geology stack / faults / **GPU**

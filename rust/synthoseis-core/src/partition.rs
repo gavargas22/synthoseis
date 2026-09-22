@@ -6,6 +6,10 @@
 //! worker slots are **kept** (not dropped) for stable cloud handoff.
 //!
 //! [`JobPartitionPlan`] is a serde JSON cloud-handoff artifact.
+//!
+//! # Strip-stitch (chunk-aligned)
+//! [`partition_inline_strips`] maps workers to contiguous **inline** ranges that
+//! snap to MDIO `chunk_i` boundaries so `write_chunk` keys never overlap.
 
 use serde::{Deserialize, Serialize};
 use crate::{RunConfig, RunSummary, SeededRng, SingleWorkerRunner};
@@ -26,6 +30,66 @@ impl JobPartition {
             job_ids: (0..n.max(1)).collect(),
         }
     }
+
+    /// Map `job_id = i * nj + j` to a bounding spatial strip.
+    ///
+    /// Returns `None` when the partition has no jobs.
+    pub fn to_spatial_strip(&self, nj: usize) -> Option<SpatialStrip> {
+        if self.job_ids.is_empty() || nj == 0 {
+            return None;
+        }
+        let mut i0 = usize::MAX;
+        let mut i1 = 0usize;
+        let mut j0 = usize::MAX;
+        let mut j1 = 0usize;
+        for &id in &self.job_ids {
+            let i = (id as usize) / nj;
+            let j = (id as usize) % nj;
+            i0 = i0.min(i);
+            i1 = i1.max(i + 1);
+            j0 = j0.min(j);
+            j1 = j1.max(j + 1);
+        }
+        Some(SpatialStrip {
+            worker_id: self.worker_id,
+            i0,
+            i1,
+            j0,
+            j1,
+        })
+    }
+}
+
+/// Contiguous inline×crossline ownership for one worker (half-open ranges).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpatialStrip {
+    pub worker_id: usize,
+    pub i0: usize,
+    pub i1: usize,
+    pub j0: usize,
+    pub j1: usize,
+}
+
+impl SpatialStrip {
+    pub fn is_empty(&self) -> bool {
+        self.i0 >= self.i1 || self.j0 >= self.j1
+    }
+
+    /// MDIO i-chunk indices fully owned by this strip for the given `chunk_i`.
+    pub fn owned_i_chunks(&self, chunk_i: usize) -> std::ops::Range<usize> {
+        let ci = chunk_i.max(1);
+        let start = self.i0 / ci;
+        // Exclusive end: last owned inline is i1-1 → chunk (i1-1)/ci, then +1.
+        let end = if self.i1 == 0 {
+            0
+        } else {
+            (self.i1 + ci - 1) / ci
+        };
+        // Only claim chunks whose full [ic*ci, (ic+1)*ci) lies inside [i0,i1)
+        // when the strip was built chunk-aligned; for aligned strips start/end
+        // already match. Clamp to start..end.
+        start..end
+    }
 }
 
 /// Shard jobs across `config.workers` contiguous chunks (keeps empty slots).
@@ -45,6 +109,40 @@ pub fn partition_jobs(config: &RunConfig) -> Vec<JobPartition> {
         .collect()
 }
 
+/// Partition workers onto contiguous **inline strips** snapped to `chunk_i`.
+///
+/// Each worker owns a half-open inline range `[i0, i1)` that is a multiple of
+/// `chunk_i` (except the last strip, which may be a short remainder). Job ids
+/// are `i * nj + j` over the full crossline extent so strips align with MDIO
+/// `(i_chunk, *, *)` keys and never share a chunk write.
+pub fn partition_inline_strips(config: &RunConfig, chunk_i: usize) -> Vec<JobPartition> {
+    let worker_count = 1.max(config.workers);
+    let ni = config.inline_count.max(1);
+    let nj = config.crossline_count.max(1);
+    let ci = chunk_i.max(1).min(ni);
+    let n_i_chunks = (ni + ci - 1) / ci;
+
+    (0..worker_count)
+        .map(|worker_id| {
+            let start_ic = (worker_id * n_i_chunks) / worker_count;
+            let end_ic = ((worker_id + 1) * n_i_chunks) / worker_count;
+            let i0 = start_ic * ci;
+            let i1 = (end_ic * ci).min(ni);
+            let mut job_ids = Vec::with_capacity((i1 - i0) * nj);
+            for i in i0..i1 {
+                for j in 0..nj {
+                    job_ids.push((i * nj + j) as u64);
+                }
+            }
+            JobPartition {
+                worker_id,
+                worker_count,
+                job_ids,
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobPartitionPlan {
     pub worker_count: usize,
@@ -56,6 +154,16 @@ impl JobPartitionPlan {
         let partitions = partition_jobs(config);
         Self { worker_count: partitions.len(), partitions }
     }
+
+    /// Build a plan whose strips align with MDIO `chunk_i` for strip-stitch e2e.
+    pub fn from_config_chunk_aligned(config: &RunConfig, chunk_i: usize) -> Self {
+        let partitions = partition_inline_strips(config, chunk_i);
+        Self {
+            worker_count: partitions.len(),
+            partitions,
+        }
+    }
+
     pub fn for_worker(&self, worker_id: usize) -> Option<&JobPartition> {
         self.partitions.get(worker_id)
     }
@@ -83,7 +191,9 @@ pub struct MultiRunSummary {
 }
 
 /// Local multi-worker runner (`std::thread::scope`; no rayon / no cloud).
-/// E2e always runs the full cube once (strip-stitch follow-up).
+///
+/// Placeholder fans out per partition. Strip-stitch e2e (`run_e2e_strip_stitched`)
+/// wires partitions onto the chunked fused writer when `workers > 1`.
 #[derive(Debug, Clone)]
 pub struct MultiWorkerRunner {
     pub config: RunConfig,
@@ -127,9 +237,33 @@ impl MultiWorkerRunner {
             status: "ok-multi-placeholder",
         }
     }
+
+    /// Full-cube single-pass e2e (legacy path; ignores worker fan-out for generate).
     pub fn run_e2e(&self, store: Option<std::path::PathBuf>) -> Result<crate::pipeline::E2eReport, String> {
         let part = JobPartition::single_worker(&self.config);
         SingleWorkerRunner::new(self.config.clone(), part).run_e2e(store)
+    }
+
+    /// Strip-stitch multi-worker e2e on the chunked fused path.
+    ///
+    /// `workers == 1` delegates to [`crate::pipeline_stream::run_e2e_chunked`]
+    /// (or streaming when a store is set). `workers > 1` creates one shared MDIO
+    /// store, fans out chunk-aligned inline strips, and parity-checks vs a
+    /// single-worker chunked reference.
+    pub fn run_e2e_strip_stitched(
+        &self,
+        store: Option<std::path::PathBuf>,
+        chunk_shape: Option<[usize; 3]>,
+    ) -> Result<(crate::pipeline::E2eReport, crate::pipeline_stream::WorkingSetStats), String> {
+        let cfg = crate::pipeline::E2eConfig {
+            seed: self.config.seed,
+            inline_count: self.config.inline_count.max(crate::pipeline::TINY_DIM),
+            crossline_count: self.config.crossline_count.max(crate::pipeline::TINY_DIM),
+            samples: self.config.samples.max(crate::pipeline::TINY_DIM),
+            store_path: store,
+            chunk_shape,
+        };
+        crate::pipeline_stream::run_e2e_strip_stitched(&cfg, self.config.workers.max(1))
     }
 }
 
@@ -213,5 +347,44 @@ mod tests {
         let summary = MultiWorkerRunner::new(cfg).run_placeholder();
         assert_eq!(summary.workers, 4);
         assert_eq!(summary.job_count, 64);
+    }
+
+    #[test]
+    fn inline_strips_chunk_aligned_no_overlap() {
+        let cfg = RunConfig {
+            workers: 4,
+            inline_count: 8,
+            crossline_count: 8,
+            samples: 8,
+            seed: 1,
+        };
+        let parts = partition_inline_strips(&cfg, 2);
+        assert_eq!(parts.len(), 4);
+        assert_cover_no_overlap(&parts, 64);
+        // Each worker owns 2 inlines × 8 crosslines = 16 jobs.
+        for (w, p) in parts.iter().enumerate() {
+            assert_eq!(p.job_ids.len(), 16, "worker {w}");
+            let strip = p.to_spatial_strip(8).unwrap();
+            assert_eq!(strip.i1 - strip.i0, 2);
+            assert_eq!(strip.j0, 0);
+            assert_eq!(strip.j1, 8);
+            assert_eq!(strip.owned_i_chunks(2), w..(w + 1));
+        }
+    }
+
+    #[test]
+    fn inline_strips_keep_empty_when_more_workers_than_i_chunks() {
+        let cfg = RunConfig {
+            workers: 4,
+            inline_count: 8,
+            crossline_count: 8,
+            samples: 8,
+            seed: 1,
+        };
+        // chunk_i=4 → only 2 i-chunks → 2 empty workers.
+        let parts = partition_inline_strips(&cfg, 4);
+        assert_eq!(parts.len(), 4);
+        assert_cover_no_overlap(&parts, 64);
+        assert_eq!(parts.iter().filter(|p| p.job_ids.is_empty()).count(), 2);
     }
 }
