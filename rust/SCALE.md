@@ -12,8 +12,8 @@ I/O saturates. Labels stay a compact u8 deliverable; horizon maps are O(ni×nj).
 | 2 | **Strip-stitch multi-worker (local)** | **Landed** (#16) | N local threads own contiguous **inline strips** snapped to `chunk_i`, fuse-generate, and `write_chunk` / `write_labels_chunk` into **one shared store** with no overlapping keys. Parity vs single-worker chunked reference. |
 | 3 | **JobPartitionPlan → multi-process** | **Landed** (#17) | Serialize `JobPartitionPlan` (serde JSON) to non-overlapping writers on **separate OS processes** sharing one FS store. Same chunk-key ownership; prove multi-process without K8s/AWS. |
 | 4 | **Async compute / write overlap** | **Landed** (#18) | A one-deep `std::sync::mpsc::sync_channel(1)` writer overlaps CPU tile fusion with the previous chunk flush. No Tokio/io_uring; single-worker first cut. |
-| 5 | **Geometry once / seismic many** | **This PR** | Generate labels (+ maps) once; fuse N incidence angles into sibling MDIO angle stacks without regenerating geology. CLI `--angles` / `--seismic-many`. |
-| 6 | **GPU tile kernels** | Later | Port per-tile Zoeppritz + wavelet (and optionally RPM trends) to GPU; host still owns strip partition + MDIO writes. |
+| 5 | **Geometry once / seismic many** | **Landed** (#19) | Generate labels (+ maps) once; fuse N incidence angles into sibling MDIO angle stacks without regenerating geology. CLI `--angles` / `--seismic-many`. |
+| 6 | **GPU tile kernels** | **This PR** | Port per-tile Zoeppritz + wavelet into `synthoseis-gpu` with a **CPU software** backend (CI-safe); WGSL/wgpu dispatch next; host still owns strip partition + MDIO writes. CLI `--gpu`. |
 | 7 | **Zarr sharding / compression** | Later | Blosc/ZFP (or Zarr v3 sharding) to cut disk and network; interchangeable with today’s raw LE chunks once writers stay non-overlapping. |
 
 ## Invariants to keep
@@ -45,6 +45,10 @@ cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 4 \
 cargo run -p synthoseis -- run --e2e --chunked --overlap \
   --store /tmp/overlap.mdio
 
+# (6) prefer GPU tile fuse (falls back to CPU software when no device)
+cargo run -p synthoseis -- run --e2e --chunked --gpu \
+  --store /tmp/gpu.mdio
+
 # Plan artifact only (chunk-aligned when --chunked / --chunk-i set)
 cargo run -p synthoseis -- run --workers 4 --chunked --chunk-i 2 \
   --partition-plan /tmp/plan.json
@@ -65,4 +69,5 @@ runs once in the parent (`finalize_multiprocess_e2e`).
 
 ## Explicitly deferred
 
-Cloud K8s/AWS execution, GPU, Python generator rewrite, publishing wheels.
+Cloud K8s/AWS execution, WGSL compute dispatch / RPM-on-GPU / multi-worker GPU,
+Python generator rewrite, publishing wheels.
