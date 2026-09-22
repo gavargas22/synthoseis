@@ -9,5 +9,11 @@
 //! Chunk keys are `(i_chunk, j_chunk, k_chunk)` over `[ci, cj, ck]` so a later
 //! multi-worker strip partition can own contiguous inline ranges without reshape.
 
-include!("pipeline_stream_a.rs");
-include!("pipeline_stream_b.rs");
+include!("pipeline_stream_0.rs");
+include!("pipeline_stream_1.rs");
+include!("pipeline_stream_2.rs");
+include!("pipeline_stream_3.rs");
+include!("pipeline_stream_4.rs");
+include!("pipeline_stream_5.rs");
+include!("pipeline_stream_6.rs");
+include!("pipeline_stream_7.rs");
