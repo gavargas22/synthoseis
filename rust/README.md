@@ -123,6 +123,18 @@ cargo run -p synthoseis -- run --e2e --workers 4 --store /tmp/e2e.mdio
 ```
 
 
+
+## Geometry once / seismic many
+
+Reuse labels once; fuse multiple incidence angles without regenerating geology:
+
+```bash
+cargo run -p synthoseis -- run --e2e --chunked --angles 0,15,30 --store /tmp/geo.mdio
+# writes /tmp/geo_a0.mdio /tmp/geo_a15.mdio /tmp/geo_a30.mdio
+```
+
+Library: `synthoseis_core::run_e2e_geometry_once_seismic_many`.
+
 ## Memory-bounded chunked e2e (single-worker)
 
 **Landed:** fused elastic → Zoeppritz RFC → Ricker wavelet per spatial tile so the
