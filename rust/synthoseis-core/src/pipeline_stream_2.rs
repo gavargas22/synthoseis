@@ -7,6 +7,7 @@ pub(crate) fn fuse_tile_local(
     j1: usize,
     trends: &[Vec<f64>; 9],
     wavelet: &[f64],
+    angle_deg: f64,
     tile_out: &mut [f32],
     stats: &mut WorkingSetStats,
 ) {
@@ -39,7 +40,7 @@ pub(crate) fn fuse_tile_local(
                     vp_tr[k + 1] as f64,
                     vs_tr[k + 1] as f64,
                     rho_tr[k + 1] as f64,
-                    15.0,
+                    angle_deg,
                 );
             }
             rfc_tr[nk - 1] = 0.0;

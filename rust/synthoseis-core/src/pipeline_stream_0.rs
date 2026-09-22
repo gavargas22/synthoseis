@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use synthoseis_closures::{filter_labels_by_min_voxels, relabel_consecutive};
 use synthoseis_geo::{
@@ -23,7 +24,7 @@ pub struct WorkingSetStats {
 }
 
 impl WorkingSetStats {
-    fn observe(&mut self, bytes: usize) {
+    pub(crate) fn observe(&mut self, bytes: usize) {
         self.peak_temp_bytes = self.peak_temp_bytes.max(bytes);
     }
 
@@ -37,6 +38,9 @@ impl WorkingSetStats {
         self.peak_temp_bytes <= budget.max(floor)
     }
 }
+
+/// Call counter for [`generate_labels`] — used by geometry-once tests.
+pub static GENERATE_LABELS_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Resolve MDIO / generation chunk shape.
 ///
@@ -73,6 +77,7 @@ pub fn default_subvolume_chunks(shape: [usize; 3]) -> [usize; 3] {
 /// Label generation — bit-identical to the geo+closures section of
 /// [`crate::pipeline::generate_tiny_cube`].
 pub fn generate_labels(cfg: &E2eConfig) -> (Vec<u8>, [usize; 3]) {
+    GENERATE_LABELS_CALLS.fetch_add(1, Ordering::SeqCst);
     let [ni, nj, nk] = cfg.shape();
     assert!(nk >= 2, "need at least 2 samples for reflectivity");
 

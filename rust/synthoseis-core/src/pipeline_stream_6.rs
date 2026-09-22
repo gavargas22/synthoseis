@@ -56,6 +56,7 @@ pub fn write_strip_partition(
                 j1,
                 trends,
                 wavelet,
+                DEFAULT_INCIDENCE_DEG,
                 &mut tile_angles,
                 &mut stats,
             );
