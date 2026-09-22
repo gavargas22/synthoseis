@@ -11,9 +11,10 @@ I/O saturates. Labels stay a compact u8 deliverable; horizon maps are O(ni×nj).
 | 1 | **Chunked fused streaming** | **Landed** (#15) | Fuse elastic → Zoeppritz RFC → wavelet per spatial tile; MDIO sub-volume chunks. Peak temps ≈ one tile (plus O(ni×nj) maps + u8 labels), not three full elastic volumes. |
 | 2 | **Strip-stitch multi-worker (local)** | **Landed** (#16) | N local threads own contiguous **inline strips** snapped to `chunk_i`, fuse-generate, and `write_chunk` / `write_labels_chunk` into **one shared store** with no overlapping keys. Parity vs single-worker chunked reference. |
 | 3 | **JobPartitionPlan → multi-process** | **Landed** (#17) | Serialize `JobPartitionPlan` (serde JSON) to non-overlapping writers on **separate OS processes** sharing one FS store. Same chunk-key ownership; prove multi-process without K8s/AWS. |
-| 4 | **Async compute / write overlap** | **This PR** | A one-deep `std::sync::mpsc::sync_channel(1)` writer overlaps CPU tile fusion with the previous chunk flush. No Tokio/io_uring; single-worker first cut. |
-| 5 | **GPU tile kernels** | Later | Port per-tile Zoeppritz + wavelet (and optionally RPM trends) to GPU; host still owns strip partition + MDIO writes. |
-| 6 | **Zarr sharding / compression** | Later | Blosc/ZFP (or Zarr v3 sharding) to cut disk and network; interchangeable with today’s raw LE chunks once writers stay non-overlapping. |
+| 4 | **Async compute / write overlap** | **Landed** (#18) | A one-deep `std::sync::mpsc::sync_channel(1)` writer overlaps CPU tile fusion with the previous chunk flush. No Tokio/io_uring; single-worker first cut. |
+| 5 | **Geometry once / seismic many** | **This PR** | Generate labels (+ maps) once; fuse N incidence angles into sibling MDIO angle stacks without regenerating geology. CLI `--angles` / `--seismic-many`. |
+| 6 | **GPU tile kernels** | Later | Port per-tile Zoeppritz + wavelet (and optionally RPM trends) to GPU; host still owns strip partition + MDIO writes. |
+| 7 | **Zarr sharding / compression** | Later | Blosc/ZFP (or Zarr v3 sharding) to cut disk and network; interchangeable with today’s raw LE chunks once writers stay non-overlapping. |
 
 ## Invariants to keep
 
