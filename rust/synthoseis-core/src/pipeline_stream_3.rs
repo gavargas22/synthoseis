@@ -63,6 +63,7 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
                 j1,
                 &trends,
                 &wavelet,
+                DEFAULT_INCIDENCE_DEG,
                 &mut tile_angles,
                 &mut stats,
             );

@@ -7,6 +7,7 @@ fn fuse_tile_into_volume(
     j1: usize,
     trends: &[Vec<f64>; 9],
     wavelet: &[f64],
+    angle_deg: f64,
     angle_out: &mut [f32],
     stats: &mut WorkingSetStats,
 ) {
@@ -38,7 +39,7 @@ fn fuse_tile_into_volume(
                     vp_tr[k + 1] as f64,
                     vs_tr[k + 1] as f64,
                     rho_tr[k + 1] as f64,
-                    15.0,
+                    angle_deg,
                 );
             }
             rfc_tr[nk - 1] = 0.0;
@@ -54,11 +55,30 @@ fn fuse_tile_into_volume(
     }
 }
 
+/// Default mid-angle incidence used by the single-stack fused path.
+pub const DEFAULT_INCIDENCE_DEG: f64 = 15.0;
+
 /// Generate labels + angle stack with fused per-tile elastic/RFC/wavelet.
 ///
-/// Bit-identical to [`crate::pipeline::generate_tiny_cube`] for the same seed.
+/// Bit-identical to [`crate::pipeline::generate_tiny_cube`] for the same seed
+/// at [`DEFAULT_INCIDENCE_DEG`].
 pub fn generate_chunked(cfg: &E2eConfig) -> (E2eVolumes, WorkingSetStats) {
+    generate_chunked_at_angle(cfg, DEFAULT_INCIDENCE_DEG)
+}
+
+/// Like [`generate_chunked`], but with an explicit Zoeppritz incidence angle.
+pub fn generate_chunked_at_angle(cfg: &E2eConfig, angle_deg: f64) -> (E2eVolumes, WorkingSetStats) {
     let (labels, shape) = generate_labels(cfg);
+    generate_angle_stack_from_labels(cfg, &labels, shape, angle_deg)
+}
+
+/// Fuse an angle stack from already-generated labels (geometry amortization).
+pub fn generate_angle_stack_from_labels(
+    cfg: &E2eConfig,
+    labels: &[u8],
+    shape: [usize; 3],
+    angle_deg: f64,
+) -> (E2eVolumes, WorkingSetStats) {
     let [ni, nj, nk] = shape;
     let chunk = resolve_chunk_shape(cfg);
     let mut stats = WorkingSetStats {
@@ -81,7 +101,7 @@ pub fn generate_chunked(cfg: &E2eConfig) -> (E2eVolumes, WorkingSetStats) {
         while j0 < nj {
             let j1 = (j0 + cj).min(nj);
             fuse_tile_into_volume(
-                &labels,
+                labels,
                 shape,
                 i0,
                 i1,
@@ -89,6 +109,7 @@ pub fn generate_chunked(cfg: &E2eConfig) -> (E2eVolumes, WorkingSetStats) {
                 j1,
                 &trends,
                 &wavelet,
+                angle_deg,
                 &mut angle_stack,
                 &mut stats,
             );
@@ -100,7 +121,7 @@ pub fn generate_chunked(cfg: &E2eConfig) -> (E2eVolumes, WorkingSetStats) {
 
     (
         E2eVolumes {
-            labels,
+            labels: labels.to_vec(),
             angle_stack,
             shape,
         },
