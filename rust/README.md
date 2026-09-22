@@ -164,9 +164,25 @@ cargo run -p synthoseis -- run --e2e --chunked --workers 4 --chunk-i 2 --chunk-j
 ```
 
 Library: `MultiWorkerRunner::run_e2e_strip_stitched` /
-`pipeline_stream::run_e2e_strip_stitched`. Cloud job example and GPU remain next.
+`pipeline_stream::run_e2e_strip_stitched`.
 
-See also [`SCALE.md`](./SCALE.md) for the RAM → strip-stitch → cloud → GPU ladder.
+## Multi-process JobPartitionPlan e2e
+
+**Landed:** prove non-overlapping writers on **separate OS processes** sharing one
+MDIO store via the `JobPartitionPlan` JSON artifact (no K8s/AWS).
+
+```bash
+cd rust
+# Orchestrator: prepare store + chunk-aligned plan, spawn N children, finalize
+cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 4 \
+  --chunk-i 2 --chunk-j 4 --store /tmp/e2e-mp.mdio
+```
+
+Library: `prepare_multiprocess_store` / `run_worker_partition` /
+`finalize_multiprocess_e2e` / `run_e2e_multiprocess` / `write_strip_partition`.
+CLI `--worker-id` is the child entry. See [`SCALE.md`](./SCALE.md).
+
+See also [`SCALE.md`](./SCALE.md) for the RAM → strip-stitch → multi-process → async → GPU ladder.
 
 ## Develop
 
@@ -216,8 +232,7 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 - First RPM depth-trend kernels in `synthoseis-rpm` (from
   `rockphysics/rpm_example.py` + `rpm_tagilsk_trends.py`):
   `RpmExampleTrends::*`, `tagilsk_shale_*` / `tagilsk_brine_sand_*` /
-  `tagilsk_gas_sand_*`, `polyval`
-  — goldens in `tests/fixtures/rpm_trends.json`
+  `tagilsk_gas_sand_*`, `polyval` — goldens in `tests/fixtures/rpm_trends.json`
 
 **Landed (e2e)**
 
@@ -241,9 +256,14 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 - Local N-worker inline strips → shared MDIO chunk writes → parity vs single-worker
 - CLI `--e2e --chunked --workers N` (N>1)
 
+**Landed (multi-process JobPartitionPlan e2e)**
+
+- OS multi-process writers via plan artifact on shared FS
+- CLI `--e2e --chunked --multiprocess --workers N` + `--worker-id` child mode
+
 **Still out of scope / next**
 
-- **Cloud** job example / AWS/K8s execution consuming `JobPartitionPlan`
+- **Cloud** K8s/AWS execution consuming `JobPartitionPlan` (local multi-process proves the plan)
 - Full Butterworth bandpass / lateral filter / RMO / end-to-end SeismicVolume
 - Full Tagilsk oil-sand polys + EndMemberMixing / Backus moduli
 - Full geology stack / faults / **GPU**
