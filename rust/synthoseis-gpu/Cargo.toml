@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Future GPU acceleration hooks (CUDA/Vulkan/etc.); CPU path remains default."
+description = "Per-tile Zoeppritz + wavelet fuse kernels (CPU software backend; wgpu/WGSL next)."
 
 [dependencies]
+synthoseis-seismic.workspace = true
+
+[dev-dependencies]
+synthoseis-seismic.workspace = true
