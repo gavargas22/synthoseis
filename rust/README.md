@@ -15,7 +15,7 @@ The Python tree at the repository root stays intact; this workspace lives under 
 | `synthoseis-closures` | Closure / trap kernels (label sizes, flood-fill, fluid masks) |
 | `synthoseis-seismic` | Seismic kernels (Zoeppritz RFC, wavelets, SNR) |
 | `synthoseis-rpm` | RPM depth-trend kernels (example + Tagilsk) |
-| `synthoseis-gpu` | Future GPU acceleration port |
+| `synthoseis-gpu` | Per-tile Zoeppritz + wavelet fuse (CPU software backend; optional `wgpu` probe) |
 
 ## I/O: honest MDIO (Zarr v2)
 
@@ -90,7 +90,8 @@ MDIO create → geo (horizons/labels) → closures (relabel/filter)
 ```
 
 Parity = **labels + angle stacks** (IoU / agreement / MAE / max-abs), not bit-identical
-full seismic. CPU only — **no** GPU. Local multi-worker partition is landed (below);
+full seismic. Per-tile fuse lives in `synthoseis-gpu` (CPU software default; `--gpu`
+falls back when no device). Local multi-worker partition is landed (below);
 cloud execution is still later.
 
 ```bash
@@ -134,6 +135,19 @@ cargo run -p synthoseis -- run --e2e --chunked --angles 0,15,30 --store /tmp/geo
 ```
 
 Library: `synthoseis_core::run_e2e_geometry_once_seismic_many`.
+
+## GPU tile kernels (stage 6 first cut)
+
+Per-tile Zoeppritz RFC + wavelet convolution lives in `synthoseis-gpu` as
+`fuse_tile_cpu` / `fuse_tile_gpu` / `fuse_tile_auto`. Default backend is the **CPU
+software adapter** (bit-identical to the prior core `fuse_tile_local`) so
+`ubuntu-latest` CI needs no GPU. WGSL/wgpu compute dispatch is the next slice within stage 6. CLI `--gpu` sets prefer-gpu and prints
+backend status (no-op fallback when no device).
+
+```bash
+cargo run -p synthoseis -- run --e2e --chunked --gpu --store /tmp/gpu.mdio
+cargo test -p synthoseis-gpu
+```
 
 ## Memory-bounded chunked e2e (single-worker)
 
@@ -282,11 +296,16 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 - OS multi-process writers via plan artifact on shared FS
 - CLI `--e2e --chunked --multiprocess --workers N` + `--worker-id` child mode
 
+**Landed (GPU tile kernels — first cut)**
+
+- `synthoseis-gpu`: `fuse_tile_cpu` / `fuse_tile_gpu` / `fuse_tile_auto` + parity tests
+- Core `fuse_tile_local` delegates to gpu dispatch; CLI `--gpu`
+
 **Still out of scope / next**
 
 - **Cloud** K8s/AWS execution consuming `JobPartitionPlan` (local multi-process proves the plan)
 - Full Butterworth bandpass / lateral filter / RMO / end-to-end SeismicVolume
 - Full Tagilsk oil-sand polys + EndMemberMixing / Backus moduli
-- Full geology stack / faults / **GPU**
+- Full geology stack / faults / **WGSL GPU dispatch** (CPU software fuse landed)
 - Replacing Parameters Python zarr store / dropping the Python generator
 - Publishing wheels
