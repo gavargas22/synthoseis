@@ -35,3 +35,5 @@ jobs:
         run: cargo run -p synthoseis -- run --e2e --chunked --chunk-i 4 --chunk-j 4 --store /tmp/synthoseis-e2e-chunked.mdio
       - name: strip-stitch multi-worker e2e smoke
         run: cargo run -p synthoseis -- run --e2e --chunked --workers 4 --chunk-i 2 --chunk-j 4 --store /tmp/synthoseis-e2e-strip.mdio
+      - name: multiprocess JobPartitionPlan e2e smoke
+        run: cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 4 --chunk-i 2 --chunk-j 4 --store /tmp/synthoseis-e2e-mp.mdio

@@ -88,7 +88,6 @@ impl SingleWorkerRunner {
         &self,
         store: Option<std::path::PathBuf>,
     ) -> Result<pipeline::E2eReport, String> {
-        // Tiny-cube floor: bump sub-8³ defaults (CLI smoke uses 8³).
         let cfg = pipeline::E2eConfig {
             seed: self.config.seed,
             inline_count: self.config.inline_count.max(pipeline::TINY_DIM),
@@ -104,9 +103,17 @@ impl SingleWorkerRunner {
 pub mod parity;
 pub mod partition;
 pub mod pipeline;
+pub mod pipeline_mp;
 pub mod pipeline_stream;
 
-pub use pipeline_stream::{generate_chunked, resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming, run_e2e_strip_stitched, WorkingSetStats};
+pub use pipeline_mp::{
+    finalize_multiprocess_e2e, multiprocess_plan_path, prepare_multiprocess_store,
+    run_e2e_multiprocess, run_worker_partition,
+};
+pub use pipeline_stream::{
+    generate_chunked, resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming,
+    run_e2e_strip_stitched, write_strip_partition, WorkingSetStats,
+};
 pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
     MultiWorkerRunner, SpatialStrip,
@@ -202,19 +209,35 @@ mod tests {
     }
 
     #[test]
+    fn multiprocess_api_parity_via_exports() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mp-api.mdio");
+        let cfg = pipeline::E2eConfig {
+            seed: 42,
+            inline_count: 8,
+            crossline_count: 8,
+            samples: 8,
+            store_path: Some(path),
+            chunk_shape: Some([2, 4, 8]),
+        };
+        let (report, stats) = run_e2e_multiprocess(&cfg, 4).expect("mp");
+        assert_eq!(report.status, "ok-e2e-multiprocess");
+        assert!(report.parity.passes_defaults());
+        assert!(stats.tiles_processed >= 4);
+    }
+
+    #[test]
     fn parity_harness_fixture_near_parity() {
         let (lab_ref, lab_pert, ang_ref, ang_pert) =
             parity::load_parity_cubes_8().expect("fixture");
         assert_eq!(lab_ref.len(), 8 * 8 * 8);
         assert_eq!(ang_ref.len(), 8 * 8 * 8);
 
-        // Self-parity must be exact.
         let self_report = parity::compare_volumes(&lab_ref, &lab_ref, &ang_ref, &ang_ref);
         assert!(self_report.passes_defaults());
         assert!((self_report.label_iou - 1.0).abs() < 1e-12);
         assert!(self_report.angle_mae == 0.0);
 
-        // Perturbed fixture stays within documented near-parity tolerances.
         let report = parity::compare_volumes(&lab_ref, &lab_pert, &ang_ref, &ang_pert);
         assert!(
             report.passes_defaults(),
@@ -224,7 +247,6 @@ mod tests {
             parity::ANGLE_MAE_MAX,
             parity::ANGLE_MAX_ABS_MAX
         );
-        // Ensure metrics are real comparisons, not stubs.
         assert!(report.label_agreement < 1.0);
         assert!(report.angle_mae > 0.0);
     }

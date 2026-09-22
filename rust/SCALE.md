@@ -9,8 +9,8 @@ I/O saturates. Labels stay a compact u8 deliverable; horizon maps are O(ni×nj).
 | # | Stage | Status | What it buys |
 |---|-------|--------|--------------|
 | 1 | **Chunked fused streaming** | **Landed** (#15) | Fuse elastic → Zoeppritz RFC → wavelet per spatial tile; MDIO sub-volume chunks. Peak temps ≈ one tile (plus O(ni×nj) maps + u8 labels), not three full elastic volumes. |
-| 2 | **Strip-stitch multi-worker (local)** | **This PR** | N local workers own contiguous **inline strips** snapped to `chunk_i`, fuse-generate, and `write_chunk` / `write_labels_chunk` into **one shared store** with no overlapping keys. Parity vs single-worker chunked reference. |
-| 3 | **JobPartitionPlan → multi-process / cloud** | Next | Serialize `JobPartitionPlan` (already serde JSON) to non-overlapping writers on separate processes / pods / machines. Same chunk-key ownership; object-store or shared FS backend. |
+| 2 | **Strip-stitch multi-worker (local)** | **Landed** (#16) | N local threads own contiguous **inline strips** snapped to `chunk_i`, fuse-generate, and `write_chunk` / `write_labels_chunk` into **one shared store** with no overlapping keys. Parity vs single-worker chunked reference. |
+| 3 | **JobPartitionPlan → multi-process** | **This PR** | Serialize `JobPartitionPlan` (serde JSON) to non-overlapping writers on **separate OS processes** sharing one FS store. Same chunk-key ownership; prove multi-process without K8s/AWS. |
 | 4 | **Async compute / write overlap** | Later | Pipeline tile fuse on CPU while previous chunk bytes flush (io_uring / async runtime). Hides store latency without changing ownership rules. |
 | 5 | **GPU tile kernels** | Later | Port per-tile Zoeppritz + wavelet (and optionally RPM trends) to GPU; host still owns strip partition + MDIO writes. |
 | 6 | **Zarr sharding / compression** | Later | Blosc/ZFP (or Zarr v3 sharding) to cut disk and network; interchangeable with today’s raw LE chunks once writers stay non-overlapping. |
@@ -18,9 +18,9 @@ I/O saturates. Labels stay a compact u8 deliverable; horizon maps are O(ni×nj).
 ## Invariants to keep
 
 - **Working set:** temps bounded by chunk/tile size (slack for wavelet support), not by full `ni×nj×nk` elastic/RFC/stack.
-- **Ownership:** writers never share an MDIO chunk key (`i_chunk, j_chunk, k_chunk`). Strip-stitch snaps inline ranges to `chunk_i`.
+- **Ownership:** writers never share an MDIO chunk key (`i_chunk, j_chunk, k_chunk`). Strip-stitch / multi-process snap inline ranges to `chunk_i`. File-system ownership of distinct keys is the lock (no shared Mutex across processes).
 - **Parity:** deliverables are **labels + angle stacks** (IoU / agreement / MAE / max-abs), not bit-identical full seismic.
-- **Cloud handoff:** `JobPartitionPlan` is the artifact; local `MultiWorkerRunner` proves the same sharding without K8s/AWS in this tree yet.
+- **Cloud handoff:** `JobPartitionPlan` is the artifact; local multi-process CLI proves the same sharding on a shared FS without K8s/AWS in this tree yet.
 
 ## CLI map
 
@@ -28,13 +28,35 @@ I/O saturates. Labels stay a compact u8 deliverable; horizon maps are O(ni×nj).
 # (1) single-worker chunked
 cargo run -p synthoseis -- run --e2e --chunked --store /tmp/c.mdio
 
-# (2) strip-stitch local multi-worker
+# (2) strip-stitch local multi-worker (threads)
 cargo run -p synthoseis -- run --e2e --chunked --workers 4 --chunk-i 2 --chunk-j 4 \
   --store /tmp/strip.mdio
 
-# (3) plan artifact for a future cloud consumer
-cargo run -p synthoseis -- run --workers 4 --partition-plan /tmp/plan.json
+# (3) multi-process JobPartitionPlan e2e (orchestrator spawns N OS children)
+cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 4 \
+  --chunk-i 2 --chunk-j 4 --store /tmp/mp.mdio
+
+# (3b) worker-only mode (invoked by orchestrator; deterministic argv)
+# synthoseis run --e2e --chunked --worker-id K --partition-plan PLAN \
+#   --store STORE --seed S --workers N --chunk-i CI --chunk-j CJ --chunk-k CK
+
+# (4) plan artifact only (chunk-aligned when --chunked / --chunk-i set)
+cargo run -p synthoseis -- run --workers 4 --chunked --chunk-i 2 \
+  --partition-plan /tmp/plan.json
 ```
+
+### Deterministic child argv (stage 3)
+
+The `--multiprocess` orchestrator re-execs the same binary once per worker:
+
+```text
+<exe> run --e2e --chunked --worker-id <k> --partition-plan <PLAN> --store <STORE> \
+  --seed <S> --workers <N> --chunk-i <ci> --chunk-j <cj> --chunk-k <ck>
+```
+
+Workers load the plan, open the existing store, and call `run_worker_partition`
+for their strip only. Sidecar stats/samples land under `{STORE}.mp/`. Finalize
+runs once in the parent (`finalize_multiprocess_e2e`).
 
 ## Explicitly deferred
 
