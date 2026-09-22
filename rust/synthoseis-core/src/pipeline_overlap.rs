@@ -10,7 +10,7 @@ use crate::parity;
 use crate::pipeline::{E2eConfig, E2eReport, TINY_DIGI};
 use crate::pipeline_stream::{
     depth_trends, fuse_tile_local, generate_chunked, generate_labels, resolve_chunk_shape,
-    WorkingSetStats,
+    WorkingSetStats, DEFAULT_INCIDENCE_DEG,
 };
 
 type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>);
@@ -97,6 +97,7 @@ pub fn run_e2e_streaming_overlapped(
                 j1,
                 &trends,
                 &wavelet,
+                DEFAULT_INCIDENCE_DEG,
                 &mut tile_angles,
                 &mut stats,
             );
