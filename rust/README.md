@@ -140,7 +140,16 @@ cargo run -p synthoseis -- run --e2e --chunked --chunk-i 4 --chunk-j 4 --store /
 ```
 
 Library entry points: `synthoseis_core::pipeline_stream::{generate_chunked, run_e2e_chunked,
-run_e2e_streaming, resolve_chunk_shape}`.
+run_e2e_streaming, resolve_chunk_shape}` plus
+`synthoseis_core::run_e2e_streaming_overlapped`.
+
+For single-worker stores, `--overlap` uses a one-deep `std::sync::mpsc` writer
+thread so tile N+1 is fused while tile N flushes, with no async runtime:
+
+```bash
+cargo run -p synthoseis -- run --e2e --chunked --overlap \
+  --store /tmp/e2e-overlap.mdio
+```
 
 **Arbitrary size** is now a time/disk bound for the Rust path, not a RAM bound for
 elastic/RFC/stack temps. The Python generator is still wasteful and untouched.

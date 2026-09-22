@@ -57,6 +57,9 @@ enum Commands {
         /// Use memory-bounded fused chunked e2e (elastic+RFC+wavelet per tile).
         #[arg(long, default_value_t = false)]
         chunked: bool,
+        /// Overlap single-worker tile compute with a one-deep std writer thread.
+        #[arg(long, default_value_t = false)]
+        overlap: bool,
         /// Chunk size along inline (with --chunked / --e2e MDIO sub-volume chunks).
         #[arg(long)]
         chunk_i: Option<usize>,
@@ -116,6 +119,7 @@ fn main() {
             partition_plan,
             e2e,
             chunked,
+            overlap,
             chunk_i,
             chunk_j,
             chunk_k,
@@ -123,6 +127,19 @@ fn main() {
             worker_id,
         }) => {
             let workers = workers.max(1);
+            if overlap && !(e2e && chunked) {
+                eprintln!("--overlap requires --e2e --chunked");
+                std::process::exit(2);
+            }
+            if overlap && (workers > 1 || multiprocess || worker_id.is_some()) {
+                eprintln!("--overlap currently supports only single-worker, non-multiprocess runs");
+                std::process::exit(2);
+            }
+            if overlap && store.is_none() {
+                eprintln!("--overlap requires --store");
+                std::process::exit(2);
+            }
+            // Grid: e2e / multi-worker placeholder use 8³; single-worker smoke stays 2×2×4.
             let (inline_count, crossline_count, samples) = if e2e || workers > 1 || multiprocess {
                 (8, 8, 8)
             } else {
@@ -137,9 +154,17 @@ fn main() {
             };
 
             let chunk_shape = resolve_chunk_shape_cli(
-                seed, inline_count, crossline_count, samples, chunk_i, chunk_j, chunk_k, chunked,
+                seed,
+                inline_count,
+                crossline_count,
+                samples,
+                chunk_i,
+                chunk_j,
+                chunk_k,
+                chunked,
             );
 
+            // --- Worker mode (child process) ---
             if let Some(wid) = worker_id {
                 if !(e2e && chunked) {
                     eprintln!("--worker-id requires --e2e --chunked");
@@ -170,31 +195,43 @@ fn main() {
                     chunk_shape: chunk_shape.or_else(|| {
                         Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                             &synthoseis_core::pipeline::E2eConfig {
-                                seed, inline_count, crossline_count, samples,
-                                store_path: None, chunk_shape: None,
+                                seed,
+                                inline_count,
+                                crossline_count,
+                                samples,
+                                store_path: None,
+                                chunk_shape: None,
                             },
                         ))
                     }),
                 };
-                let stats = run_worker_partition(&cfg, &plan, wid, &store_path).unwrap_or_else(|e| {
-                    eprintln!("worker {wid} failed: {e}");
-                    std::process::exit(1);
-                });
+                let stats =
+                    run_worker_partition(&cfg, &plan, wid, &store_path).unwrap_or_else(|e| {
+                        eprintln!("worker {wid} failed: {e}");
+                        std::process::exit(1);
+                    });
                 println!(
                     "worker {wid} complete: tiles={}, peak_temp_bytes={}, store={}",
-                    stats.tiles_processed, stats.peak_temp_bytes, store_path.display()
+                    stats.tiles_processed,
+                    stats.peak_temp_bytes,
+                    store_path.display()
                 );
                 return;
             }
 
+            // Partition-plan write (orchestrator / smoke). Prefer chunk-aligned when chunked.
             if let Some(ref plan_path) = partition_plan {
                 if !multiprocess {
                     let plan = if chunked || chunk_i.is_some() {
                         let ci = chunk_shape.map(|c| c[0]).unwrap_or_else(|| {
                             synthoseis_core::pipeline_stream::resolve_chunk_shape(
                                 &synthoseis_core::pipeline::E2eConfig {
-                                    seed, inline_count, crossline_count, samples,
-                                    store_path: None, chunk_shape: None,
+                                    seed,
+                                    inline_count,
+                                    crossline_count,
+                                    samples,
+                                    store_path: None,
+                                    chunk_shape: None,
                                 },
                             )[0]
                         });
@@ -213,13 +250,18 @@ fn main() {
                     assert_eq!(back.worker_count, workers);
                     println!(
                         "wrote partition plan {} (workers={}, jobs={}, chunk_aligned={})",
-                        plan_path.display(), back.worker_count,
-                        back.partitions.iter().map(|p| p.job_ids.len()).sum::<usize>(),
+                        plan_path.display(),
+                        back.worker_count,
+                        back.partitions
+                            .iter()
+                            .map(|p| p.job_ids.len())
+                            .sum::<usize>(),
                         chunked || chunk_i.is_some()
                     );
                 }
             }
 
+            // --- Multiprocess orchestrator ---
             if multiprocess {
                 if !(e2e && chunked) {
                     eprintln!("--multiprocess requires --e2e --chunked");
@@ -235,43 +277,70 @@ fn main() {
                 let resolved = chunk_shape.or_else(|| {
                     Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                         &synthoseis_core::pipeline::E2eConfig {
-                            seed, inline_count, crossline_count, samples,
-                            store_path: None, chunk_shape: None,
+                            seed,
+                            inline_count,
+                            crossline_count,
+                            samples,
+                            store_path: None,
+                            chunk_shape: None,
                         },
                     ))
                 });
                 let cfg = synthoseis_core::pipeline::E2eConfig {
-                    seed, inline_count, crossline_count, samples,
-                    store_path: Some(store_path.clone()), chunk_shape: resolved,
+                    seed,
+                    inline_count,
+                    crossline_count,
+                    samples,
+                    store_path: Some(store_path.clone()),
+                    chunk_shape: resolved,
                 };
-                let (store_path, plan, _prep) =
-                    prepare_multiprocess_store(&cfg, workers, resolved).unwrap_or_else(|e| {
+                let (store_path, plan, _prep) = prepare_multiprocess_store(&cfg, workers, resolved)
+                    .unwrap_or_else(|e| {
                         eprintln!("prepare multiprocess failed: {e}");
                         std::process::exit(1);
                     });
-                let plan_path = partition_plan.clone().unwrap_or_else(|| multiprocess_plan_path(&store_path));
+                let plan_path = partition_plan
+                    .clone()
+                    .unwrap_or_else(|| multiprocess_plan_path(&store_path));
+                // Ensure plan is at the path children will load (prepare already wrote default).
                 if plan_path != multiprocess_plan_path(&store_path) {
-                    std::fs::write(&plan_path, plan.to_json().expect("plan json")).expect("write partition plan");
+                    std::fs::write(&plan_path, plan.to_json().expect("plan json"))
+                        .expect("write partition plan");
                 }
                 println!(
                     "multiprocess prepare: store={} plan={} workers={}",
-                    store_path.display(), plan_path.display(), plan.worker_count
+                    store_path.display(),
+                    plan_path.display(),
+                    plan.worker_count
                 );
 
                 let exe = std::env::current_exe().expect("current_exe");
                 let mut children = Vec::with_capacity(plan.worker_count);
                 for wid in 0..plan.worker_count {
+                    // Deterministic child argv (documented in SCALE.md):
+                    // synthoseis run --e2e --chunked --worker-id K --partition-plan PLAN
+                    //   --store STORE --seed S --workers N [--chunk-i/j/k ...]
                     let mut cmd = Command::new(&exe);
-                    cmd.arg("run").arg("--e2e").arg("--chunked")
-                        .arg("--worker-id").arg(wid.to_string())
-                        .arg("--partition-plan").arg(&plan_path)
-                        .arg("--store").arg(&store_path)
-                        .arg("--seed").arg(seed.to_string())
-                        .arg("--workers").arg(workers.to_string());
+                    cmd.arg("run")
+                        .arg("--e2e")
+                        .arg("--chunked")
+                        .arg("--worker-id")
+                        .arg(wid.to_string())
+                        .arg("--partition-plan")
+                        .arg(&plan_path)
+                        .arg("--store")
+                        .arg(&store_path)
+                        .arg("--seed")
+                        .arg(seed.to_string())
+                        .arg("--workers")
+                        .arg(workers.to_string());
                     if let Some([ci, cj, ck]) = resolved {
-                        cmd.arg("--chunk-i").arg(ci.to_string())
-                            .arg("--chunk-j").arg(cj.to_string())
-                            .arg("--chunk-k").arg(ck.to_string());
+                        cmd.arg("--chunk-i")
+                            .arg(ci.to_string())
+                            .arg("--chunk-j")
+                            .arg(cj.to_string())
+                            .arg("--chunk-k")
+                            .arg(ck.to_string());
                     }
                     let child = cmd.spawn().unwrap_or_else(|e| {
                         eprintln!("spawn worker {wid}: {e}");
@@ -290,15 +359,23 @@ fn main() {
                     }
                 }
 
-                let (report, stats) = finalize_multiprocess_e2e(&cfg, &store_path).unwrap_or_else(|e| {
-                    eprintln!("finalize multiprocess failed: {e}");
-                    std::process::exit(1);
-                });
+                let (report, stats) =
+                    finalize_multiprocess_e2e(&cfg, &store_path).unwrap_or_else(|e| {
+                        eprintln!("finalize multiprocess failed: {e}");
+                        std::process::exit(1);
+                    });
                 println!(
                     "multiprocess e2e complete: seed={}, workers={}, shape={:?}, chunks={:?}, status={}, peak_temp_bytes={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
-                    seed, workers, report.volumes.shape, resolved, report.status,
-                    stats.peak_temp_bytes, report.parity.label_iou, report.parity.label_agreement,
-                    report.parity.angle_mae, report.parity.angle_max_abs
+                    seed,
+                    workers,
+                    report.volumes.shape,
+                    resolved,
+                    report.status,
+                    stats.peak_temp_bytes,
+                    report.parity.label_iou,
+                    report.parity.label_agreement,
+                    report.parity.angle_mae,
+                    report.parity.angle_max_abs
                 );
                 if let Some(path) = report.store_path {
                     println!(
@@ -310,75 +387,131 @@ fn main() {
             }
 
             if e2e {
+                // Strip-stitch: --e2e --chunked --workers N>1
                 if chunked && workers > 1 {
                     let store_path = store.clone().unwrap_or_else(|| {
-                        std::env::temp_dir().join(format!("synthoseis-strip-{}-{}.mdio", seed, workers))
+                        std::env::temp_dir()
+                            .join(format!("synthoseis-strip-{}-{}.mdio", seed, workers))
                     });
                     let resolved = chunk_shape.or_else(|| {
                         Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                             &synthoseis_core::pipeline::E2eConfig {
-                                seed, inline_count, crossline_count, samples,
-                                store_path: None, chunk_shape: None,
+                                seed,
+                                inline_count,
+                                crossline_count,
+                                samples,
+                                store_path: None,
+                                chunk_shape: None,
                             },
                         ))
                     });
                     let runner = MultiWorkerRunner::new(config.clone());
-                    let (report, stats) = runner.run_e2e_strip_stitched(Some(store_path), resolved).unwrap_or_else(|e| {
-                        eprintln!("strip-stitch e2e failed: {e}");
-                        std::process::exit(1);
-                    });
+                    let (report, stats) = runner
+                        .run_e2e_strip_stitched(Some(store_path), resolved)
+                        .unwrap_or_else(|e| {
+                            eprintln!("strip-stitch e2e failed: {e}");
+                            std::process::exit(1);
+                        });
                     println!(
                         "strip-stitch e2e complete: seed={}, workers={}, shape={:?}, chunks={:?}, status={}, peak_temp_bytes={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
-                        seed, workers, report.volumes.shape, resolved, report.status,
-                        stats.peak_temp_bytes, report.parity.label_iou, report.parity.label_agreement,
-                        report.parity.angle_mae, report.parity.angle_max_abs
+                        seed,
+                        workers,
+                        report.volumes.shape,
+                        resolved,
+                        report.status,
+                        stats.peak_temp_bytes,
+                        report.parity.label_iou,
+                        report.parity.label_agreement,
+                        report.parity.angle_mae,
+                        report.parity.angle_max_abs
                     );
                     if let Some(path) = report.store_path {
-                        println!("wrote shared MDIO labels+angle-stack at {} (strip-stitch, parity vs single-worker ok)", path.display());
+                        println!(
+                            "wrote shared MDIO labels+angle-stack at {} (strip-stitch, parity vs single-worker ok)",
+                            path.display()
+                        );
                     }
                 } else if chunked || chunk_shape.is_some() {
                     let cfg = synthoseis_core::pipeline::E2eConfig {
-                        seed, inline_count, crossline_count, samples,
+                        seed,
+                        inline_count,
+                        crossline_count,
+                        samples,
                         store_path: store.clone(),
                         chunk_shape: chunk_shape.or_else(|| {
                             Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                                 &synthoseis_core::pipeline::E2eConfig {
-                                    seed, inline_count, crossline_count, samples,
-                                    store_path: None, chunk_shape: None,
+                                    seed,
+                                    inline_count,
+                                    crossline_count,
+                                    samples,
+                                    store_path: None,
+                                    chunk_shape: None,
                                 },
                             ))
                         }),
                     };
-                    let (report, stats) = synthoseis_core::pipeline_stream::run_e2e_chunked(&cfg).unwrap_or_else(|e| {
+                    let result = if overlap {
+                        synthoseis_core::run_e2e_streaming_overlapped(&cfg)
+                    } else {
+                        synthoseis_core::pipeline_stream::run_e2e_chunked(&cfg)
+                    };
+                    let (report, stats) = result.unwrap_or_else(|e| {
                         eprintln!("chunked e2e failed: {e}");
                         std::process::exit(1);
                     });
+                    let mode = if overlap {
+                        "overlapped chunked"
+                    } else {
+                        "chunked"
+                    };
                     println!(
-                        "chunked e2e complete: seed={}, workers={}, shape={:?}, chunks={:?}, status={}, peak_temp_bytes={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
-                        seed, workers, report.volumes.shape, cfg.chunk_shape, report.status,
-                        stats.peak_temp_bytes, report.parity.label_iou, report.parity.label_agreement,
-                        report.parity.angle_mae, report.parity.angle_max_abs
+                        "{mode} e2e complete: seed={}, workers={}, shape={:?}, chunks={:?}, status={}, peak_temp_bytes={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
+                        seed,
+                        workers,
+                        report.volumes.shape,
+                        cfg.chunk_shape,
+                        report.status,
+                        stats.peak_temp_bytes,
+                        report.parity.label_iou,
+                        report.parity.label_agreement,
+                        report.parity.angle_mae,
+                        report.parity.angle_max_abs
                     );
                     if let Some(path) = report.store_path {
-                        println!("wrote MDIO labels+angle-stack at {} (sub-volume chunks, parity round-trip ok)", path.display());
+                        println!(
+                            "wrote MDIO labels+angle-stack at {} (sub-volume chunks, parity round-trip ok)",
+                            path.display()
+                        );
                     }
                 } else {
-                    let runner = MultiWorkerRunner::new(config.clone());
+                    let config = config.clone();
+                    let runner = MultiWorkerRunner::new(config);
                     let report = runner.run_e2e(store.clone()).unwrap_or_else(|e| {
                         eprintln!("e2e failed: {e}");
                         std::process::exit(1);
                     });
                     println!(
                         "e2e complete: seed={}, workers={}, shape={:?}, status={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
-                        seed, workers, report.volumes.shape, report.status,
-                        report.parity.label_iou, report.parity.label_agreement,
-                        report.parity.angle_mae, report.parity.angle_max_abs
+                        seed,
+                        workers,
+                        report.volumes.shape,
+                        report.status,
+                        report.parity.label_iou,
+                        report.parity.label_agreement,
+                        report.parity.angle_mae,
+                        report.parity.angle_max_abs
                     );
                     if workers > 1 {
-                        println!("note: non-chunked e2e runs the full cube once; use --chunked --workers N for strip-stitch or --multiprocess for OS processes");
+                        println!(
+                            "note: non-chunked e2e runs the full cube once; use --chunked --workers N for strip-stitch or --multiprocess for OS processes"
+                        );
                     }
                     if let Some(path) = report.store_path {
-                        println!("wrote MDIO labels+angle-stack at {} (parity round-trip ok)", path.display());
+                        println!(
+                            "wrote MDIO labels+angle-stack at {} (parity round-trip ok)",
+                            path.display()
+                        );
                     }
                 }
             } else if workers == 1 {
@@ -389,10 +522,14 @@ fn main() {
                     "single-worker run complete: seed={}, workers={}, jobs={}, status={}",
                     summary.seed, summary.workers, summary.job_count, summary.status
                 );
+
                 if let Some(path) = store {
                     let meta = StoreMeta {
                         dims: ["inline".into(), "crossline".into(), "time".into()],
-                        shape: [2, 2, 4], digi: 4.0, seed, units: "ms".into(),
+                        shape: [2, 2, 4],
+                        digi: 4.0,
+                        seed,
+                        units: "ms".into(),
                     };
                     let mdio = MdioStore::create(&path, &meta).expect("create MDIO store");
                     let samples: Vec<f32> = (0..16).map(|i| i as f32 * 0.5).collect();
@@ -401,7 +538,11 @@ fn main() {
                     assert_eq!(back.len(), 16);
                     assert_eq!(mdio.shape(), [2, 2, 4]);
                     assert_eq!(mdio.read_live_mask().expect("live_mask"), vec![1, 1, 1, 1]);
-                    println!("wrote MDIO store at {} (shape {:?}, live traces marked)", path.display(), mdio.shape());
+                    println!(
+                        "wrote MDIO store at {} (shape {:?}, live traces marked)",
+                        path.display(),
+                        mdio.shape()
+                    );
                 }
             } else {
                 let summary = MultiWorkerRunner::new(config).run_placeholder();
