@@ -15,6 +15,7 @@ path = "src/main.rs"
 clap.workspace = true
 synthoseis-core.workspace = true
 synthoseis-io.workspace = true
+synthoseis-gpu.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
