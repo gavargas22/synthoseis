@@ -12,45 +12,28 @@ fn fuse_tile_into_volume(
     stats: &mut WorkingSetStats,
 ) {
     let [_ni, nj, nk] = shape;
-    let mut vp_tr = vec![0.0f32; nk];
-    let mut vs_tr = vec![0.0f32; nk];
-    let mut rho_tr = vec![0.0f32; nk];
-    let mut rfc_tr = vec![0.0f32; nk];
-    let mut trace_f64 = vec![0.0f64; nk];
-    stats.observe(
-        (vp_tr.capacity() + vs_tr.capacity() + rho_tr.capacity() + rfc_tr.capacity()) * 4
-            + trace_f64.capacity() * 8,
+    let ti = i1 - i0;
+    let tj = j1 - j0;
+    let mut tile = vec![0.0f32; ti * tj * nk];
+    stats.observe(tile.capacity() * 4);
+    fuse_tile_local(
+        labels,
+        shape,
+        i0,
+        i1,
+        j0,
+        j1,
+        trends,
+        wavelet,
+        angle_deg,
+        &mut tile,
+        stats,
     );
-
-    for i in i0..i1 {
-        for j in j0..j1 {
-            for k in 0..nk {
-                let idx = (i * nj + j) * nk + k;
-                let (vp, vs, rho) = props_f32(labels[idx], k, trends);
-                vp_tr[k] = vp;
-                vs_tr[k] = vs;
-                rho_tr[k] = rho;
-            }
-            for k in 0..(nk - 1) {
-                rfc_tr[k] = zoeppritz_pp(
-                    vp_tr[k] as f64,
-                    vs_tr[k] as f64,
-                    rho_tr[k] as f64,
-                    vp_tr[k + 1] as f64,
-                    vs_tr[k + 1] as f64,
-                    rho_tr[k + 1] as f64,
-                    angle_deg,
-                );
-            }
-            rfc_tr[nk - 1] = 0.0;
-            for k in 0..nk {
-                trace_f64[k] = rfc_tr[k] as f64;
-            }
-            let conv = convolve_same_1d(&trace_f64, wavelet);
-            let base = (i * nj + j) * nk;
-            for k in 0..nk {
-                angle_out[base + k] = conv[k] as f32;
-            }
+    for (di, i) in (i0..i1).enumerate() {
+        for (dj, j) in (j0..j1).enumerate() {
+            let src = (di * tj + dj) * nk;
+            let dst = (i * nj + j) * nk;
+            angle_out[dst..dst + nk].copy_from_slice(&tile[src..src + nk]);
         }
     }
 }

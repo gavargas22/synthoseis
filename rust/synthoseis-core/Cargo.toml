@@ -17,6 +17,7 @@ synthoseis-closures.workspace = true
 synthoseis-seismic.workspace = true
 synthoseis-rpm.workspace = true
 synthoseis-io.workspace = true
+synthoseis-gpu.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -7,7 +7,7 @@ use synthoseis_geo::{
 };
 use synthoseis_io::{CreateConfig, Dimension, MdioStore};
 use synthoseis_rpm::RpmExampleTrends;
-use synthoseis_seismic::{convolve_same_1d, ricker, zoeppritz_pp};
+use synthoseis_seismic::ricker;
 
 use crate::parity;
 use crate::pipeline::{
@@ -144,14 +144,4 @@ pub(crate) fn depth_trends(nk: usize) -> [Vec<f64>; 9] {
         RpmExampleTrends::oil_sand_vs(&depths),
         RpmExampleTrends::oil_sand_rho(&depths),
     ]
-}
-
-#[inline]
-fn props_f32(lab: u8, k: usize, trends: &[Vec<f64>; 9]) -> (f32, f32, f32) {
-    let (vp, vs, rho) = match lab {
-        0 => (trends[0][k], trends[1][k], trends[2][k]),
-        1 => (trends[3][k], trends[4][k], trends[5][k]),
-        _ => (trends[6][k], trends[7][k], trends[8][k]),
-    };
-    (vp as f32, vs as f32, rho as f32)
 }

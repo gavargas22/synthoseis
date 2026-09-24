@@ -32,6 +32,7 @@ enum Commands {
     /// With `--e2e --chunked --multiprocess --workers N`: OS multi-process via plan artifact.
     /// With `--worker-id K --partition-plan P --store S --e2e --chunked`: worker-only mode.
     /// With `--e2e --chunked --angles 0,15,30`: geometry once / seismic many.
+    /// With `--gpu`: prefer per-tile GPU fuse (CPU software fallback when no device).
     Run {
         /// RNG seed for reproducible stubs / e2e.
         #[arg(long, default_value_t = 42)]
@@ -82,6 +83,10 @@ enum Commands {
         /// `--store` (must already exist). Requires `--e2e --chunked --store --partition-plan`.
         #[arg(long)]
         worker_id: Option<usize>,
+        /// Prefer per-tile GPU fuse (`synthoseis-gpu` auto path). Falls back to the
+        /// CPU software adapter when no device is available (CI-safe no-op path).
+        #[arg(long, default_value_t = false)]
+        gpu: bool,
     },
 }
 
@@ -132,8 +137,16 @@ fn main() {
             chunk_k,
             multiprocess,
             worker_id,
+            gpu,
         }) => {
             let workers = workers.max(1);
+            synthoseis_gpu::set_prefer_gpu(gpu);
+            if gpu {
+                eprintln!(
+                    "gpu: requested; backend={}",
+                    synthoseis_gpu::backend_status()
+                );
+            }
             if overlap && !(e2e && chunked) {
                 eprintln!("--overlap requires --e2e --chunked");
                 std::process::exit(2);
