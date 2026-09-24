@@ -1,0 +1,1 @@
+file:///workspace/synthoseis-wgpu-pr/rust/synthoseis-gpu/src/shaders/fuse_tile.wgsl
