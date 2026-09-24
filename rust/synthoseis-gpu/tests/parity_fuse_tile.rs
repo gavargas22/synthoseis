@@ -1,7 +1,9 @@
-//! Parity: `fuse_tile_cpu` / `fuse_tile_auto` / `fuse_tile_gpu` vs an independent
-//! reference that mirrors the historical `fuse_tile_local` body.
+//! Parity: `fuse_tile_cpu` bit-identical to reference; GPU near-parity when adapter.
 
-use synthoseis_gpu::{fuse_tile_auto, fuse_tile_cpu, fuse_tile_gpu, FuseBackend};
+use synthoseis_gpu::{
+    fuse_tile_auto, fuse_tile_cpu, fuse_tile_gpu, gpu_device_available, FuseBackend,
+    GPU_CPU_MAX_ABS_TOL,
+};
 use synthoseis_seismic::{convolve_same_1d, ricker, zoeppritz_pp};
 
 fn props_f32(lab: u8, k: usize, trends: &[Vec<f64>; 9]) -> (f32, f32, f32) {
@@ -94,6 +96,13 @@ fn fixture() -> (Vec<u8>, [usize; 3], [Vec<f64>; 9], Vec<f64>) {
     (labels, shape, trends, wav)
 }
 
+fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0f32, f32::max)
+}
+
 #[test]
 fn fuse_tile_cpu_bit_identical_to_reference() {
     let (labels, shape, trends, wav) = fixture();
@@ -111,7 +120,7 @@ fn fuse_tile_cpu_bit_identical_to_reference() {
 }
 
 #[test]
-fn fuse_tile_gpu_and_auto_match_cpu() {
+fn fuse_tile_gpu_and_auto_match_or_near_cpu() {
     let (labels, shape, trends, wav) = fixture();
     let (i0, i1, j0, j1) = (0, 4, 1, 3);
     let tile_n = (i1 - i0) * (j1 - j0) * shape[2];
@@ -121,10 +130,23 @@ fn fuse_tile_gpu_and_auto_match_cpu() {
     fuse_tile_cpu(&labels, shape, i0, i1, j0, j1, &trends, &wav, 0.0, &mut cpu);
     let b_gpu = fuse_tile_gpu(&labels, shape, i0, i1, j0, j1, &trends, &wav, 0.0, &mut gpu);
     let b_auto = fuse_tile_auto(&labels, shape, i0, i1, j0, j1, &trends, &wav, 0.0, &mut auto);
-    assert_eq!(b_gpu, FuseBackend::Cpu);
-    assert_eq!(b_auto, FuseBackend::Cpu);
-    assert_eq!(cpu, gpu);
-    assert_eq!(cpu, auto);
+
+    if gpu_device_available() {
+        assert_eq!(b_gpu, FuseBackend::Gpu);
+        assert_eq!(b_auto, FuseBackend::Gpu);
+        let d = max_abs_diff(&cpu, &gpu);
+        assert!(
+            d <= GPU_CPU_MAX_ABS_TOL,
+            "gpu vs cpu max_abs={d} tol={GPU_CPU_MAX_ABS_TOL}"
+        );
+        let d2 = max_abs_diff(&cpu, &auto);
+        assert!(d2 <= GPU_CPU_MAX_ABS_TOL);
+    } else {
+        assert_eq!(b_gpu, FuseBackend::Cpu);
+        assert_eq!(b_auto, FuseBackend::Cpu);
+        assert_eq!(cpu, gpu);
+        assert_eq!(cpu, auto);
+    }
 }
 
 #[test]
@@ -138,5 +160,27 @@ fn fuse_tile_cpu_matches_at_multiple_angles() {
         fuse_tile_reference(&labels, shape, i0, i1, j0, j1, &trends, &wav, ang, &mut a);
         fuse_tile_cpu(&labels, shape, i0, i1, j0, j1, &trends, &wav, ang, &mut b);
         assert_eq!(a, b, "mismatch at angle {ang}");
+    }
+}
+
+#[test]
+fn fuse_tile_gpu_near_parity_multiple_angles_when_adapter() {
+    if !gpu_device_available() {
+        return;
+    }
+    let (labels, shape, trends, wav) = fixture();
+    let (i0, i1, j0, j1) = (0, 2, 0, 3);
+    let tile_n = (i1 - i0) * (j1 - j0) * shape[2];
+    for &ang in &[0.0_f64, 10.0, 25.0, 40.0] {
+        let mut cpu = vec![0.0f32; tile_n];
+        let mut gpu = vec![0.0f32; tile_n];
+        fuse_tile_cpu(&labels, shape, i0, i1, j0, j1, &trends, &wav, ang, &mut cpu);
+        let b = fuse_tile_gpu(&labels, shape, i0, i1, j0, j1, &trends, &wav, ang, &mut gpu);
+        assert_eq!(b, FuseBackend::Gpu);
+        let d = max_abs_diff(&cpu, &gpu);
+        assert!(
+            d <= GPU_CPU_MAX_ABS_TOL,
+            "angle {ang}: max_abs={d} tol={GPU_CPU_MAX_ABS_TOL}"
+        );
     }
 }
