@@ -364,11 +364,14 @@ applied to every fused angle-stack tile through `E2eConfig::filters`
 to master when they are off. When on, they are bit-exact against the legacy
 Python code, and lateral halos are recomputed per tile, so the output is
 bit-identical for any chunk shape, strip-worker count or multi-process
-partition.
+partition. With the bandpass on, the Ricker wavelet is skipped (legacy chain:
+reflectivity, then bandpass; the GPU fuse path honours this too);
+`--keep-ricker` / `FilterConfig::keep_ricker` restores Ricker + bandpass.
 
 ```bash
 cd rust
 cargo run -p synthoseis -- run --e2e --chunked --shape 48,48,64 --bandpass 4,30 --lateral-filter 3 --store /tmp/filtered.mdio
+cargo run -p synthoseis -- run --e2e --chunked --shape 48,48,64 --bandpass 4,30 --keep-ricker --store /tmp/keep.mdio
 cargo test -p synthoseis-seismic --test filters_parity -- --nocapture   # parity vs the Python fixtures
 cargo test -p synthoseis-core --test filters_pipeline                    # tiling / worker invariance
 ```
