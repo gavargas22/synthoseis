@@ -4,6 +4,10 @@
 /// [`crate::JobPartitionPlan::from_config_chunk_aligned`] (or equivalent).
 /// File-system ownership of distinct `(i_chunk, j_chunk, k_chunk)` keys is the
 /// lock — there is no shared Mutex. Safe for multi-process writers on a shared FS.
+///
+/// When `faults` is set, the partition also writes its `data/fault_labels`
+/// chunks, evaluating the fault model tile by tile.
+#[allow(clippy::too_many_arguments)]
 pub fn write_strip_partition(
     store_path: &Path,
     part: &crate::partition::JobPartition,
@@ -12,6 +16,7 @@ pub fn write_strip_partition(
     chunks: [usize; 3],
     trends: &[Vec<f64>; 9],
     wavelet: &[f64],
+    faults: Option<&FaultModel>,
 ) -> Result<(WorkingSetStats, Vec<f32>), String> {
     let [ni, nj, nk] = shape;
     let [ci, cj, ck] = chunks;
@@ -34,6 +39,7 @@ pub fn write_strip_partition(
     let mut chunk_angles = Vec::new();
     let mut chunk_labels = Vec::new();
     let mut samples: Vec<f32> = Vec::new();
+    let mut chunk_faults = Vec::new();
     stats.observe(tile_angles.capacity() * 4);
 
     let i_chunk_start = strip.i0 / ci.max(1);
@@ -61,6 +67,8 @@ pub fn write_strip_partition(
                 &mut stats,
             );
             stats.tiles_processed += 1;
+            // Fault labels for this tile only (analytic halo, no neighbours).
+            let fault_tile = faults.map(|m| m.compute_tile(i0, i1, j0, j1));
 
             let mut k0 = 0usize;
             let mut k_chunk = 0usize;
@@ -91,6 +99,12 @@ pub fn write_strip_partition(
                 store
                     .write_labels_chunk(key, &chunk_labels)
                     .map_err(|e| e.to_string())?;
+                if let Some(t) = &fault_tile {
+                    fault_tile_chunk(t, k0, k1, &mut chunk_faults);
+                    store
+                        .write_fault_labels_chunk(key, &chunk_faults)
+                        .map_err(|e| e.to_string())?;
+                }
                 samples.extend_from_slice(&chunk_angles);
                 k0 = k1;
                 k_chunk += 1;
