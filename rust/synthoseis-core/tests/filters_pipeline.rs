@@ -1,14 +1,17 @@
 //! Pipeline-level seismic filter tests (port of the legacy post-convolution
 //! Butterworth bandpass + lateral filter): disabled-by-default bit identity,
 //! halo correctness, and bit-identical output for every chunk shape, strip
-//! worker count and multi-process partition.
+//! worker count and multi-process partition. With the bandpass on the Ricker
+//! wavelet is skipped (legacy chain: reflectivity, then bandpass) unless
+//! `keep_ricker` restores the combined Ricker + bandpass output.
 
 use synthoseis_core::pipeline::{
     generate_tiny_cube, run_e2e, E2eConfig, FaultConfig, FilterConfig,
 };
 use synthoseis_core::{
-    generate_chunked, run_e2e_chunked, run_e2e_geometry_once_seismic_many, run_e2e_multiprocess,
-    run_e2e_streaming, run_e2e_streaming_overlapped, run_e2e_strip_stitched, seismic_filters,
+    generate_chunked, generate_reflectivity, run_e2e_chunked, run_e2e_geometry_once_seismic_many,
+    run_e2e_multiprocess, run_e2e_streaming, run_e2e_streaming_overlapped, run_e2e_strip_stitched,
+    seismic_filters,
 };
 use synthoseis_io::MdioStore;
 use tempfile::tempdir;
@@ -122,13 +125,84 @@ fn configs() -> Vec<FilterConfig> {
             bandpass_hz: Some([3.0, 35.0]),
             bandpass_order: 2,
             lateral_size: 1,
+            keep_ricker: false,
         },
         FilterConfig {
             bandpass_hz: None,
             bandpass_order: 4,
             lateral_size: 4,
+            keep_ricker: false,
+        },
+        // Old combined behaviour (Ricker kept under the bandpass).
+        FilterConfig {
+            keep_ricker: true,
+            ..FilterConfig::legacy(4.0, 30.0, 3)
         },
     ]
+}
+
+/// `keep_ricker` restores the Ricker + bandpass output of the first filter
+/// port. Hashes recorded on master 9d5d2051 (where the Ricker was always
+/// convolved before the bandpass) with `generate_chunked`.
+#[test]
+fn keep_ricker_is_bit_identical_to_master_filtered_output() {
+    let cases: [(FilterConfig, u64); 3] = [
+        (FilterConfig::legacy(4.0, 30.0, 3), 0x68555526d2bd464c),
+        (FilterConfig::legacy(5.5, 22.0, 5), 0xb81a33c5f7b7e212),
+        (
+            FilterConfig {
+                bandpass_hz: Some([3.0, 35.0]),
+                bandpass_order: 2,
+                lateral_size: 1,
+                keep_ricker: false,
+            },
+            0xc6ca285bba8f6a7b,
+        ),
+    ];
+    for (fc, want) in cases {
+        let skip = filtered([8, 5, 64], fc.clone());
+        assert!(skip.filters.skips_ricker());
+        let keep = filtered(
+            [8, 5, 64],
+            FilterConfig {
+                keep_ricker: true,
+                ..fc.clone()
+            },
+        );
+        assert!(!keep.filters.skips_ricker());
+        let (k, _) = generate_chunked(&keep);
+        assert_eq!(angle_hash(&k.angle_stack), want, "keep_ricker {fc:?}");
+        assert_eq!(angle_hash(&generate_tiny_cube(&keep).angle_stack), want);
+        let (s, _) = generate_chunked(&skip);
+        assert_ne!(angle_hash(&s.angle_stack), want, "skip must differ {fc:?}");
+    }
+    // Lateral-only: no bandpass, so the Ricker is always kept.
+    let lateral_only = FilterConfig {
+        lateral_size: 3,
+        ..Default::default()
+    };
+    assert!(!lateral_only.skips_ricker());
+    // Filters off: never skip.
+    assert!(!FilterConfig::default().skips_ricker());
+}
+
+/// With the Ricker skipped, the pre-bandpass signal is the raw Zoeppritz
+/// reflectivity: `generate_reflectivity` equals a filters-off run with an
+/// empty wavelet, and the filtered stack is exactly bandpass(+lateral) of it.
+#[test]
+fn ricker_skip_filters_raw_reflectivity() {
+    let c = filtered([8, 5, 64], FilterConfig::legacy(4.0, 30.0, 3));
+    let rfc = generate_reflectivity(&c, 15.0);
+    let (ricker_stack, _) = generate_chunked(&cfg(10, [24, 20, 64], [8, 5, 64], 3));
+    assert_ne!(bits(&rfc), bits(&ricker_stack.angle_stack));
+    assert!(rfc.iter().any(|&v| v != 0.0));
+    let (v, _) = generate_chunked(&c);
+    let mut whole = rfc.clone();
+    synthoseis_core::pipeline_stream::apply_filters_to_volume(&c, &mut whole);
+    assert_eq!(bits(&v.angle_stack), bits(&whole));
+    // The reflectivity itself does not depend on the filter config.
+    let rfc_off = generate_reflectivity(&cfg(10, [24, 20, 64], [8, 5, 64], 3), 15.0);
+    assert_eq!(bits(&rfc), bits(&rfc_off));
 }
 
 /// The halo-tiled pipeline equals the whole-volume filter applied to the
@@ -136,11 +210,18 @@ fn configs() -> Vec<FilterConfig> {
 #[test]
 fn filtered_stack_equals_whole_volume_filter() {
     let (raw, _) = generate_chunked(&cfg(10, [24, 20, 64], [8, 5, 64], 3));
+    let rfc = generate_reflectivity(&cfg(10, [24, 20, 64], [8, 5, 64], 3), 15.0);
     for fc in configs() {
         let c = filtered([8, 5, 64], fc.clone());
         let (v, _) = generate_chunked(&c);
         assert_ne!(bits(&v.angle_stack), bits(&raw.angle_stack), "{fc:?}");
-        let mut whole = raw.angle_stack.clone();
+        // Unfiltered input: raw reflectivity when the bandpass replaces the
+        // Ricker wavelet, else the Ricker-convolved stack.
+        let mut whole = if fc.skips_ricker() {
+            rfc.clone()
+        } else {
+            raw.angle_stack.clone()
+        };
         synthoseis_core::pipeline_stream::apply_filters_to_volume(&c, &mut whole);
         assert_eq!(bits(&v.angle_stack), bits(&whole), "{fc:?}");
         assert_eq!(v.labels, raw.labels, "filters never touch labels");
@@ -183,7 +264,10 @@ fn filtered_stack_invariant_to_chunk_shape() {
 #[test]
 fn filtered_stack_invariant_to_workers_and_paths() {
     let dir = tempdir().unwrap();
-    for (n, fc) in configs().into_iter().take(2).enumerate() {
+    let all = configs();
+    // Ricker skipped (legacy 4-30 Hz, lateral 3) and the keep_ricker variant.
+    let picked = [all[0].clone(), all[1].clone(), all[4].clone()];
+    for (n, fc) in picked.into_iter().enumerate() {
         let (reference, _) = generate_chunked(&filtered([24, 20, 64], fc.clone()));
         let want = bits(&reference.angle_stack);
         let read = |p: &std::path::Path| bits(&MdioStore::open(p).unwrap().read_volume().unwrap());
