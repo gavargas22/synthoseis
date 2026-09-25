@@ -64,6 +64,11 @@ pub struct FaultConfig {
     /// Maximum throw in samples. Default `29.0` keeps below the hockey-stick
     /// threshold (`0.85 * 35`), whose drag zone is deferred in the port.
     pub throw_max: f64,
+    /// `true` = exact legacy vertical reach (`ReachMode::Legacy`). Default
+    /// `false` = `ReachMode::FitColumn`: identical to legacy whenever the
+    /// legacy seabed taper succeeds, otherwise sigma is fitted to the
+    /// sub-seabed column and fault labels are clamped below the seabed.
+    pub legacy_reach: bool,
 }
 
 impl Default for FaultConfig {
@@ -72,6 +77,7 @@ impl Default for FaultConfig {
             count: 0,
             throw_min: 5.0,
             throw_max: 29.0,
+            legacy_reach: false,
         }
     }
 }

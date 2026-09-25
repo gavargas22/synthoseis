@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use synthoseis_closures::{filter_labels_by_min_voxels, relabel_consecutive};
 use synthoseis_geo::faults::{
-    sample_random_faults, FaultModel, FaultTile, RandomFaultConfig, Seabed,
+    sample_random_faults, FaultModel, FaultTile, RandomFaultConfig, ReachMode, Seabed,
 };
 use synthoseis_geo::{
     enforce_nonnegative_thicknesses, eval_plane, fill_layer_labels, fit_plane_lsq,
@@ -164,7 +164,12 @@ fn build_fault_model(cfg: &E2eConfig, maps: &[f64], nh: usize) -> Option<FaultMo
         seed,
     );
     let seabed = Seabed::Map(maps.iter().step_by(nh).copied().collect());
-    Some(FaultModel::resolve(shape, &params, &seabed, seed))
+    let mode = if cfg.faults.legacy_reach {
+        ReachMode::Legacy
+    } else {
+        ReachMode::FitColumn
+    };
+    Some(FaultModel::resolve_with_mode(shape, &params, &seabed, seed, mode))
 }
 
 /// Resolved fault model for `cfg` (`None` when `cfg.faults.count == 0`).
@@ -177,6 +182,13 @@ pub fn fault_model(cfg: &E2eConfig) -> Option<FaultModel> {
     }
     let (maps, nh) = toy_horizon_maps(cfg);
     build_fault_model(cfg, &maps, nh)
+}
+
+/// Seabed map `(ni, nj)` (top toy horizon, in samples) that the fault model
+/// tapers against and, in the default reach mode, clamps fault labels below.
+pub fn fault_seabed(cfg: &E2eConfig) -> Vec<f64> {
+    let (maps, nh) = toy_horizon_maps(cfg);
+    maps.iter().step_by(nh).copied().collect()
 }
 
 /// Spatial tile used to evaluate faults (MDIO chunk footprint). Results are
