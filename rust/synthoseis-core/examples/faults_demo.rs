@@ -3,18 +3,23 @@
 //!
 //! ```text
 //! cargo run --release -p synthoseis-core --example faults_demo -- \
-//!     OUT_DIR [seed=7] [faults=4] [ni=96] [nj=96] [nk=128]
+//!     OUT_DIR [seed=7] [faults=4] [ni=96] [nj=96] [nk=128] [reach=fit|legacy]
 //! ```
+//!
+//! `reach=legacy` sets `FaultConfig::legacy_reach` (exact legacy vertical
+//! reach); the default `fit` is `ReachMode::FitColumn`.
 //!
 //! Writes little-endian raw arrays (C order, shape in `meta.json`):
 //! `labels.u8` (faulted layer labels), `labels_unfaulted.u8`, `fault_mask.u8`,
 //! `fault_ids.u8`, `angle_stack.f32` (15° fused stack from faulted labels),
-//! `age.f32` (a layer-cake age volume faulted by the same model, for display).
+//! `age.f32` (a layer-cake age volume faulted by the same model, for display),
+//! `seabed.f64` (the `(ni, nj)` seabed map the faults taper against).
 
 use std::io::Write;
 use std::path::PathBuf;
 
 use synthoseis_core::pipeline::{E2eConfig, FaultConfig};
+use synthoseis_core::pipeline_stream::fault_seabed;
 use synthoseis_core::{fault_model, fault_tile, generate_chunked, generate_labels};
 
 fn arg<T: std::str::FromStr>(args: &[String], i: usize, default: T) -> T {
@@ -39,6 +44,7 @@ fn main() {
     let ni: usize = arg(&args, 3, 96);
     let nj: usize = arg(&args, 4, 96);
     let nk: usize = arg(&args, 5, 128);
+    let legacy_reach = args.get(6).map(|s| s == "legacy").unwrap_or(false);
     std::fs::create_dir_all(&out).expect("create out dir");
 
     let base = E2eConfig {
@@ -51,7 +57,10 @@ fn main() {
         faults: FaultConfig::default(),
     };
     let cfg = E2eConfig {
-        faults: FaultConfig::with_count(count),
+        faults: FaultConfig {
+            legacy_reach,
+            ..FaultConfig::with_count(count)
+        },
         ..base.clone()
     };
 
@@ -89,20 +98,37 @@ fn main() {
     let f32s = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
     write(out.join("angle_stack.f32"), &f32s(&vols.angle_stack));
     write(out.join("age.f32"), &f32s(&age));
+    let seabed = fault_seabed(&cfg);
+    let sb_bytes: Vec<u8> = seabed.iter().flat_map(|x| x.to_le_bytes()).collect();
+    write(out.join("seabed.f64"), &sb_bytes);
 
     let voxels: usize = mask.iter().map(|&v| v as usize).sum();
+    let above: usize = (0..ni * nj)
+        .map(|c| {
+            (0..nk)
+                .filter(|&k| (k as f64) < seabed[c] && mask[c * nk + k] == 1)
+                .count()
+        })
+        .sum();
     let faults: Vec<String> = model
         .faults()
         .iter()
         .map(|f| {
             format!(
-                "{{\"center\":{:?},\"throw\":{:.3},\"seabed_roll\":{}}}",
-                f.center, f.params.throw, f.seabed_roll
+                "{{\"center\":{:?},\"throw\":{:.3},\"seabed_roll\":{},\"sigma\":{:.2},\"sigma_used\":{:.2},\"p\":{:.3},\"seabed_ok\":{},\"rescued\":{}}}",
+                f.center,
+                f.params.throw,
+                f.seabed_roll,
+                f.params.sigma,
+                f.sigma_used,
+                f.params.p,
+                f.seabed_ok,
+                f.reach_rescued
             )
         })
         .collect();
     let meta = format!(
-        "{{\"shape\":[{ni},{nj},{nk}],\"seed\":{seed},\"requested\":{count},\"inserted\":{},\"skipped\":{},\"fault_voxels\":{voxels},\"resolve_ms\":{},\"generate_ms\":{},\"peak_temp_bytes\":{},\"faults\":[{}]}}",
+        "{{\"shape\":[{ni},{nj},{nk}],\"seed\":{seed},\"requested\":{count},\"inserted\":{},\"skipped\":{},\"legacy_reach\":{legacy_reach},\"fault_voxels\":{voxels},\"above_seabed\":{above},\"resolve_ms\":{},\"generate_ms\":{},\"peak_temp_bytes\":{},\"faults\":[{}]}}",
         model.faults().len(),
         model.skipped().len(),
         t_resolve.as_millis(),

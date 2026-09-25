@@ -177,3 +177,78 @@ fn faults_disabled_store_has_no_fault_labels() {
     let store = MdioStore::open(&path).unwrap();
     assert!(store.read_fault_labels_u8().is_err());
 }
+
+/// Fault voxels with `k < seabed(i, j)` (in the water column).
+fn above_seabed(c: &E2eConfig, mask: &[u8]) -> usize {
+    let wb = synthoseis_core::pipeline_stream::fault_seabed(c);
+    let nk = c.samples;
+    wb.iter()
+        .enumerate()
+        .map(|(col, &w)| {
+            (0..nk)
+                .filter(|&k| (k as f64) < w && mask[col * nk + k] == 1)
+                .count()
+        })
+        .sum()
+}
+
+fn with_reach(c: &E2eConfig, legacy_reach: bool) -> E2eConfig {
+    E2eConfig {
+        faults: FaultConfig {
+            legacy_reach,
+            ..c.faults.clone()
+        },
+        ..c.clone()
+    }
+}
+
+/// On a cube tall enough for the legacy seabed taper (sub-seabed column
+/// >= ~582 samples) the default reach mode is bit-identical to legacy.
+#[test]
+fn default_reach_is_legacy_exact_on_tall_cubes() {
+    assert!(!FaultConfig::default().legacy_reach);
+    for seed in [4u64, 10] {
+        let base = E2eConfig {
+            faults: FaultConfig::with_count(4),
+            ..cfg(seed, [24, 24, 704], [12, 12, 704])
+        };
+        let legacy = with_reach(&base, true);
+        let model = fault_model(&base).unwrap();
+        assert!(!model.faults().is_empty(), "seed {seed}");
+        assert_eq!(model.reach_rescued(), 0, "seed {seed}");
+        assert!(model.faults().iter().all(|f| f.seabed_ok), "seed {seed}");
+        let m_def = generate_fault_labels(&base).unwrap();
+        let m_leg = generate_fault_labels(&legacy).unwrap();
+        assert_eq!(m_def, m_leg, "mask seed {seed}");
+        assert_eq!(generate_labels(&base).0, generate_labels(&legacy).0);
+        assert_eq!(above_seabed(&base, &m_leg), 0, "legacy above seabed");
+    }
+}
+
+/// On a short cube the legacy taper gives up and faults the water column; the
+/// default mode fits sigma to the column and keeps the water column clean,
+/// deterministically and independent of chunking.
+#[test]
+fn default_reach_keeps_water_column_clean_on_short_cubes() {
+    let c = faulted([8, 8, 48]);
+    let legacy = with_reach(&c, true);
+    let m_def = generate_fault_labels(&c).unwrap();
+    let m_leg = generate_fault_labels(&legacy).unwrap();
+    let model = fault_model(&c).unwrap();
+    assert!(model.reach_rescued() > 0);
+    assert!(model.faults().iter().all(|f| f.seabed_ok));
+    assert!(fault_model(&legacy)
+        .unwrap()
+        .faults()
+        .iter()
+        .any(|f| !f.seabed_ok));
+    assert_eq!(above_seabed(&c, &m_def), 0);
+    assert!(m_def.contains(&1));
+    assert_eq!(generate_fault_labels(&faulted([5, 7, 48])).unwrap(), m_def);
+    println!(
+        "short cube: legacy voxels={} (above seabed {}), default voxels={}",
+        m_leg.iter().map(|&v| v as usize).sum::<usize>(),
+        above_seabed(&legacy, &m_leg),
+        m_def.iter().map(|&v| v as usize).sum::<usize>()
+    );
+}
