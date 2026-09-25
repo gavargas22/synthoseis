@@ -25,6 +25,8 @@ pub fn run_e2e_strip_stitched(
         .clone()
         .ok_or_else(|| "run_e2e_strip_stitched requires store_path when workers > 1".to_string())?;
 
+    let filters = SeismicFilters::from_config(cfg)?;
+    let filters_ref = filters.as_ref();
     let (labels, shape) = generate_labels(cfg);
     let [ni, nj, nk] = shape;
     let chunks = resolve_chunk_shape(cfg);
@@ -84,6 +86,7 @@ pub fn run_e2e_strip_stitched(
                         &trends,
                         &wavelet,
                         faults_ref,
+                        filters_ref,
                     )
                 }));
             }

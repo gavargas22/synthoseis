@@ -6,7 +6,9 @@
 /// lock — there is no shared Mutex. Safe for multi-process writers on a shared FS.
 ///
 /// When `faults` is set, the partition also writes its `data/fault_labels`
-/// chunks, evaluating the fault model tile by tile.
+/// chunks, evaluating the fault model tile by tile. When `filters` is set,
+/// each tile is fused with a lateral halo and filtered (see
+/// [`fuse_tile_filtered`]); neighbouring strips are never read.
 #[allow(clippy::too_many_arguments)]
 pub fn write_strip_partition(
     store_path: &Path,
@@ -17,6 +19,7 @@ pub fn write_strip_partition(
     trends: &[Vec<f64>; 9],
     wavelet: &[f64],
     faults: Option<&FaultModel>,
+    filters: Option<&SeismicFilters>,
 ) -> Result<(WorkingSetStats, Vec<f32>), String> {
     let [ni, nj, nk] = shape;
     let [ci, cj, ck] = chunks;
@@ -53,7 +56,7 @@ pub fn write_strip_partition(
         while j0 < nj {
             let j1 = (j0 + cj).min(nj);
             let tj = j1 - j0;
-            fuse_tile_local(
+            fuse_tile_filtered(
                 labels,
                 shape,
                 i0,
@@ -63,6 +66,7 @@ pub fn write_strip_partition(
                 trends,
                 wavelet,
                 DEFAULT_INCIDENCE_DEG,
+                filters,
                 &mut tile_angles,
                 &mut stats,
             );

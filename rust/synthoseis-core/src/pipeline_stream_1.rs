@@ -8,6 +8,7 @@ fn fuse_tile_into_volume(
     trends: &[Vec<f64>; 9],
     wavelet: &[f64],
     angle_deg: f64,
+    filters: Option<&SeismicFilters>,
     angle_out: &mut [f32],
     stats: &mut WorkingSetStats,
 ) {
@@ -16,7 +17,7 @@ fn fuse_tile_into_volume(
     let tj = j1 - j0;
     let mut tile = vec![0.0f32; ti * tj * nk];
     stats.observe(tile.capacity() * 4);
-    fuse_tile_local(
+    fuse_tile_filtered(
         labels,
         shape,
         i0,
@@ -26,6 +27,7 @@ fn fuse_tile_into_volume(
         trends,
         wavelet,
         angle_deg,
+        filters,
         &mut tile,
         stats,
     );
@@ -56,6 +58,9 @@ pub fn generate_chunked_at_angle(cfg: &E2eConfig, angle_deg: f64) -> (E2eVolumes
 }
 
 /// Fuse an angle stack from already-generated labels (geometry amortization).
+///
+/// Applies `cfg.filters` (post-convolution bandpass + lateral filter) when
+/// enabled; see [`fuse_tile_filtered`].
 pub fn generate_angle_stack_from_labels(
     cfg: &E2eConfig,
     labels: &[u8],
@@ -73,6 +78,7 @@ pub fn generate_angle_stack_from_labels(
     let trends = depth_trends(nk);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
     stats.observe(wavelet.len() * 8 + 9 * nk * 8);
+    let filters = seismic_filters(cfg);
 
     let mut angle_stack = vec![0.0f32; ni * nj * nk];
     let ci = chunk[0];
@@ -93,6 +99,7 @@ pub fn generate_angle_stack_from_labels(
                 &trends,
                 &wavelet,
                 angle_deg,
+                filters.as_ref(),
                 &mut angle_stack,
                 &mut stats,
             );

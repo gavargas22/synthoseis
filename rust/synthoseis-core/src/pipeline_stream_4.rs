@@ -1,5 +1,6 @@
 /// Run chunked e2e: fused generate → optional MDIO (sub-volume chunks) → parity.
 pub fn run_e2e_chunked(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats), String> {
+    SeismicFilters::from_config(cfg)?;
     let (volumes, stats) = generate_chunked(cfg);
     let (second, _) = generate_chunked(cfg);
     let parity = parity::compare_volumes(
