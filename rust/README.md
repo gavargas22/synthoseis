@@ -376,5 +376,19 @@ cargo test -p synthoseis-seismic --test filters_parity -- --nocapture   # parity
 cargo test -p synthoseis-core --test filters_pipeline                    # tiling / worker invariance
 ```
 
-Design notes, the mapping, parity numbers and deferred items (noise, scaling,
-the cumsum deliverable) are in [`docs/filters-port.md`](../docs/filters-port.md).
+**Noise (opt-in):** `--noise-snr-db DB` / `FilterConfig::noise` adds the legacy
+`add_weighted_noise` stage (white Laplace, Hilterman angle mix, scaled to the
+below-seabed reflectivity std / S/N) before the wavelet / bandpass. It uses a
+counter-based Philox RNG keyed by seed + global voxel index, so it is
+bit-identical for any tiling, worker or process split. It is statistically
+equivalent to legacy (mean, std, kurtosis, spectrum, inter-angle correlation
+tested against the real legacy code over 64 seeds). `--noise-seed` and
+`--noise-legacy-weights` (exact legacy degree weights) are optional.
+
+```bash
+cargo run -p synthoseis -- run --e2e --chunked --shape 48,48,64 --bandpass 4,30 --noise-snr-db 12.5 --store /tmp/noisy.mdio
+cargo test -p synthoseis-core --test noise_pipeline -- --nocapture       # legacy stats + invariance
+```
+
+Design notes, the mapping, parity numbers and deferred items (scaling, the
+cumsum deliverable) are in [`docs/filters-port.md`](../docs/filters-port.md).
