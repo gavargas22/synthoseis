@@ -107,6 +107,11 @@ enum Commands {
         /// Requires single-worker `--e2e --chunked`.
         #[arg(long, default_value_t = 1)]
         lateral_filter: usize,
+        /// With `--bandpass`: keep the Ricker wavelet convolution (the first
+        /// filter port's Ricker + bandpass). Default: the bandpass replaces
+        /// the Ricker wavelet (legacy chain: reflectivity, then bandpass).
+        #[arg(long, default_value_t = false)]
+        keep_ricker: bool,
     },
 }
 
@@ -148,9 +153,14 @@ fn parse_shape(s: &str) -> Result<(usize, usize, usize), String> {
 fn parse_filters(
     bandpass: Option<&str>,
     lateral_filter: usize,
+    keep_ricker: bool,
 ) -> Result<synthoseis_core::FilterConfig, String> {
+    if keep_ricker && bandpass.is_none() {
+        return Err("--keep-ricker requires --bandpass".into());
+    }
     let mut fc = synthoseis_core::FilterConfig {
         lateral_size: lateral_filter.max(1),
+        keep_ricker,
         ..Default::default()
     };
     if let Some(s) = bandpass {
@@ -200,6 +210,7 @@ fn main() {
             shape,
             bandpass,
             lateral_filter,
+            keep_ricker,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -245,10 +256,11 @@ fn main() {
                 );
                 std::process::exit(2);
             }
-            let filters = parse_filters(bandpass.as_deref(), lateral_filter).unwrap_or_else(|e| {
-                eprintln!("{e}");
-                std::process::exit(2);
-            });
+            let filters = parse_filters(bandpass.as_deref(), lateral_filter, keep_ricker)
+                .unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                });
             if filters.enabled()
                 && !(e2e && chunked && workers == 1 && !multiprocess && worker_id.is_none())
             {
