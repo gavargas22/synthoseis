@@ -17,7 +17,7 @@
 //! Every step only touches one trace plus an analytic halo, so tiles are
 //! independent and results do not depend on tiling or worker count.
 
-use super::model::{FaultSkip, ResolvedFault, Seabed};
+use super::model::{FaultSkip, ReachMode, ResolvedFault, Seabed};
 use super::params::{FaultParams, FaultRng};
 use super::segments::{segment_block, SEG_ZERO};
 
@@ -27,6 +27,9 @@ pub struct FaultModel {
     shape: [usize; 3],
     faults: Vec<ResolvedFault>,
     skipped: Vec<(usize, FaultSkip)>,
+    mode: ReachMode,
+    /// Seabed for the `FitColumn` mask clamp (`None` = no clamp).
+    clamp: Option<Seabed>,
 }
 
 /// Default tile used for the global survey pass (does not affect results).
@@ -38,21 +41,40 @@ impl FaultModel {
     /// Faults Python would skip ("no fault inserted") are recorded in
     /// [`Self::skipped`]. `seed` only matters for faults without an explicit
     /// `center` (seeded port of `get_middle_z`'s `rng.choice`).
+    ///
+    /// Uses the default [`ReachMode::FitColumn`], which is bit-identical to
+    /// [`ReachMode::Legacy`] whenever every legacy seabed taper succeeds (always
+    /// the case once the sub-seabed column is >= ~582 samples).
     pub fn resolve(shape: [usize; 3], params: &[FaultParams], seabed: &Seabed, seed: u64) -> Self {
+        Self::resolve_with_mode(shape, params, seabed, seed, ReachMode::default())
+    }
+
+    /// [`Self::resolve`] with an explicit [`ReachMode`]. Fault parameters,
+    /// centres and lateral profiles do not depend on `mode`.
+    pub fn resolve_with_mode(
+        shape: [usize; 3],
+        params: &[FaultParams],
+        seabed: &Seabed,
+        seed: u64,
+        mode: ReachMode,
+    ) -> Self {
         let root = FaultRng::new(seed ^ 0xCE47_3E00);
         let mut faults = Vec::new();
         let mut skipped = Vec::new();
         for (n, p) in params.iter().enumerate() {
             let mut rng = root.fork(n as u64 + 1);
-            match super::model::resolve_fault(shape, p, seabed, &mut rng, SURVEY_TILE) {
+            match super::model::resolve_fault_mode(shape, p, seabed, &mut rng, SURVEY_TILE, mode) {
                 Ok(f) => faults.push(f),
                 Err(why) => skipped.push((n, why)),
             }
         }
+        let clamp = (mode == ReachMode::FitColumn).then(|| seabed.clone());
         Self {
             shape,
             faults,
             skipped,
+            mode,
+            clamp,
         }
     }
 
@@ -62,7 +84,19 @@ impl FaultModel {
             shape,
             faults: Vec::new(),
             skipped: Vec::new(),
+            mode: ReachMode::default(),
+            clamp: None,
         }
+    }
+
+    /// Reach mode the model was resolved with.
+    pub fn mode(&self) -> ReachMode {
+        self.mode
+    }
+
+    /// Number of faults whose sigma [`ReachMode::FitColumn`] had to shrink.
+    pub fn reach_rescued(&self) -> usize {
+        self.faults.iter().filter(|f| f.reach_rescued).count()
     }
 
     pub fn shape(&self) -> [usize; 3] {
@@ -152,7 +186,23 @@ impl FaultModel {
             }
         }
 
-        let mask: Vec<u8> = level.iter().map(|&v| u8::from(v > 0.05)).collect();
+        let mut mask: Vec<u8> = level.iter().map(|&v| u8::from(v > 0.05)).collect();
+        // FitColumn: no fault labels above the seabed. A no-op whenever every
+        // taper succeeded against a flat seabed (profiles <= 1 there and
+        // content only moves down).
+        if let Some(sb) = &self.clamp {
+            for di in 0..ti {
+                for dj in 0..tj {
+                    let wb = sb.at(i0 + di, j0 + dj, nj);
+                    let base = (di * tj + dj) * nk;
+                    for (k, m) in mask[base..base + nk].iter_mut().enumerate() {
+                        if (k as f64) < wb {
+                            *m = 0;
+                        }
+                    }
+                }
+            }
+        }
         for (id, &m) in segment_id.iter_mut().zip(mask.iter()) {
             if m == 0 {
                 *id = 0;
