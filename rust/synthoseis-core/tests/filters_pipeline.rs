@@ -126,14 +126,12 @@ fn configs() -> Vec<FilterConfig> {
             bandpass_order: 2,
             lateral_size: 1,
             keep_ricker: false,
-            noise: Default::default(),
         },
         FilterConfig {
             bandpass_hz: None,
             bandpass_order: 4,
             lateral_size: 4,
             keep_ricker: false,
-            noise: Default::default(),
         },
         // Old combined behaviour (Ricker kept under the bandpass).
         FilterConfig {
@@ -157,7 +155,6 @@ fn keep_ricker_is_bit_identical_to_master_filtered_output() {
                 bandpass_order: 2,
                 lateral_size: 1,
                 keep_ricker: false,
-                noise: Default::default(),
             },
             0xc6ca285bba8f6a7b,
         ),

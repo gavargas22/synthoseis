@@ -112,20 +112,6 @@ enum Commands {
         /// the Ricker wavelet (legacy chain: reflectivity, then bandpass).
         #[arg(long, default_value_t = false)]
         keep_ricker: bool,
-        /// Add deterministic random noise at this signal-to-noise ratio (dB)
-        /// to the raw reflectivity before the wavelet / bandpass (port of
-        /// Seismic.add_weighted_noise; legacy example config 7.5-17.5 dB).
-        /// Off by default. Requires single-worker `--e2e --chunked`.
-        #[arg(long)]
-        noise_snr_db: Option<f64>,
-        /// Noise seed (default: `--seed`). Requires `--noise-snr-db`.
-        #[arg(long)]
-        noise_seed: Option<u64>,
-        /// Use the exact legacy noise angle weights (`math.cos` of the angle
-        /// in degrees). Default: correct radian weights. Requires
-        /// `--noise-snr-db`.
-        #[arg(long, default_value_t = false)]
-        noise_legacy_weights: bool,
     },
 }
 
@@ -168,23 +154,13 @@ fn parse_filters(
     bandpass: Option<&str>,
     lateral_filter: usize,
     keep_ricker: bool,
-    noise: synthoseis_core::NoiseConfig,
 ) -> Result<synthoseis_core::FilterConfig, String> {
     if keep_ricker && bandpass.is_none() {
         return Err("--keep-ricker requires --bandpass".into());
     }
-    if !noise.enabled() && (noise.seed.is_some() || noise.legacy_angle_weights) {
-        return Err("--noise-seed / --noise-legacy-weights require --noise-snr-db".into());
-    }
-    if let Some(db) = noise.snr_db {
-        if !db.is_finite() {
-            return Err(format!("--noise-snr-db must be finite, got {db}"));
-        }
-    }
     let mut fc = synthoseis_core::FilterConfig {
         lateral_size: lateral_filter.max(1),
         keep_ricker,
-        noise,
         ..Default::default()
     };
     if let Some(s) = bandpass {
@@ -235,9 +211,6 @@ fn main() {
             bandpass,
             lateral_filter,
             keep_ricker,
-            noise_snr_db,
-            noise_seed,
-            noise_legacy_weights,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -283,12 +256,7 @@ fn main() {
                 );
                 std::process::exit(2);
             }
-            let noise = synthoseis_core::NoiseConfig {
-                snr_db: noise_snr_db,
-                seed: noise_seed,
-                legacy_angle_weights: noise_legacy_weights,
-            };
-            let filters = parse_filters(bandpass.as_deref(), lateral_filter, keep_ricker, noise)
+            let filters = parse_filters(bandpass.as_deref(), lateral_filter, keep_ricker)
                 .unwrap_or_else(|e| {
                     eprintln!("{e}");
                     std::process::exit(2);
@@ -297,7 +265,7 @@ fn main() {
                 && !(e2e && chunked && workers == 1 && !multiprocess && worker_id.is_none())
             {
                 eprintln!(
-                    "--bandpass / --lateral-filter / --noise-snr-db currently require single-worker `--e2e --chunked` (no --multiprocess / --worker-id)"
+                    "--bandpass / --lateral-filter currently require single-worker `--e2e --chunked` (no --multiprocess / --worker-id)"
                 );
                 std::process::exit(2);
             }
