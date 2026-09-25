@@ -2,7 +2,7 @@
 use super::MdioStore;
 use crate::zarr::*;
 use crate::{
-    err, CreateConfig, Dimension, LABELS_VARIABLE, PRIMARY_VARIABLE, Result,
+    err, CreateConfig, Dimension, Result, FAULT_LABELS_VARIABLE, LABELS_VARIABLE, PRIMARY_VARIABLE,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -53,8 +53,7 @@ impl MdioStore {
             return Err(err("path does not look like an MDIO / synthoseis store"));
         }
         let dims = parse_dimensions(&attrs)?;
-        let zarray: Value =
-            read_json(root.join("data").join(PRIMARY_VARIABLE).join(".zarray"))?;
+        let zarray: Value = read_json(root.join("data").join(PRIMARY_VARIABLE).join(".zarray"))?;
         let shape = parse_usize3(&zarray["shape"])?;
         let chunks = parse_usize3(&zarray["chunks"])?;
         let mut dimensions = dims;
@@ -142,31 +141,69 @@ impl MdioStore {
     ///
     /// Creates the Zarr array on first write. Does not replace `chunked_012`.
     pub fn write_labels_u8(&self, labels: &[u8]) -> Result<()> {
+        self.write_u8_variable(&LABELS, labels)
+    }
+
+    /// Ensure `data/labels` Zarr array exists with the store's chunk shape.
+    pub fn ensure_labels_array(&self) -> Result<()> {
+        self.ensure_u8_variable(&LABELS)
+    }
+
+    /// Write one uint8 labels chunk (same indexing as [`Self::write_chunk`]).
+    pub fn write_labels_chunk(&self, chunk_indices: [usize; 3], labels: &[u8]) -> Result<()> {
+        self.write_u8_variable_chunk(&LABELS, chunk_indices, labels)
+    }
+
+    /// Write the binary fault-label volume under `data/fault_labels`.
+    pub fn write_fault_labels_u8(&self, labels: &[u8]) -> Result<()> {
+        self.write_u8_variable(&FAULT_LABELS, labels)
+    }
+
+    /// Ensure `data/fault_labels` exists with the store's chunk shape.
+    pub fn ensure_fault_labels_array(&self) -> Result<()> {
+        self.ensure_u8_variable(&FAULT_LABELS)
+    }
+
+    /// Write one `data/fault_labels` chunk (same indexing as [`Self::write_chunk`]).
+    pub fn write_fault_labels_chunk(&self, chunk_indices: [usize; 3], labels: &[u8]) -> Result<()> {
+        self.write_u8_variable_chunk(&FAULT_LABELS, chunk_indices, labels)
+    }
+
+    fn ensure_u8_variable(&self, var: &U8Variable) -> Result<()> {
         let shape = self.shape();
-        let expected = shape[0] * shape[1] * shape[2];
-        if labels.len() != expected {
-            return Err(err(format!(
-                "labels shape mismatch: expected {expected}, got {}",
-                labels.len()
-            )));
-        }
         let chunks = self.config.chunks_or_shape();
-        let array_dir = self.root.join("data").join(LABELS_VARIABLE);
+        let array_dir = self.root.join("data").join(var.name);
         std::fs::create_dir_all(&array_dir)?;
         write_zarray(
             array_dir.join(".zarray"),
             &shape,
             &chunks,
             "|u1",
-            serde_json::json!(255),
+            serde_json::json!(var.fill),
         )?;
         write_json(
             array_dir.join(".zattrs"),
             &serde_json::json!({
-                "long_name": "layer_labels",
-                "synthoseis_deliverable": "labels"
+                "long_name": var.long_name,
+                "synthoseis_deliverable": var.deliverable
             }),
         )?;
+        Ok(())
+    }
+
+    fn write_u8_variable(&self, var: &U8Variable, labels: &[u8]) -> Result<()> {
+        let shape = self.shape();
+        let expected = shape[0] * shape[1] * shape[2];
+        if labels.len() != expected {
+            return Err(err(format!(
+                "{} shape mismatch: expected {expected}, got {}",
+                var.name,
+                labels.len()
+            )));
+        }
+        let chunks = self.config.chunks_or_shape();
+        self.ensure_u8_variable(var)?;
+        let array_dir = self.root.join("data").join(var.name);
 
         let n0 = ceildiv(shape[0], chunks[0]);
         let n1 = ceildiv(shape[1], chunks[1]);
@@ -200,32 +237,13 @@ impl MdioStore {
         Ok(())
     }
 
-    /// Ensure `data/labels` Zarr array exists with the store's chunk shape.
-    pub fn ensure_labels_array(&self) -> Result<()> {
-        let shape = self.shape();
-        let chunks = self.config.chunks_or_shape();
-        let array_dir = self.root.join("data").join(LABELS_VARIABLE);
-        std::fs::create_dir_all(&array_dir)?;
-        write_zarray(
-            array_dir.join(".zarray"),
-            &shape,
-            &chunks,
-            "|u1",
-            serde_json::json!(255),
-        )?;
-        write_json(
-            array_dir.join(".zattrs"),
-            &serde_json::json!({
-                "long_name": "layer_labels",
-                "synthoseis_deliverable": "labels"
-            }),
-        )?;
-        Ok(())
-    }
-
-    /// Write one uint8 labels chunk (same indexing as [`Self::write_chunk`]).
-    pub fn write_labels_chunk(&self, chunk_indices: [usize; 3], labels: &[u8]) -> Result<()> {
-        self.ensure_labels_array()?;
+    fn write_u8_variable_chunk(
+        &self,
+        var: &U8Variable,
+        chunk_indices: [usize; 3],
+        labels: &[u8],
+    ) -> Result<()> {
+        self.ensure_u8_variable(var)?;
         let shape = self.shape();
         let chunks = self.config.chunks_or_shape();
         let start = [
@@ -235,8 +253,8 @@ impl MdioStore {
         ];
         if start[0] >= shape[0] || start[1] >= shape[1] || start[2] >= shape[2] {
             return Err(err(format!(
-                "labels chunk indices {:?} out of range",
-                chunk_indices
+                "{} chunk indices {:?} out of range",
+                var.name, chunk_indices
             )));
         }
         let end = [
@@ -248,13 +266,14 @@ impl MdioStore {
         let expected = cshape[0] * cshape[1] * cshape[2];
         if labels.len() != expected {
             return Err(err(format!(
-                "labels chunk {:?} expects {expected} samples, got {}",
+                "{} chunk {:?} expects {expected} samples, got {}",
+                var.name,
                 chunk_indices,
                 labels.len()
             )));
         }
         write_chunk_bytes(
-            &self.root.join("data").join(LABELS_VARIABLE),
+            &self.root.join("data").join(var.name),
             &chunk_key(&chunk_indices),
             labels,
         )
@@ -282,6 +301,27 @@ impl MdioStore {
     }
 }
 
+/// A uint8 deliverable array under `data/<name>`.
+struct U8Variable {
+    name: &'static str,
+    long_name: &'static str,
+    deliverable: &'static str,
+    fill: u8,
+}
+
+const LABELS: U8Variable = U8Variable {
+    name: LABELS_VARIABLE,
+    long_name: "layer_labels",
+    deliverable: "labels",
+    fill: 255,
+};
+
+const FAULT_LABELS: U8Variable = U8Variable {
+    name: FAULT_LABELS_VARIABLE,
+    long_name: "fault_labels",
+    deliverable: "fault_labels",
+    fill: 0,
+};
 
 pub struct DeliverableWriter;
 
