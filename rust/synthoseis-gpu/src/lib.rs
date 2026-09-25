@@ -15,9 +15,10 @@
 //! # Feature `wgpu`
 //!
 //! Optional. Default **on** so the CLI `--gpu` path can dispatch when a device
-//! exists. Disable with `--no-default-features` for lean builds. Requires a
-//! recent stable Rust (workspace `rust-version`; wgpu 24 needs ≥1.76 in
-//! practice — CI uses `dtolnay/rust-toolchain@stable`).
+//! exists. Disable with `--no-default-features` for lean builds. Requires
+//! Rust ≥ 1.83 (workspace `rust-version`, matching the wgpu 24 crate's
+//! documented MSRV; CI runs an MSRV job on 1.83 plus
+//! `dtolnay/rust-toolchain@stable`).
 //!
 //! # API
 //!

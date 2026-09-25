@@ -18,7 +18,9 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/gavargas22/synthoseis"
-rust-version = "1.76"
+# MSRV: 1.83 = wgpu 24 crate MSRV (wgpu README "MSRV policy"; its CI REPO_MSRV).
+# Checked by the `msrv` job in .github/workflows/rust-ci.yml.
+rust-version = "1.83"
 
 [workspace.dependencies]
 synthoseis-core = { path = "synthoseis-core" }

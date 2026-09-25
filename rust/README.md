@@ -17,6 +17,25 @@ The Python tree at the repository root stays intact; this workspace lives under 
 | `synthoseis-rpm` | RPM depth-trend kernels (example + Tagilsk) |
 | `synthoseis-gpu` | Per-tile Zoeppritz + wavelet fuse (CPU software backend; optional `wgpu` probe) |
 
+## Minimum supported Rust version (MSRV)
+
+The workspace declares `rust-version = "1.83"`. That is the documented MSRV
+of the `wgpu` 24 crate (wgpu README, "MSRV policy": naga / wgpu-core /
+wgpu-hal / wgpu-types are 1.76, the rest of the wgpu workspace including the
+`wgpu` crate is 1.83), and `synthoseis-gpu` enables `wgpu` by default.
+
+`Cargo.lock` is not committed, so building on 1.83 needs an MSRV-aware lockfile
+(some latest transitive deps require newer Rust). Generate one with any cargo
+≥ 1.84, then build with 1.83:
+
+```bash
+cd rust
+CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo +stable generate-lockfile
+cargo +1.83 test --workspace --locked
+```
+
+CI's `msrv` job in `.github/workflows/rust-ci.yml` does exactly this.
+
 ## I/O: honest MDIO (Zarr v2)
 
 Working volumes and deliverables use a real **MDIO-shaped** on-disk store.
