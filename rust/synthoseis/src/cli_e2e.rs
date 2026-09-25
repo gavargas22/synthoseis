@@ -234,8 +234,13 @@ fn print_filter_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         Some([lo, hi]) => format!("{lo}-{hi} Hz order {}", fc.bandpass_order),
         None => "off".into(),
     };
+    let wavelet = if fc.skips_ricker() {
+        "none (bandpass replaces Ricker, legacy chain)"
+    } else {
+        "ricker 40 Hz"
+    };
     println!(
-        "filters: bandpass={bandpass}, lateral_size={} (applied to data/angle_stack)",
+        "filters: bandpass={bandpass}, lateral_size={}, wavelet={wavelet} (applied to data/angle_stack)",
         fc.lateral_size
     );
 }

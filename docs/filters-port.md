@@ -53,16 +53,48 @@ values explicitly through `FilterConfig` and does **not** port the random draws.
 ## Where the stage sits in the Rust pipeline
 
 The Rust e2e pipeline has no separate reflectivity-cube stage. It fuses
-Zoeppritz reflectivity and the Ricker wavelet per tile (`fuse_tile_local`)
-straight into the angle stack. The filters run **on that fused, wavelet-convolved
-stack**, right after fusion, in the legacy order: bandpass, then lateral filter.
+Zoeppritz reflectivity and (optionally) the Ricker wavelet per tile
+(`fuse_tile_local`) straight into the angle stack. The filters run right after
+fusion, in the legacy order: bandpass, then lateral filter.
+
+### Ricker skip (legacy chain: reflectivity, then bandpass)
+
 Legacy applies the bandpass to *RFC + noise* and never convolves with a
-wavelet in the default path; the Butterworth filter plays the role of the
-wavelet there. In the Rust pipeline, filtering a Ricker-convolved stack
-therefore band-limits it twice. The filter math is identical either way, and
-parity is measured on identical inputs (see below). Whether the Ricker fuse
-should be skipped or replaced when the bandpass is on is an open question for
-the next slice.
+wavelet in its default path: the Butterworth filter *is* the wavelet. The
+first filter port (#25) filtered the Ricker-convolved stack, which band-limits
+twice. Now, **when the bandpass is on, the Ricker convolution is skipped by
+default**, so the Rust chain is reflectivity → bandpass → lateral, exactly as
+in legacy.
+
+| `FilterConfig` | Wavelet | Chain |
+|---|---|---|
+| filters off (default) | Ricker 40 Hz | reflectivity ⊛ Ricker (unchanged, bit-identical to master) |
+| lateral only (`bandpass_hz: None`) | Ricker 40 Hz | reflectivity ⊛ Ricker → lateral |
+| bandpass on (default `keep_ricker: false`) | **none** | reflectivity → bandpass [→ lateral] (**legacy**) |
+| bandpass on, `keep_ricker: true` / CLI `--keep-ricker` | Ricker 40 Hz | reflectivity ⊛ Ricker → bandpass [→ lateral] (#25 behaviour, bit-identical to master `9d5d2051`) |
+
+- `FilterConfig::skips_ricker()` is the switch. `SeismicFilters::wavelet(w)`
+  and `effective_wavelet(cfg, w)` return `synthoseis_gpu::NO_WAVELET` (an empty
+  slice) when it is set. Every path goes through `fuse_tile_filtered` (or the
+  classic `generate_tiny_cube`), so they all honour it.
+- An empty wavelet is an exact identity: `convolve_same_1d` returns the signal,
+  so the fused tile is the raw f32 reflectivity (f32 → f64 → f32 round trip is
+  lossless).
+- **GPU (`--gpu`, wgpu/WGSL).** The WGSL kernel `fuse_tile.wgsl` copies its
+  reflectivity scratch straight to the output when `wavelet_len == 0`, so the
+  GPU fuse path honours the skip natively; no CPU fallback is needed.
+  `synthoseis-gpu/tests/parity_fuse_tile.rs::no_wavelet_skip_respected_by_cpu_gpu_and_dispatch`
+  checks the CPU adapter is bit-identical to the reference reflectivity, and
+  that `fuse_tile_gpu`, `fuse_tile_auto` and `fuse_tile_dispatch` (prefer-GPU)
+  with `NO_WAVELET` equal the CPU bits on CPU fallback or are within
+  `GPU_CPU_MAX_ABS_TOL` (1e-2) on a real adapter. On the dev box's llvmpipe
+  Vulkan adapter the skip-mode WGSL reflectivity differs from the CPU by at
+  most 6.2e-8 (0°), 7.4e-4 (15°) and 2.7e-3 (30°): the shader evaluates
+  Zoeppritz in f32, the same near-parity as the Ricker path. So bit-exact
+  legacy parity is a CPU-path property; `--gpu` is near-parity. CI also runs
+  an e2e `--gpu --bandpass 4,30` smoke.
+- `generate_reflectivity(cfg, angle)` returns the raw pre-wavelet angle stack
+  (legacy `rfc_raw` for one angle), for parity and QC.
 
 ## Tiling invariance: halos
 
@@ -102,11 +134,19 @@ the next slice.
 
 **Proof (tests in `rust/synthoseis-core/tests/filters_pipeline.rs`).** The filter
 configurations are 4–30 Hz with lateral 3, 5.5–22 Hz with lateral 5, bandpass
-only (order 2), and lateral only with an even `n = 4`. The cube is faulted,
+only (order 2) — all three with the Ricker skipped — lateral only with an even
+`n = 4` (Ricker kept), and 4–30 Hz lateral 3 with `keep_ricker`. The worker /
+path test runs the two skip configs and the `keep_ricker` config. The cube is faulted,
 24×20×64. All comparisons are exact `f32::to_bits` equality.
 
 - `filtered_stack_equals_whole_volume_filter`: the halo-tiled output equals
-  the whole-volume kernels applied to the unfiltered stack.
+  the whole-volume kernels applied to the unfiltered input (the raw
+  reflectivity when the Ricker is skipped, else the Ricker stack).
+- `ricker_skip_filters_raw_reflectivity`: with the skip, the filtered stack is
+  exactly bandpass + lateral of `generate_reflectivity`.
+- `keep_ricker_is_bit_identical_to_master_filtered_output`: with
+  `keep_ricker`, three filter configs reproduce hashes recorded on master
+  `9d5d2051` (chunked and classic paths), and the skip output differs.
 - `filtered_stack_invariant_to_chunk_shape`: chunk shapes 24×20, 8×5, 5×7,
   1×20, 24×1 (ck 16), 7×3 (ck 32) and 2×2 all match, and so does the classic
   `generate_tiny_cube`.
@@ -150,6 +190,23 @@ filtered Rust 15° stacks. `examples/plot_filters_demo.py` filters the
 | 96×80×200, seed 11, 6 faults requested | 5.3–33.7 Hz o4, lateral 5 | 0 | 100 % of 1,536,000 samples | 0 |
 
 Both runs also check that 16×16 and 5×7 tiles give bit-identical output.
+(These rows were measured in #25 with the Ricker kept; they are reproduced by
+the `keep_ricker` stack.)
+
+**Ricker skip parity.** `examples/plot_ricker_skip.py` feeds the Rust *raw
+reflectivity* (`angle_rfc.f32`, the angle stack before any wavelet) to the
+legacy `apply_bandlimits` + `apply_lateral_filter` and compares it with the
+Rust filtered stack (Ricker skipped):
+
+| Cube | Filters | Comparison | max \|Rust − legacy\| | bit-exact | spectrum diff |
+|---|---|---|---|---|---|
+| 64×64×128, seed 7, 4 faults | 4–30 Hz o4, lateral 3 | skip vs legacy on Rust reflectivity | 0 (peak 3.18) | 100 % of 524,288 | 0 |
+| same | same | `keep_ricker` vs legacy on Rust Ricker stack | 0 (peak 3.64) | 100 % | — |
+
+Mean-spectrum peak moves from 25.4 Hz (Ricker + bandpass) to 7.8 Hz
+(reflectivity + bandpass, as in legacy; the toy reflectivity is red). Figure:
+`ricker_skip_spectra.png` (inputs with |W(f)| and |H(f)|², before/after
+filtered spectra with the legacy curve, and the relative difference).
 
 **Known possible gap.** scipy's `uniform_filter1d` uses a *running* mean,
 `tmp += (x[i+a] − x[i−b−1]) / n`. The Rust version sums each window directly,
@@ -209,6 +266,9 @@ cargo test -p synthoseis-core --test filters_pipeline
 # realistic-cube parity + figures (needs numpy, scipy, matplotlib)
 cargo run --release -p synthoseis-core --example filters_demo -- /tmp/fd 7 4 64 64 128 4 30 3
 python synthoseis-core/examples/plot_filters_demo.py /tmp/fd /tmp/filters
+python synthoseis-core/examples/plot_ricker_skip.py /tmp/fd /tmp/ricker_skip_spectra.png
+# old combined behaviour (Ricker, then bandpass)
+cargo run -p synthoseis -- run --e2e --chunked --bandpass 4,30 --keep-ricker --store /tmp/keep.mdio
 # regenerate the fixture
 python ../tests/fixtures/generate_seismic_filters.py
 ```

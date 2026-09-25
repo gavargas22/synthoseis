@@ -1,8 +1,8 @@
 //! Parity: `fuse_tile_cpu` bit-identical to reference; GPU near-parity when adapter.
 
 use synthoseis_gpu::{
-    fuse_tile_auto, fuse_tile_cpu, fuse_tile_gpu, gpu_device_available, FuseBackend,
-    GPU_CPU_MAX_ABS_TOL,
+    fuse_tile_auto, fuse_tile_cpu, fuse_tile_dispatch, fuse_tile_gpu, gpu_device_available,
+    set_prefer_gpu, FuseBackend, GPU_CPU_MAX_ABS_TOL, NO_WAVELET,
 };
 use synthoseis_seismic::{convolve_same_1d, ricker, zoeppritz_pp};
 
@@ -182,5 +182,99 @@ fn fuse_tile_gpu_near_parity_multiple_angles_when_adapter() {
             d <= GPU_CPU_MAX_ABS_TOL,
             "angle {ang}: max_abs={d} tol={GPU_CPU_MAX_ABS_TOL}"
         );
+    }
+}
+
+/// Ricker skip (legacy chain: reflectivity then bandpass): with
+/// [`NO_WAVELET`] the CPU adapter returns the raw reflectivity bit for bit,
+/// and the GPU / auto / prefer-gpu dispatch paths honour the skip (WGSL
+/// copies its reflectivity scratch when `wavelet_len == 0`): identical when
+/// they fall back to the CPU, near-parity on a real adapter.
+#[test]
+fn no_wavelet_skip_respected_by_cpu_gpu_and_dispatch() {
+    let (labels, shape, trends, wav) = fixture();
+    let (i0, i1, j0, j1) = (0, 4, 0, 3);
+    let tile_n = (i1 - i0) * (j1 - j0) * shape[2];
+    for angle in [0.0, 15.0, 30.0] {
+        let mut reference = vec![0.0f32; tile_n];
+        fuse_tile_reference(
+            &labels,
+            shape,
+            i0,
+            i1,
+            j0,
+            j1,
+            &trends,
+            NO_WAVELET,
+            angle,
+            &mut reference,
+        );
+        let mut cpu = vec![0.0f32; tile_n];
+        fuse_tile_cpu(
+            &labels, shape, i0, i1, j0, j1, &trends, NO_WAVELET, angle, &mut cpu,
+        );
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&cpu), bits(&reference), "cpu angle {angle}");
+        // Skipping really skips: differs from the Ricker-convolved tile.
+        let mut ricker_tile = vec![0.0f32; tile_n];
+        fuse_tile_cpu(
+            &labels,
+            shape,
+            i0,
+            i1,
+            j0,
+            j1,
+            &trends,
+            &wav,
+            angle,
+            &mut ricker_tile,
+        );
+        assert_ne!(bits(&cpu), bits(&ricker_tile));
+
+        let mut gpu = vec![0.0f32; tile_n];
+        let backend = fuse_tile_gpu(
+            &labels, shape, i0, i1, j0, j1, &trends, NO_WAVELET, angle, &mut gpu,
+        );
+        let mut auto = vec![0.0f32; tile_n];
+        fuse_tile_auto(
+            &labels, shape, i0, i1, j0, j1, &trends, NO_WAVELET, angle, &mut auto,
+        );
+        set_prefer_gpu(true);
+        let mut dispatched = vec![0.0f32; tile_n];
+        fuse_tile_dispatch(
+            &labels,
+            shape,
+            i0,
+            i1,
+            j0,
+            j1,
+            &trends,
+            NO_WAVELET,
+            angle,
+            &mut dispatched,
+        );
+        set_prefer_gpu(false);
+        if backend == FuseBackend::Cpu {
+            assert_eq!(bits(&gpu), bits(&cpu), "gpu fallback angle {angle}");
+            assert_eq!(bits(&auto), bits(&cpu));
+            assert_eq!(bits(&dispatched), bits(&cpu));
+        } else {
+            let bitexact = bits(&gpu)
+                .iter()
+                .zip(bits(&cpu).iter())
+                .filter(|(a, b)| a == b)
+                .count();
+            eprintln!(
+                "NO_WAVELET angle {angle}: backend {backend:?}, max |gpu-cpu| {:.3e}, bit-exact {bitexact}/{tile_n}",
+                max_abs_diff(&gpu, &cpu)
+            );
+            for out in [&gpu, &auto, &dispatched] {
+                let d = max_abs_diff(out, &cpu);
+                assert!(d <= GPU_CPU_MAX_ABS_TOL, "gpu skip angle {angle}: {d}");
+            }
+        }
+        if !gpu_device_available() {
+            assert_eq!(backend, FuseBackend::Cpu);
+        }
     }
 }

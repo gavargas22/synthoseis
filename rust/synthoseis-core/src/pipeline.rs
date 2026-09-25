@@ -63,6 +63,15 @@ pub struct E2eConfig {
 ///
 /// Legacy `postprocess_rfc_cubes` order: bandpass (`apply_bandlimits`), then
 /// the lateral filter (`apply_lateral_filter`, only when `size > 1`).
+///
+/// **Wavelet.** Legacy bandpasses the raw reflectivity (plus noise) and never
+/// convolves a wavelet in its default path: the Butterworth filter *is* the
+/// wavelet. So when the bandpass is on, the Rust pipeline skips the Ricker
+/// convolution by default (reflectivity then bandpass, exactly the legacy
+/// chain). Set [`FilterConfig::keep_ricker`] to restore the combined
+/// Ricker + bandpass behaviour of the first filter port (#25). With the
+/// bandpass off (filters off, or lateral filter only) the Ricker wavelet is
+/// always applied, so filters-off output is unchanged.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FilterConfig {
     /// Butterworth bandpass corners `[low, high]` in Hz (`None` = off).
@@ -74,6 +83,11 @@ pub struct FilterConfig {
     /// Lateral box-filter size `n` (legacy `lateral_filter_size`: 1, 3 or 5).
     /// `<= 1` = off.
     pub lateral_size: usize,
+    /// Keep the Ricker wavelet convolution when the bandpass is on (the #25
+    /// behaviour: Ricker, then bandpass). Default `false` = skip the Ricker
+    /// wavelet when the bandpass is on (legacy chain). Ignored when the
+    /// bandpass is off.
+    pub keep_ricker: bool,
 }
 
 impl Default for FilterConfig {
@@ -82,6 +96,7 @@ impl Default for FilterConfig {
             bandpass_hz: None,
             bandpass_order: 4,
             lateral_size: 1,
+            keep_ricker: false,
         }
     }
 }
@@ -94,11 +109,18 @@ impl FilterConfig {
             bandpass_hz: Some([low_hz, high_hz]),
             bandpass_order: 4,
             lateral_size,
+            keep_ricker: false,
         }
     }
 
     pub fn enabled(&self) -> bool {
         self.bandpass_hz.is_some() || self.lateral_size > 1
+    }
+
+    /// `true` when the Ricker convolution is skipped: the bandpass is on and
+    /// [`FilterConfig::keep_ricker`] is `false`.
+    pub fn skips_ricker(&self) -> bool {
+        self.bandpass_hz.is_some() && !self.keep_ricker
     }
 }
 
@@ -290,8 +312,10 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
         }
     }
     // Short wavelet: higher frequency keeps support reasonable for tiny nk.
+    // Skipped (empty wavelet = identity) when the bandpass replaces it.
     let wavelet = ricker(40.0, TINY_DIGI, 1);
-    let mut angle_stack = apply_wavelet_traces(&angle_cube, [ni, nj, nk], &wavelet);
+    let wavelet = crate::pipeline_stream::effective_wavelet(cfg, &wavelet);
+    let mut angle_stack = apply_wavelet_traces(&angle_cube, [ni, nj, nk], wavelet);
 
     // --- optional post-convolution filters (no-op when disabled) ---
     crate::pipeline_stream::apply_filters_to_volume(cfg, &mut angle_stack);

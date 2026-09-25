@@ -49,6 +49,8 @@ jobs:
         run: cargo run -p synthoseis -- run --e2e --chunked --faults 4 --seed 4 --shape 48,48,64 --store /tmp/faults.mdio && test -f /tmp/faults.mdio/data/fault_labels/.zarray
       - name: seismic filters e2e smoke (bandpass + lateral, non-dividing chunks)
         run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --lateral-filter 3 --store /tmp/filters.mdio
+      - name: seismic filters keep-ricker + gpu skip smoke
+        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --keep-ricker --store /tmp/filters-keep.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --bandpass 4,30 --store /tmp/filters-gpu.mdio
 
   msrv:
     name: MSRV (Rust 1.83)
