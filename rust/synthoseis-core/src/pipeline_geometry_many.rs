@@ -21,8 +21,8 @@ use synthoseis_seismic::ricker;
 use crate::parity;
 use crate::pipeline::{E2eConfig, E2eReport, E2eVolumes, TINY_DIGI};
 use crate::pipeline_stream::{
-    depth_trends, fuse_tile_local, generate_labels, resolve_chunk_shape, write_e2e_mdio_chunked,
-    WorkingSetStats,
+    depth_trends, fuse_tile_filtered, generate_labels, resolve_chunk_shape, write_e2e_mdio_chunked,
+    SeismicFilters, WorkingSetStats,
 };
 
 /// Default angle list for `--seismic-many` / geometry-once smoke.
@@ -114,6 +114,7 @@ pub fn run_e2e_geometry_once_seismic_many(
         return Err("angles list must be non-empty".into());
     }
 
+    let filters = SeismicFilters::from_config(cfg)?;
     // One geology pass by construction (parallel tests share GENERATE_LABELS_CALLS,
     // so we do not delta-check the global here).
     let (labels, shape) = generate_labels(cfg);
@@ -146,7 +147,7 @@ pub fn run_e2e_geometry_once_seismic_many(
             let mut j0 = 0usize;
             while j0 < nj {
                 let j1 = (j0 + cj).min(nj);
-                fuse_tile_local(
+                fuse_tile_filtered(
                     &labels,
                     shape,
                     i0,
@@ -156,6 +157,7 @@ pub fn run_e2e_geometry_once_seismic_many(
                     &trends,
                     &wavelet,
                     angle_deg,
+                    filters.as_ref(),
                     &mut tile_angles,
                     &mut stats,
                 );
@@ -285,6 +287,7 @@ mod tests {
     fn geometry_once_labels_identical_and_stacks_match_single_angle() {
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 42,
             inline_count: 8,
             crossline_count: 8,
@@ -327,6 +330,7 @@ mod tests {
         let base = dir.path().join("out.mdio");
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 7,
             inline_count: 8,
             crossline_count: 8,
@@ -356,6 +360,7 @@ mod tests {
     fn geometry_once_does_not_regenerate_geology_n_times() {
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 3,
             inline_count: 8,
             crossline_count: 8,
@@ -385,6 +390,7 @@ mod tests {
         // Prove amortization structurally: one geology pass, N stacks, tile-bounded peak.
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 11,
             inline_count: 16,
             crossline_count: 16,
