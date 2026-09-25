@@ -8,14 +8,19 @@
 //! ```
 //!
 //! Writes little-endian raw arrays (C order `(ni, nj, nk)`, shape in
-//! `meta.json`): `angle_raw.f32` (unfiltered 15° stack), `angle_filtered.f32`
-//! (bandpass + lateral filter, 16x16 tiles), `angle_filtered_alt.f32` (same
-//! filters, 5x7 tiles) and `labels.u8`.
+//! `meta.json`): `angle_raw.f32` (unfiltered 15° Ricker stack),
+//! `angle_rfc.f32` (raw 15° reflectivity, no wavelet: the legacy `rfc_raw`
+//! input to `postprocess_rfc_cubes`), `angle_filtered.f32` (bandpass +
+//! lateral filter with the Ricker skipped, i.e. the legacy chain, 16x16
+//! tiles), `angle_filtered_alt.f32` (same filters, 5x7 tiles),
+//! `angle_filtered_keep.f32` (`keep_ricker`: Ricker, then bandpass + lateral,
+//! the #25 behaviour) and `labels.u8`. Plots: `plot_filters_demo.py`,
+//! `plot_ricker_skip.py`.
 
 use std::io::Write;
 use std::path::PathBuf;
 
-use synthoseis_core::generate_chunked;
+use synthoseis_core::{generate_chunked, generate_reflectivity};
 use synthoseis_core::pipeline::{E2eConfig, FaultConfig, FilterConfig};
 
 fn arg<T: std::str::FromStr>(args: &[String], i: usize, default: T) -> T {
@@ -75,6 +80,15 @@ fn main() {
     let (filt, stats) = generate_chunked(&cfg);
     let t_filt = t1.elapsed();
     let (alt, _) = generate_chunked(&alt_cfg);
+    let keep_cfg = E2eConfig {
+        filters: FilterConfig {
+            keep_ricker: true,
+            ..cfg.filters.clone()
+        },
+        ..cfg.clone()
+    };
+    let (keep, _) = generate_chunked(&keep_cfg);
+    let rfc = generate_reflectivity(&raw_cfg, 15.0);
     let identical = filt
         .angle_stack
         .iter()
@@ -90,12 +104,19 @@ fn main() {
         out.join("angle_filtered_alt.f32"),
         &f32_bytes(&alt.angle_stack),
     );
+    write(
+        out.join("angle_filtered_keep.f32"),
+        &f32_bytes(&keep.angle_stack),
+    );
+    write(out.join("angle_rfc.f32"), &f32_bytes(&rfc));
     write(out.join("labels.u8"), &raw.labels);
     let meta = format!(
         "{{\"shape\":[{ni},{nj},{nk}],\"seed\":{seed},\"faults\":{count},\"low\":{low},\"high\":{high},\
          \"order\":4,\"lateral\":{lateral},\"digi_ms\":4.0,\"angle_deg\":15.0,\
+         \"ricker_skipped\":{},\"ricker_hz\":40.0,\
          \"tiles_16x16_vs_5x7_bit_identical\":{identical},\"t_raw_s\":{:.3},\"t_filtered_s\":{:.3},\
          \"peak_temp_bytes\":{}}}",
+        cfg.filters.skips_ricker(),
         t_raw.as_secs_f64(),
         t_filt.as_secs_f64(),
         stats.peak_temp_bytes

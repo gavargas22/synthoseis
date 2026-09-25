@@ -2,10 +2,13 @@
 
     python plot_filters_demo.py DEMO_DIR OUT_PREFIX
 
-Filters the *unfiltered* Rust stack (`angle_raw.f32`) with the real legacy
+Filters the *unfiltered* Rust input with the real legacy
 code (`SeismicVolume.apply_bandlimits` + `apply_lateral_filter`, via
 `tests/fixtures/generate_seismic_filters.py`), compares it with the Rust
-filtered stack (`angle_filtered.f32`) and writes
+filtered stack (`angle_filtered.f32`). The legacy input is the raw
+reflectivity (`angle_rfc.f32`) when the demo skipped the Ricker wavelet
+(default: legacy chain, reflectivity then bandpass), else the Ricker stack
+(`angle_raw.f32`). Writes
 
 * OUT_PREFIX_before_after.png: inline / crossline / time slices before and
   after filtering, plus the Rust - legacy difference,
@@ -60,6 +63,8 @@ def main():
     alt = np.fromfile(d / "angle_filtered_alt.f32", "<f4").reshape(shape)
     gen = load_generator()
     low, high, lat, order = meta["low"], meta["high"], meta["lateral"], meta["order"]
+    if meta.get("ricker_skipped", False):
+        raw = np.fromfile(d / "angle_rfc.f32", "<f4").reshape(shape)
     legacy = gen.legacy_filter(raw, low, high, order, lat, meta["digi_ms"])
 
     diff = rust.astype(np.float64) - legacy.astype(np.float64)
