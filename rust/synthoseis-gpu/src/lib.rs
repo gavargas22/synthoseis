@@ -1,27 +1,36 @@
-//! Per-tile Zoeppritz + wavelet fuse kernels for scale stage 6.
+//! Per-tile Zoeppritz + wavelet fuse kernels for scale stage 6 / 6b.
 //!
-//! # Backend choice (this PR)
+//! # Backend choice
 //!
-//! **CPU software adapter** is the default and the only fuse executor in this
-//! cut. Host still owns strip partition + MDIO writes; this crate accelerates
-//! (today: hosts) the **per-tile** hot path that used to live as
-//! `fuse_tile_local` inside `synthoseis-core`.
+//! - **CPU software** ([`fuse_tile_cpu`]): bit-identical to the prior core
+//!   `fuse_tile_local` path. Always available; CI-safe on `ubuntu-latest`.
+//! - **wgpu / WGSL** ([`fuse_tile_gpu`] when feature `wgpu` + adapter): f32
+//!   Zoeppritz + same-mode wavelet convolution on the GPU. Falls back to CPU
+//!   when no adapter is present. GPU vs CPU is **near-parity** (documented
+//!   tolerances), not bit-identical — CPU uses f64 complex Zoeppritz.
 //!
-//! A follow-up within stage 6 will add wgpu adapter probe + WGSL Zoeppritz /
-//! convolution dispatch. CI on `ubuntu-latest` stays green without hardware
-//! because the default backend is CPU software.
+//! Host still owns strip partition + MDIO writes; this crate accelerates the
+//! per-tile hot path.
+//!
+//! # Feature `wgpu`
+//!
+//! Optional. Default **on** so the CLI `--gpu` path can dispatch when a device
+//! exists. Disable with `--no-default-features` for lean builds. Requires a
+//! recent stable Rust (workspace `rust-version`; wgpu 24 needs ≥1.76 in
+//! practice — CI uses `dtolnay/rust-toolchain@stable`).
 //!
 //! # API
 //!
-//! - [`fuse_tile_cpu`] — explicit CPU path (bit-identical to prior core fuse)
-//! - [`fuse_tile_gpu`] — request GPU; falls back to CPU when no device / no feature
+//! - [`fuse_tile_cpu`] — explicit CPU path
+//! - [`fuse_tile_gpu`] — request GPU; CPU fallback when no device / no feature
 //! - [`fuse_tile_auto`] — prefer GPU when available, else CPU
-//!
-//! CLI `--gpu` sets [`set_prefer_gpu`]; pipeline wrappers call [`fuse_tile_auto`]
-//! when prefer-gpu is on, otherwise [`fuse_tile_cpu`].
+//! - [`fuse_tile_dispatch`] — honors [`set_prefer_gpu`] (CLI `--gpu`)
 
 mod cpu;
 mod device;
+
+#[cfg(feature = "wgpu")]
+mod wgpu_fuse;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -64,8 +73,8 @@ pub fn fuse_tile_cpu_report(
 
 /// Request GPU acceleration for one tile.
 ///
-/// Falls back to the CPU software adapter when no wgpu device is available
-/// (always in the default feature set). Returns the backend that ran.
+/// Falls back to the CPU software adapter when the `wgpu` feature is off or no
+/// adapter is available. Returns the backend that ran.
 pub fn fuse_tile_gpu(
     labels: &[u8],
     shape: [usize; 3],
@@ -78,16 +87,20 @@ pub fn fuse_tile_gpu(
     angle_deg: f64,
     tile_out: &mut [f32],
 ) -> FuseBackend {
-    // Compute shaders deferred: even when an adapter exists, execute the CPU
-    // software path so results stay bit-identical. Availability is exposed via
-    // `gpu_device_available` / `backend_status` for operators and follow-up PRs.
+    #[cfg(feature = "wgpu")]
+    {
+        if let Some(backend) = crate::wgpu_fuse::fuse_tile_wgpu(
+            labels, shape, i0, i1, j0, j1, trends, wavelet, angle_deg, tile_out,
+        ) {
+            return backend;
+        }
+    }
     fuse_tile_cpu_report(
         labels, shape, i0, i1, j0, j1, trends, wavelet, angle_deg, tile_out,
     )
 }
 
-/// Prefer GPU when available; otherwise CPU. Same kernels as [`fuse_tile_gpu`]
-/// in this cut (CPU software).
+/// Prefer GPU when available; otherwise CPU.
 pub fn fuse_tile_auto(
     labels: &[u8],
     shape: [usize; 3],
@@ -135,13 +148,20 @@ pub fn fuse_tile_dispatch(
     }
 }
 
+/// Documented max-abs tolerance for GPU (f32 WGSL) vs CPU (f64) on tiny tiles.
+///
+/// Complex Zoeppritz in f32 WGSL vs f64 `num_complex` drifts most at larger
+/// incidence angles (post-critical edge). Parity tests allow ≤1e-2 max-abs on
+/// fixture tiles; operators should treat GPU stacks as near-parity deliverables
+/// (same philosophy as angle-stack MAE), not bit-identical.
+pub const GPU_CPU_MAX_ABS_TOL: f32 = 1e-2;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use synthoseis_seismic::ricker;
 
     fn tiny_trends(nk: usize) -> [Vec<f64>; 9] {
-        // Constant-ish elastic props per facies (shale / brine / gas).
         [
             vec![3000.0; nk],
             vec![1500.0; nk],
@@ -170,14 +190,17 @@ mod tests {
     }
 
     #[test]
-    fn fuse_tile_gpu_falls_back_to_cpu() {
+    fn fuse_tile_gpu_returns_cpu_or_gpu() {
         let shape = [2usize, 2, 8];
         let labels = vec![0u8; 2 * 2 * 8];
         let trends = tiny_trends(8);
         let wav = ricker(25.0, 4.0, 1);
         let mut out = vec![0.0f32; 2 * 2 * 8];
         let backend = fuse_tile_gpu(&labels, shape, 0, 2, 0, 2, &trends, &wav, 0.0, &mut out);
-        assert_eq!(backend, FuseBackend::Cpu);
+        assert!(matches!(backend, FuseBackend::Cpu | FuseBackend::Gpu));
+        if !gpu_device_available() {
+            assert_eq!(backend, FuseBackend::Cpu);
+        }
     }
 
     #[test]
@@ -190,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn gpu_device_available_false_in_this_cut() {
-        assert!(!gpu_device_available());
+    fn backend_status_is_nonempty() {
+        assert!(!backend_status().is_empty());
     }
 }

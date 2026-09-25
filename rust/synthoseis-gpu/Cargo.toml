@@ -5,10 +5,20 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Per-tile Zoeppritz + wavelet fuse kernels (CPU software backend; wgpu/WGSL next)."
+description = "Per-tile Zoeppritz + wavelet fuse kernels (CPU software + optional wgpu/WGSL)."
+
+[features]
+default = ["wgpu"]
+# wgpu 24 compute path. Disable with --no-default-features for lean builds.
+# MSRV note: wgpu 24 effectively needs Rust ≥1.76; workspace declares 1.76 and
+# CI uses stable. Graceful no-adapter fallback keeps ubuntu-latest green.
+wgpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [dependencies]
 synthoseis-seismic.workspace = true
+wgpu = { version = "24.0", optional = true, default-features = true }
+pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 synthoseis-seismic.workspace = true
