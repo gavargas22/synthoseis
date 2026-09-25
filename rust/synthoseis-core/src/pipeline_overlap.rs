@@ -194,6 +194,7 @@ mod tests {
     fn assert_overlap(shape: [usize; 3], chunks: [usize; 3], seed: u64) {
         let dir = tempdir().unwrap();
         let cfg = E2eConfig {
+            faults: Default::default(),
             seed,
             inline_count: shape[0],
             crossline_count: shape[1],

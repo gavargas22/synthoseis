@@ -256,6 +256,7 @@ impl MultiWorkerRunner {
         chunk_shape: Option<[usize; 3]>,
     ) -> Result<(crate::pipeline::E2eReport, crate::pipeline_stream::WorkingSetStats), String> {
         let cfg = crate::pipeline::E2eConfig {
+            faults: Default::default(),
             seed: self.config.seed,
             inline_count: self.config.inline_count.max(crate::pipeline::TINY_DIM),
             crossline_count: self.config.crossline_count.max(crate::pipeline::TINY_DIM),

@@ -46,6 +46,48 @@ pub struct E2eConfig {
     /// sub-volume default (never full-array when the grid allows). Chunk keys
     /// are strip-friendly for a later multi-worker partition.
     pub chunk_shape: Option<[usize; 3]>,
+    /// Optional fault modelling (port of `datagenerator/Faults.py`).
+    ///
+    /// Default is disabled (`count == 0`): geology, labels and angle stacks
+    /// are bit-identical to the pre-fault pipeline.
+    pub faults: FaultConfig,
+}
+
+/// Fault settings for the e2e pipeline (random-mode draw, seeded from
+/// [`E2eConfig::seed`]). See `docs/faults-port.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FaultConfig {
+    /// Number of faults to draw (`0` = faulting disabled).
+    pub count: usize,
+    /// Minimum throw in samples (Python `low_fault_throw / infill_factor`).
+    pub throw_min: f64,
+    /// Maximum throw in samples. Default `29.0` keeps below the hockey-stick
+    /// threshold (`0.85 * 35`), whose drag zone is deferred in the port.
+    pub throw_max: f64,
+}
+
+impl Default for FaultConfig {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            throw_min: 5.0,
+            throw_max: 29.0,
+        }
+    }
+}
+
+impl FaultConfig {
+    /// `count` faults with default throw range.
+    pub fn with_count(count: usize) -> Self {
+        Self {
+            count,
+            ..Self::default()
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.count > 0
+    }
 }
 
 impl Default for E2eConfig {
@@ -57,6 +99,7 @@ impl Default for E2eConfig {
             samples: TINY_DIM,
             store_path: None,
             chunk_shape: None,
+            faults: FaultConfig::default(),
         }
     }
 }
@@ -106,16 +149,8 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     let c1 = (nk as f64) * 0.55;
 
     // Fit planes from three points each (exercises fit_plane_lsq), then eval.
-    let pts0 = [
-        [0.0, 0.0, c0],
-        [1.0, 0.0, a0 + c0],
-        [0.0, 1.0, b0 + c0],
-    ];
-    let pts1 = [
-        [0.0, 0.0, c1],
-        [1.0, 0.0, a1 + c1],
-        [0.0, 1.0, b1 + c1],
-    ];
+    let pts0 = [[0.0, 0.0, c0], [1.0, 0.0, a0 + c0], [0.0, 1.0, b0 + c0]];
+    let pts1 = [[0.0, 0.0, c1], [1.0, 0.0, a1 + c1], [0.0, 1.0, b1 + c1]];
     let [fa, fb, fc] = fit_plane_lsq(&pts0);
     let [ga, gb, gc] = fit_plane_lsq(&pts1);
     let z0 = eval_plane(ni, nj, fa, fb, fc);
@@ -147,6 +182,9 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
             (src - 1).clamp(0, 254) as u8
         };
     }
+
+    // --- faults (optional; no-op when cfg.faults.count == 0) ---
+    crate::pipeline_stream::apply_faults_to_labels(cfg, &maps, nh, &mut labels);
 
     // --- RPM: elastic props from depth trends by layer class ---
     let mut vp = vec![0.0f32; ni * nj * nk];
@@ -224,6 +262,11 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
     let store = MdioStore::create_empty(path, &create).map_err(|e| e.to_string())?;
     DeliverableWriter::write_volume(&store, &volumes.angle_stack).map_err(|e| e.to_string())?;
     DeliverableWriter::write_labels(&store, &volumes.labels).map_err(|e| e.to_string())?;
+    if let Some(mask) = crate::pipeline_stream::generate_fault_labels(cfg) {
+        store
+            .write_fault_labels_u8(&mask)
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -251,8 +294,12 @@ pub fn run_e2e(cfg: &E2eConfig) -> Result<E2eReport, String> {
         let opened = MdioStore::open(path).map_err(|e| e.to_string())?;
         let back_angles = opened.read_volume().map_err(|e| e.to_string())?;
         let back_labels = opened.read_labels_u8().map_err(|e| e.to_string())?;
-        let mdio_parity =
-            parity::compare_volumes(&volumes.labels, &back_labels, &volumes.angle_stack, &back_angles);
+        let mdio_parity = parity::compare_volumes(
+            &volumes.labels,
+            &back_labels,
+            &volumes.angle_stack,
+            &back_angles,
+        );
         if !mdio_parity.passes_defaults() {
             return Err(format!(
                 "e2e MDIO round-trip parity failed: {mdio_parity:?}"
@@ -292,13 +339,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("e2e.mdio");
         let cfg = E2eConfig {
+            faults: Default::default(),
             store_path: Some(path.clone()),
             chunk_shape: None,
             ..E2eConfig::tiny(7)
         };
         let report = run_e2e(&cfg).expect("e2e");
         assert_eq!(report.status, "ok-e2e");
-        assert!(path.join("data").join("chunked_012").join(".zarray").is_file());
+        assert!(path
+            .join("data")
+            .join("chunked_012")
+            .join(".zarray")
+            .is_file());
         assert!(path.join("data").join("labels").join(".zarray").is_file());
         assert_eq!(report.volumes.shape, [8, 8, 8]);
         assert_eq!(report.volumes.labels.len(), 512);

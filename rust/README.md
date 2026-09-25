@@ -309,3 +309,21 @@ CI: `.github/workflows/rust-ci.yml` runs `cargo check` + `cargo test` in `rust/`
 - Full geology stack / faults / **WGSL GPU dispatch** (CPU software fuse landed)
 - Replacing Parameters Python zarr store / dropping the Python generator
 - Publishing wheels
+
+## Faults (geology realism, first slice)
+
+**Landed:** a port of the legacy ellipsoidal fault model (`datagenerator/Faults.py`)
+in `synthoseis-geo::faults`. It is seeded and deterministic, and it is
+evaluated tile by tile, so memory stays bounded and results do not depend on
+tiling or worker count. It displaces layer labels and continuous volumes and
+writes a binary `data/fault_labels` MDIO variable. Faulting is off by default
+(`FaultConfig::count == 0`), and existing outputs are bit-identical when it is off.
+
+```bash
+cd rust
+cargo run -p synthoseis -- run --e2e --chunked --faults 4 --seed 4 --shape 48,48,64 --store /tmp/faults.mdio
+cargo test -p synthoseis-geo --test faults_parity -- --nocapture   # parity vs the Python fixture
+```
+
+Design notes, the Python → Rust mapping, parity numbers and deferred items are in
+[`docs/faults-port.md`](../docs/faults-port.md).

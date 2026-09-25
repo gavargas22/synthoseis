@@ -2,6 +2,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use synthoseis_closures::{filter_labels_by_min_voxels, relabel_consecutive};
+use synthoseis_geo::faults::{
+    sample_random_faults, FaultModel, FaultTile, RandomFaultConfig, Seabed,
+};
 use synthoseis_geo::{
     enforce_nonnegative_thicknesses, eval_plane, fill_layer_labels, fit_plane_lsq,
 };
@@ -81,6 +84,30 @@ pub fn generate_labels(cfg: &E2eConfig) -> (Vec<u8>, [usize; 3]) {
     let [ni, nj, nk] = cfg.shape();
     assert!(nk >= 2, "need at least 2 samples for reflectivity");
 
+    let (maps, nh) = toy_horizon_maps(cfg);
+    let mut labels = fill_layer_labels(&maps, [ni, nj, nh], nk);
+
+    let as_i32: Vec<i32> = labels
+        .iter()
+        .map(|&v| if v == 255 { 0 } else { (v as i32) + 1 })
+        .collect();
+    let (_vals, relabeled) = relabel_consecutive(&as_i32);
+    let filtered = filter_labels_by_min_voxels(&relabeled, 1);
+    for (dst, &src) in labels.iter_mut().zip(filtered.iter()) {
+        *dst = if src == 0 {
+            255
+        } else {
+            (src - 1).clamp(0, 254) as u8
+        };
+    }
+    apply_faults_to_labels(cfg, &maps, nh, &mut labels);
+    (labels, [ni, nj, nk])
+}
+
+/// Toy horizon stack `(ni, nj, nh)` shared by label generation and the fault
+/// model's seabed (top horizon).
+fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
+    let [ni, nj, nk] = cfg.shape();
     let seed_f = cfg.seed as f64;
     let a0 = 0.05 + (seed_f % 7.0) * 0.01;
     let b0 = 0.03 + ((seed_f / 3.0) % 5.0) * 0.01;
@@ -113,22 +140,87 @@ pub fn generate_labels(cfg: &E2eConfig) -> (Vec<u8>, [usize; 3]) {
         maps[n * nh + 2] = z2[n];
     }
     enforce_nonnegative_thicknesses(&mut maps, [ni, nj, nh]);
-    let mut labels = fill_layer_labels(&maps, [ni, nj, nh], nk);
+    (maps, nh)
+}
 
-    let as_i32: Vec<i32> = labels
-        .iter()
-        .map(|&v| if v == 255 { 0 } else { (v as i32) + 1 })
-        .collect();
-    let (_vals, relabeled) = relabel_consecutive(&as_i32);
-    let filtered = filter_labels_by_min_voxels(&relabeled, 1);
-    for (dst, &src) in labels.iter_mut().zip(filtered.iter()) {
-        *dst = if src == 0 {
-            255
-        } else {
-            (src - 1).clamp(0, 254) as u8
-        };
+/// Seed stream for fault parameter draws (independent of geology draws).
+const FAULT_SEED_SALT: u64 = 0xFA17_0000_0000_0001;
+
+/// Build the fault model for `cfg` from the horizon stack (`None` when
+/// faulting is disabled). The top horizon acts as the seabed.
+fn build_fault_model(cfg: &E2eConfig, maps: &[f64], nh: usize) -> Option<FaultModel> {
+    if !cfg.faults.enabled() {
+        return None;
     }
-    (labels, [ni, nj, nk])
+    let shape = cfg.shape();
+    let seed = cfg.seed ^ FAULT_SEED_SALT;
+    let params = sample_random_faults(
+        shape,
+        &RandomFaultConfig {
+            count: cfg.faults.count,
+            throw_min: cfg.faults.throw_min,
+            throw_max: cfg.faults.throw_max,
+        },
+        seed,
+    );
+    let seabed = Seabed::Map(maps.iter().step_by(nh).copied().collect());
+    Some(FaultModel::resolve(shape, &params, &seabed, seed))
+}
+
+/// Resolved fault model for `cfg` (`None` when `cfg.faults.count == 0`).
+///
+/// Deterministic in `cfg` alone, so every worker/process can rebuild it and
+/// evaluate its own tiles independently.
+pub fn fault_model(cfg: &E2eConfig) -> Option<FaultModel> {
+    if !cfg.faults.enabled() {
+        return None;
+    }
+    let (maps, nh) = toy_horizon_maps(cfg);
+    build_fault_model(cfg, &maps, nh)
+}
+
+/// Spatial tile used to evaluate faults (MDIO chunk footprint). Results are
+/// tiling-invariant; this only bounds scratch memory.
+pub fn fault_tile(cfg: &E2eConfig) -> [usize; 2] {
+    let c = resolve_chunk_shape(cfg);
+    [c[0], c[1]]
+}
+
+/// Apply the optional fault model to generated labels in place (no-op when
+/// disabled, so fault-free output stays bit-identical).
+pub(crate) fn apply_faults_to_labels(cfg: &E2eConfig, maps: &[f64], nh: usize, labels: &mut [u8]) {
+    if let Some(model) = build_fault_model(cfg, maps, nh) {
+        let _ = model.apply_to_labels(labels, fault_tile(cfg));
+    }
+}
+
+/// Binary fault-label volume for `cfg` (`None` when faulting is disabled).
+/// Evaluated tile by tile.
+pub fn generate_fault_labels(cfg: &E2eConfig) -> Option<Vec<u8>> {
+    let model = fault_model(cfg)?;
+    let [ni, nj, nk] = cfg.shape();
+    let mut mask = vec![0u8; ni * nj * nk];
+    model.for_each_tile(fault_tile(cfg), |t| {
+        for i in t.i0..t.i1 {
+            for j in t.j0..t.j1 {
+                let g = (i * nj + j) * nk;
+                let l = t.col_offset(i, j);
+                mask[g..g + nk].copy_from_slice(&t.mask[l..l + nk]);
+            }
+        }
+    });
+    Some(mask)
+}
+
+/// Copy one MDIO chunk `[k0, k1)` of a fault tile's mask into `out`.
+pub(crate) fn fault_tile_chunk(t: &FaultTile, k0: usize, k1: usize, out: &mut Vec<u8>) {
+    out.clear();
+    for i in t.i0..t.i1 {
+        for j in t.j0..t.j1 {
+            let l = t.col_offset(i, j);
+            out.extend_from_slice(&t.mask[l + k0..l + k1]);
+        }
+    }
 }
 
 pub(crate) fn depth_trends(nk: usize) -> [Vec<f64>; 9] {

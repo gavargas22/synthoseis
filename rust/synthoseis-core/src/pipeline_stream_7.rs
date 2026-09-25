@@ -20,6 +20,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("chunked.mdio");
         let cfg = E2eConfig {
+            faults: Default::default(),
             store_path: Some(path.clone()),
             chunk_shape: Some([4, 4, 8]),
             ..E2eConfig::tiny(7)
@@ -43,6 +44,7 @@ mod tests {
     #[test]
     fn larger_cube_chunked_parity_and_bound() {
         let cfg = E2eConfig {
+            faults: Default::default(),
             seed: 3,
             inline_count: 32,
             crossline_count: 32,
@@ -75,6 +77,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("stream.mdio");
         let cfg = E2eConfig {
+            faults: Default::default(),
             seed: 11,
             inline_count: 16,
             crossline_count: 16,
@@ -100,6 +103,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("strip.mdio");
         let cfg = E2eConfig {
+            faults: Default::default(),
             seed: 42,
             inline_count: 8,
             crossline_count: 8,
@@ -125,6 +129,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("strip16.mdio");
         let cfg = E2eConfig {
+            faults: Default::default(),
             seed: 7,
             inline_count: 16,
             crossline_count: 16,
@@ -145,6 +150,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("one.mdio");
         let cfg = E2eConfig {
+            faults: Default::default(),
             seed: 3,
             inline_count: 8,
             crossline_count: 8,

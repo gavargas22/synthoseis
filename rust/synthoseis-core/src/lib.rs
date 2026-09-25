@@ -90,6 +90,7 @@ impl SingleWorkerRunner {
     ) -> Result<pipeline::E2eReport, String> {
         // Tiny-cube floor: bump sub-8³ defaults (CLI smoke uses 8³).
         let cfg = pipeline::E2eConfig {
+            faults: Default::default(),
             seed: self.config.seed,
             inline_count: self.config.inline_count.max(pipeline::TINY_DIM),
             crossline_count: self.config.crossline_count.max(pipeline::TINY_DIM),
@@ -113,6 +114,7 @@ pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
     MultiWorkerRunner, SpatialStrip,
 };
+pub use pipeline::FaultConfig;
 pub use pipeline_geometry_many::{
     angle_store_path, angles_from_seismic_many, parse_angles_csv, run_e2e_geometry_once_as_report,
     run_e2e_geometry_once_seismic_many, AngleStackDeliverable, GeometryOnceReport,
@@ -124,9 +126,10 @@ pub use pipeline_mp::{
 };
 pub use pipeline_overlap::run_e2e_streaming_overlapped;
 pub use pipeline_stream::{
-    generate_angle_stack_from_labels, generate_chunked, generate_chunked_at_angle, generate_labels,
-    resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming, run_e2e_strip_stitched,
-    write_strip_partition, WorkingSetStats, DEFAULT_INCIDENCE_DEG, GENERATE_LABELS_CALLS,
+    fault_model, fault_tile, generate_angle_stack_from_labels, generate_chunked,
+    generate_chunked_at_angle, generate_fault_labels, generate_labels, resolve_chunk_shape,
+    run_e2e_chunked, run_e2e_streaming, run_e2e_strip_stitched, write_strip_partition,
+    WorkingSetStats, DEFAULT_INCIDENCE_DEG, GENERATE_LABELS_CALLS,
 };
 
 #[cfg(test)]
@@ -221,6 +224,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mp-api.mdio");
         let cfg = pipeline::E2eConfig {
+            faults: Default::default(),
             seed: 42,
             inline_count: 8,
             crossline_count: 8,

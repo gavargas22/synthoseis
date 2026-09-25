@@ -44,6 +44,7 @@ pub fn maybe_run_worker(
         std::process::exit(1);
     });
     let cfg = synthoseis_core::pipeline::E2eConfig {
+        faults: Default::default(),
         seed,
         inline_count,
         crossline_count,
@@ -52,6 +53,7 @@ pub fn maybe_run_worker(
         chunk_shape: chunk_shape.or_else(|| {
             Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                 &synthoseis_core::pipeline::E2eConfig {
+                    faults: Default::default(),
                     seed,
                     inline_count,
                     crossline_count,
@@ -98,6 +100,7 @@ pub fn maybe_write_partition_plan(
         let ci = chunk_shape.map(|c| c[0]).unwrap_or_else(|| {
             synthoseis_core::pipeline_stream::resolve_chunk_shape(
                 &synthoseis_core::pipeline::E2eConfig {
+                    faults: Default::default(),
                     seed,
                     inline_count,
                     crossline_count,
@@ -163,6 +166,7 @@ pub fn maybe_run_multiprocess(
     let resolved = chunk_shape.or_else(|| {
         Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
             &synthoseis_core::pipeline::E2eConfig {
+                faults: Default::default(),
                 seed,
                 inline_count,
                 crossline_count,
@@ -173,6 +177,7 @@ pub fn maybe_run_multiprocess(
         ))
     });
     let cfg = synthoseis_core::pipeline::E2eConfig {
+        faults: Default::default(),
         seed,
         inline_count,
         crossline_count,

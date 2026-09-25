@@ -87,6 +87,15 @@ enum Commands {
         /// CPU software adapter when no device is available (CI-safe no-op path).
         #[arg(long, default_value_t = false)]
         gpu: bool,
+        /// Insert N faults (port of datagenerator/Faults.py random mode; seeded
+        /// from --seed). Default 0 = no faulting (bit-identical outputs).
+        /// Currently requires single-worker `--e2e --chunked`; also writes
+        /// `data/fault_labels` into the MDIO store.
+        #[arg(long, default_value_t = 0)]
+        faults: usize,
+        /// Cube shape `NI,NJ,NK` for single-worker `--e2e --chunked` (default 8,8,8).
+        #[arg(long)]
+        shape: Option<String>,
     },
 }
 
@@ -110,6 +119,18 @@ fn resolve_chunk_shape_cli(
                 chunk_k.unwrap_or(nk).max(1).min(nk),
             ])
         }
+    }
+}
+
+fn parse_shape(s: &str) -> Result<(usize, usize, usize), String> {
+    let v: Vec<usize> = s
+        .split(',')
+        .map(|t| t.trim().parse::<usize>())
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("--shape: {e}"))?;
+    match v.as_slice() {
+        [a, b, c] if *a >= 1 && *b >= 1 && *c >= 2 => Ok((*a, *b, *c)),
+        _ => Err(format!("--shape expects NI,NJ,NK (NK >= 2), got {s:?}")),
     }
 }
 
@@ -138,6 +159,8 @@ fn main() {
             multiprocess,
             worker_id,
             gpu,
+            faults,
+            shape,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -170,7 +193,25 @@ fn main() {
                 );
                 std::process::exit(2);
             }
-            let (inline_count, crossline_count, samples) = if e2e || workers > 1 || multiprocess {
+            if (faults > 0 || shape.is_some())
+                && !(e2e
+                    && chunked
+                    && workers == 1
+                    && !multiprocess
+                    && worker_id.is_none()
+                    && !overlap)
+            {
+                eprintln!(
+                    "--faults / --shape currently require single-worker `--e2e --chunked` (no --overlap / --multiprocess / --worker-id)"
+                );
+                std::process::exit(2);
+            }
+            let (inline_count, crossline_count, samples) = if let Some(ref s) = shape {
+                parse_shape(s).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                })
+            } else if e2e || workers > 1 || multiprocess {
                 (8, 8, 8)
             } else {
                 (2, 2, 4)
@@ -253,6 +294,7 @@ fn main() {
                     samples,
                     chunk_shape,
                     &config,
+                    faults,
                 );
             } else if workers == 1 {
                 cli_e2e::run_single_worker_placeholder(&config, store, seed);

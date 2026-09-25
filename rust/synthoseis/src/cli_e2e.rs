@@ -21,6 +21,7 @@ pub fn run_e2e(
     samples: usize,
     chunk_shape: Option<[usize; 3]>,
     config: &RunConfig,
+    faults: usize,
 ) {
     if geo_many {
         let angle_list = if let Some(ref csv) = angles {
@@ -35,6 +36,7 @@ pub fn run_e2e(
             })
         };
         let cfg = synthoseis_core::pipeline::E2eConfig {
+            faults: synthoseis_core::FaultConfig::with_count(faults),
             seed,
             inline_count,
             crossline_count,
@@ -43,6 +45,7 @@ pub fn run_e2e(
             chunk_shape: chunk_shape.or_else(|| {
                 Some(synthoseis_core::resolve_chunk_shape(
                     &synthoseis_core::pipeline::E2eConfig {
+                        faults: Default::default(),
                         seed,
                         inline_count,
                         crossline_count,
@@ -53,12 +56,11 @@ pub fn run_e2e(
                 ))
             }),
         };
-        let (report, stats) = run_e2e_geometry_once_seismic_many(&cfg, &angle_list).unwrap_or_else(
-            |e| {
+        let (report, stats) =
+            run_e2e_geometry_once_seismic_many(&cfg, &angle_list).unwrap_or_else(|e| {
                 eprintln!("geometry-once seismic-many failed: {e}");
                 std::process::exit(1);
-            },
-        );
+            });
         println!(
             "geometry-once seismic-many complete: seed={}, angles={:?}, stacks={}, labels_generated={}, status={}, peak_temp_bytes={}",
             seed,
@@ -68,6 +70,7 @@ pub fn run_e2e(
             report.status,
             stats.peak_temp_bytes
         );
+        print_fault_summary(&cfg);
         for st in &report.stacks {
             println!(
                 "  angle={:.0}° parity(iou={:.4}, mae={:.3e}) store={:?}",
@@ -87,6 +90,7 @@ pub fn run_e2e(
         let resolved = chunk_shape.or_else(|| {
             Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                 &synthoseis_core::pipeline::E2eConfig {
+                    faults: Default::default(),
                     seed,
                     inline_count,
                     crossline_count,
@@ -127,6 +131,7 @@ pub fn run_e2e(
 
     if chunked || chunk_shape.is_some() {
         let cfg = synthoseis_core::pipeline::E2eConfig {
+            faults: synthoseis_core::FaultConfig::with_count(faults),
             seed,
             inline_count,
             crossline_count,
@@ -135,6 +140,7 @@ pub fn run_e2e(
             chunk_shape: chunk_shape.or_else(|| {
                 Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                     &synthoseis_core::pipeline::E2eConfig {
+                        faults: Default::default(),
                         seed,
                         inline_count,
                         crossline_count,
@@ -172,6 +178,7 @@ pub fn run_e2e(
             report.parity.angle_mae,
             report.parity.angle_max_abs
         );
+        print_fault_summary(&cfg);
         if let Some(path) = report.store_path {
             println!(
                 "wrote MDIO labels+angle-stack at {} (sub-volume chunks, parity round-trip ok)",
@@ -208,6 +215,25 @@ pub fn run_e2e(
             path.display()
         );
     }
+}
+
+fn print_fault_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
+    if !cfg.faults.enabled() {
+        return;
+    }
+    let Some(model) = synthoseis_core::fault_model(cfg) else {
+        return;
+    };
+    let voxels: usize = synthoseis_core::generate_fault_labels(cfg)
+        .map(|m| m.iter().map(|&v| v as usize).sum())
+        .unwrap_or(0);
+    println!(
+        "faults: requested={}, inserted={}, skipped={}, fault_voxels={} (data/fault_labels)",
+        cfg.faults.count,
+        model.faults().len(),
+        model.skipped().len(),
+        voxels
+    );
 }
 
 pub fn run_single_worker_placeholder(config: &RunConfig, store: Option<PathBuf>, seed: u64) {

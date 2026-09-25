@@ -11,7 +11,6 @@
 //! open succeeds. Known gaps: no Blosc/ZFP, headers are stub (not SEG-Y-faithful),
 //! no cloud backends. mdio 1.x `open_mdio` (xarray-flat) is a later slice.
 
-
 mod zarr;
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +20,9 @@ pub const PRIMARY_VARIABLE: &str = "chunked_012";
 
 /// Extra deliverable array name for discrete label volumes (uint8).
 pub const LABELS_VARIABLE: &str = "labels";
+
+/// Binary fault-label deliverable variable under `data/` (uint8, 0/1).
+pub const FAULT_LABELS_VARIABLE: &str = "fault_labels";
 
 /// Declared API version attribute (synthoseis Rust MDIO writer).
 pub const API_VERSION: &str = "0.1.0-synthoseis-rust";
@@ -153,8 +155,6 @@ impl From<&StoreMeta> for CreateConfig {
     }
 }
 
-
-
 mod store;
 
 pub use store::{DeliverableWriter, MdioStore};
@@ -176,7 +176,11 @@ mod tests {
         assert!(root.join(".zgroup").is_file());
         assert!(root.join(".zattrs").is_file());
         assert!(root.join("metadata").join(".zgroup").is_file());
-        assert!(root.join("metadata").join("live_mask").join(".zarray").is_file());
+        assert!(root
+            .join("metadata")
+            .join("live_mask")
+            .join(".zarray")
+            .is_file());
         assert!(root
             .join("data")
             .join(PRIMARY_VARIABLE)
@@ -266,7 +270,15 @@ mod tests {
         store.write_volume(&data).unwrap();
         let back = store.read_volume().unwrap();
         assert_eq!(data, back);
-        assert_eq!(store.read_live_mask().unwrap().iter().filter(|&&b| b == 1).count(), 16);
+        assert_eq!(
+            store
+                .read_live_mask()
+                .unwrap()
+                .iter()
+                .filter(|&&b| b == 1)
+                .count(),
+            16
+        );
     }
 
     #[test]
@@ -293,6 +305,10 @@ mod tests {
         store.write_volume(&angles).unwrap();
         let back = store.read_labels_u8().unwrap();
         assert_eq!(labels, back);
-        assert!(root.join("data").join(LABELS_VARIABLE).join(".zarray").is_file());
+        assert!(root
+            .join("data")
+            .join(LABELS_VARIABLE)
+            .join(".zarray")
+            .is_file());
     }
 }

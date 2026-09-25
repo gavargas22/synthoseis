@@ -6,10 +6,13 @@
 //! - [`enforce_nonnegative_thicknesses`] — negative-thickness clip from
 //!   `Horizons.insert_feature_into_horizon_stack`
 //! - [`fill_layer_labels`] — discrete labels between successive horizon depths
+//! - [`faults`] — fault model port of `datagenerator/Faults.py` (ellipsoidal
+//!   faults, throw profiles, tile-wise displacement + fault labels)
 //!
 //! The Python generator remains the reference baseline; these kernels are covered by
 //! golden fixtures in `tests/fixtures/parity_cubes_8.json`.
 
+pub mod faults;
 mod kernels;
 #[cfg(test)]
 #[path = "tests_kernels.rs"]

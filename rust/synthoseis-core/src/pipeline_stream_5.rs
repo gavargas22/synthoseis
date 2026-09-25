@@ -53,6 +53,11 @@ pub fn run_e2e_strip_stitched(
     };
     let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
     store.ensure_labels_array().map_err(|e| e.to_string())?;
+    let faults = fault_model(cfg);
+    if faults.is_some() {
+        store.ensure_fault_labels_array().map_err(|e| e.to_string())?;
+    }
+    let faults_ref = faults.as_ref();
 
     let labels = std::sync::Arc::new(labels);
     let trends = depth_trends(nk);
@@ -78,6 +83,7 @@ pub fn run_e2e_strip_stitched(
                         chunks,
                         &trends,
                         &wavelet,
+                        faults_ref,
                     )
                 }));
             }
@@ -121,6 +127,14 @@ pub fn run_e2e_strip_stitched(
             "strip-stitch MDIO parity failed: iou={:.6} agr={:.6} mae={:.6e} maxabs={:.6e}",
             parity.label_iou, parity.label_agreement, parity.angle_mae, parity.angle_max_abs
         ));
+    }
+
+    // Fault labels written by N workers must equal the tile-wise reference.
+    if let Some(reference) = generate_fault_labels(cfg) {
+        let back = opened.read_fault_labels_u8().map_err(|e| e.to_string())?;
+        if back != reference {
+            return Err("strip-stitch fault_labels diverged from single-pass reference".into());
+        }
     }
 
     // Bit-identical labels vs reference (same generate_labels).

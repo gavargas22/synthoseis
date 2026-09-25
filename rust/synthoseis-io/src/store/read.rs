@@ -1,7 +1,7 @@
 //! read_volume / read_live_mask
 use super::MdioStore;
 use crate::zarr::*;
-use crate::{err, LABELS_VARIABLE, PRIMARY_VARIABLE, Result};
+use crate::{err, Result, FAULT_LABELS_VARIABLE, LABELS_VARIABLE, PRIMARY_VARIABLE};
 use std::fs;
 
 impl MdioStore {
@@ -65,10 +65,7 @@ impl MdioStore {
         let mut buf = fs::read(path)?;
         let n = live_shape[0] * live_shape[1];
         if buf.len() != n {
-            return Err(err(format!(
-                "live_mask length {}: expected {n}",
-                buf.len()
-            )));
+            return Err(err(format!("live_mask length {}: expected {n}", buf.len())));
         }
         for b in &mut buf {
             *b = if *b == 0 { 0 } else { 1 };
@@ -78,12 +75,21 @@ impl MdioStore {
 
     /// Read the uint8 label volume from `data/labels` (same shape as primary).
     pub fn read_labels_u8(&self) -> Result<Vec<u8>> {
+        self.read_u8_variable(LABELS_VARIABLE, 255)
+    }
+
+    /// Read the binary fault-label volume from `data/fault_labels`.
+    pub fn read_fault_labels_u8(&self) -> Result<Vec<u8>> {
+        self.read_u8_variable(FAULT_LABELS_VARIABLE, 0)
+    }
+
+    fn read_u8_variable(&self, name: &str, fill: u8) -> Result<Vec<u8>> {
         let shape = self.shape();
         let chunks = self.config.chunks_or_shape();
-        let mut out = vec![255u8; shape[0] * shape[1] * shape[2]];
-        let array_dir = self.root.join("data").join(LABELS_VARIABLE);
+        let mut out = vec![fill; shape[0] * shape[1] * shape[2]];
+        let array_dir = self.root.join("data").join(name);
         if !array_dir.join(".zarray").is_file() {
-            return Err(err("labels array not present in store"));
+            return Err(err(format!("{name} array not present in store")));
         }
 
         let n0 = ceildiv(shape[0], chunks[0]);
@@ -107,7 +113,7 @@ impl MdioStore {
                     let expected = cshape[0] * cshape[1] * cshape[2];
                     if bytes.len() != expected {
                         return Err(err(format!(
-                            "labels chunk {:?} size {}: expected {expected}",
+                            "{name} chunk {:?} size {}: expected {expected}",
                             [i0, i1, i2],
                             bytes.len()
                         )));
