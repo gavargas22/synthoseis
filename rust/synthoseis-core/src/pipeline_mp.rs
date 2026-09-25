@@ -12,8 +12,8 @@ use synthoseis_seismic::ricker;
 use crate::parity;
 use crate::pipeline::{E2eConfig, E2eReport, TINY_DIGI};
 use crate::pipeline_stream::{
-    depth_trends, generate_chunked, generate_labels, resolve_chunk_shape, write_strip_partition,
-    WorkingSetStats,
+    depth_trends, fault_model, generate_chunked, generate_fault_labels, generate_labels,
+    resolve_chunk_shape, write_strip_partition, WorkingSetStats,
 };
 
 /// Default path for the JobPartitionPlan JSON written next to a multiprocess store.
@@ -52,7 +52,14 @@ pub fn prepare_multiprocess_store(
     cfg: &E2eConfig,
     workers: usize,
     chunk_shape: Option<[usize; 3]>,
-) -> Result<(std::path::PathBuf, crate::partition::JobPartitionPlan, WorkingSetStats), String> {
+) -> Result<
+    (
+        std::path::PathBuf,
+        crate::partition::JobPartitionPlan,
+        WorkingSetStats,
+    ),
+    String,
+> {
     let workers = workers.max(1);
     let path = cfg
         .store_path
@@ -95,6 +102,11 @@ pub fn prepare_multiprocess_store(
     }
     let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
     store.ensure_labels_array().map_err(|e| e.to_string())?;
+    if cfg.faults.enabled() {
+        store
+            .ensure_fault_labels_array()
+            .map_err(|e| e.to_string())?;
+    }
 
     let plan_path = multiprocess_plan_path(&path);
     if let Some(parent) = plan_path.parent() {
@@ -132,7 +144,12 @@ pub fn run_worker_partition(
 ) -> Result<WorkingSetStats, String> {
     let part = plan
         .for_worker(worker_id)
-        .ok_or_else(|| format!("worker_id {worker_id} out of range (workers={})", plan.worker_count))?
+        .ok_or_else(|| {
+            format!(
+                "worker_id {worker_id} out of range (workers={})",
+                plan.worker_count
+            )
+        })?
         .clone();
 
     let (labels, shape) = generate_labels(cfg);
@@ -141,8 +158,19 @@ pub fn run_worker_partition(
     let trends = depth_trends(nk);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
 
-    let (stats, samples) =
-        write_strip_partition(store_path, &part, &labels, shape, chunks, &trends, &wavelet)?;
+    // Each worker rebuilds the (deterministic) fault model and evaluates only
+    // its own tiles.
+    let faults = fault_model(cfg);
+    let (stats, samples) = write_strip_partition(
+        store_path,
+        &part,
+        &labels,
+        shape,
+        chunks,
+        &trends,
+        &wavelet,
+        faults.as_ref(),
+    )?;
 
     let side = multiprocess_sidecar_dir(store_path);
     std::fs::create_dir_all(&side).map_err(|e| e.to_string())?;
@@ -205,7 +233,8 @@ pub fn finalize_multiprocess_e2e(
                 if bytes.len() % 4 != 0 {
                     return Err(format!(
                         "worker {} samples length {} not multiple of 4",
-                        sc.worker_id, bytes.len()
+                        sc.worker_id,
+                        bytes.len()
                     ));
                 }
                 for chunk in bytes.chunks_exact(4) {
@@ -225,8 +254,17 @@ pub fn finalize_multiprocess_e2e(
     let back_angles = opened.read_volume().map_err(|e| e.to_string())?;
     let back_labels = opened.read_labels_u8().map_err(|e| e.to_string())?;
     let parity = parity::compare_volumes(
-        &reference.labels, &back_labels, &reference.angle_stack, &back_angles,
+        &reference.labels,
+        &back_labels,
+        &reference.angle_stack,
+        &back_angles,
     );
+    if let Some(reference) = generate_fault_labels(cfg) {
+        let back = opened.read_fault_labels_u8().map_err(|e| e.to_string())?;
+        if back != reference {
+            return Err("multiprocess fault_labels diverged from single-pass reference".into());
+        }
+    }
     if !parity.passes_defaults() {
         return Err(format!(
             "multiprocess MDIO parity failed: iou={:.6} agr={:.6} mae={:.6e} maxabs={:.6e}",
@@ -253,8 +291,7 @@ pub fn run_e2e_multiprocess(
     cfg: &E2eConfig,
     workers: usize,
 ) -> Result<(E2eReport, WorkingSetStats), String> {
-    let (store_path, plan, _prep) =
-        prepare_multiprocess_store(cfg, workers, cfg.chunk_shape)?;
+    let (store_path, plan, _prep) = prepare_multiprocess_store(cfg, workers, cfg.chunk_shape)?;
     for wid in 0..plan.worker_count {
         run_worker_partition(cfg, &plan, wid, &store_path)?;
     }
@@ -272,6 +309,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("mp.mdio");
         let cfg = E2eConfig {
+            faults: Default::default(),
             seed: 42,
             inline_count: 8,
             crossline_count: 8,
