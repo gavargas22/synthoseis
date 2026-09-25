@@ -47,3 +47,24 @@ jobs:
         run: cargo run -p synthoseis -- run --e2e --chunked --gpu --store /tmp/gpu.mdio
       - name: faults e2e smoke (fault_labels written)
         run: cargo run -p synthoseis -- run --e2e --chunked --faults 4 --seed 4 --shape 48,48,64 --store /tmp/faults.mdio && test -f /tmp/faults.mdio/data/fault_labels/.zarray
+
+  msrv:
+    name: MSRV (Rust 1.83)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      # Stable cargo (>= 1.84) provides the MSRV-aware resolver; Cargo.lock is
+      # not committed, so resolve deps against rust-version (1.83) first.
+      - name: Install stable Rust (resolver)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install MSRV toolchain
+        uses: dtolnay/rust-toolchain@1.83
+      - name: MSRV-aware lockfile
+        run: CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo +stable generate-lockfile
+      - name: cargo check (1.83)
+        run: cargo +1.83 check --workspace --all-targets --locked
+      - name: cargo test (1.83)
+        run: cargo +1.83 test --workspace --locked

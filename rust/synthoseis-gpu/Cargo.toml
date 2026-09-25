@@ -10,8 +10,10 @@ description = "Per-tile Zoeppritz + wavelet fuse kernels (CPU software + optiona
 [features]
 default = ["wgpu"]
 # wgpu 24 compute path. Disable with --no-default-features for lean builds.
-# MSRV note: wgpu 24 effectively needs Rust ≥1.76; workspace declares 1.76 and
-# CI uses stable. Graceful no-adapter fallback keeps ubuntu-latest green.
+# MSRV note: the `wgpu` 24 crate follows wgpu's "rest of workspace" MSRV of
+# Rust 1.83 (only naga / wgpu-core / wgpu-hal / wgpu-types are 1.76), so the
+# workspace declares rust-version 1.83; CI has an MSRV job (1.83) plus stable.
+# Graceful no-adapter fallback keeps ubuntu-latest green.
 wgpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [dependencies]
