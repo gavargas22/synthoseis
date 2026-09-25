@@ -258,8 +258,29 @@ def main():
     ap.add_argument("--out", default=str(Path(__file__).with_name("fault_cubes.json")))
     ap.add_argument("--sweep", type=int, default=0,
                     help="instead of the committed cases, run N random seeds (48x48x64, 1-3 faults)")
+    ap.add_argument("--tall", action="store_true",
+                    help="write the tall-cube fixture (16x16x640) to fault_cubes_tall.json")
+    ap.add_argument("--tall-seeds", default="5,7",
+                    help="comma-separated seeds for --tall (2 faults each)")
     args = ap.parse_args()
     age_cfg = {"z_top": 2.0, "spacing_base": 6.0, "spacing_di": 0.03, "spacing_dj": -0.02}
+    if args.tall:
+        # Tall enough (640 samples, seabed at 4) for the legacy seabed taper to
+        # always succeed: the worst-case vertical reach is ~577 samples.
+        out = args.out
+        if out == ap.get_default("out"):
+            out = str(Path(__file__).with_name("fault_cubes_tall.json"))
+        tall_age = {"z_top": 2.0, "spacing_base": 24.0, "spacing_di": 0.1, "spacing_dj": -0.1}
+        cases = [
+            run_case(f"tall_{s}", (16, 16, 640), 2, int(s), tall_age, 4.0, args.dump, stride=8)
+            for s in args.tall_seeds.split(",")
+        ]
+        with open(out, "w") as f:
+            json.dump({"cases": cases}, f, separators=(",", ":"))
+        for c in cases:
+            print(c["name"], "fault voxels:", c["expected"]["n_fault_voxels"],
+                  "centres:", [f["center"] for f in c["faults"]])
+        return
     if args.sweep:
         import contextlib
         import io
