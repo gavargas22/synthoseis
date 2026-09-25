@@ -114,6 +114,13 @@ pub struct ResolvedFault {
     pub profile: Vec<f64>,
     /// Samples the profile was rolled down to keep the seabed unfaulted.
     pub seabed_roll: usize,
+    /// Vertical sigma actually used (differs from `params.sigma` only when
+    /// [`ReachMode::FitColumn`] rescued the taper).
+    pub sigma_used: f64,
+    /// Whether the throw at the seabed ended `<= 1` (taper succeeded).
+    pub seabed_ok: bool,
+    /// Whether [`ReachMode::FitColumn`] shrank sigma to fit the column.
+    pub reach_rescued: bool,
     /// Python would add hockey-stick drag (deferred in this port).
     pub hockey_stick_deferred: bool,
     lateral: LateralGaussian,
@@ -245,7 +252,7 @@ fn general_gaussian(n: usize, m: usize, p: f64, sig: f64) -> f64 {
 }
 
 /// Vertical throw profile `z_shift(range(nk))` from `xyz_dis`, including the
-/// padded/rolled general gaussian and the seabed taper loop.
+/// padded/rolled general gaussian and the seabed taper loop (legacy, exact).
 ///
 /// Returns `(profile, seabed_roll_samples)`.
 pub fn vertical_profile(
@@ -256,11 +263,52 @@ pub fn vertical_profile(
     center_k: usize,
     wb_max: f64,
 ) -> (Vec<f64>, usize) {
+    let t = taper(nk, throw, sigma, p, center_k, wb_max);
+    (t.profile, t.roll)
+}
+
+/// How the vertical reach of a fault (the `sigma` of its vertical general
+/// gaussian) is reconciled with the sub-seabed column height.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReachMode {
+    /// Exact legacy behaviour: `sigma ~ U(10*throw-50, 300)` samples whatever
+    /// the cube height. When the seabed taper loop gives up (short cubes),
+    /// the throw at the seabed stays `> 1` and the water column is faulted.
+    Legacy,
+    /// Default. Run the legacy taper first and keep it untouched whenever it
+    /// succeeds (bit-identical to [`ReachMode::Legacy`]). Only when it gives
+    /// up, shrink `sigma` so the vertical reach fits the available sub-seabed
+    /// column ([`fit_sigma_to_column`]) and re-run the same taper. Also clamps
+    /// the fault mask / segment ids to `k >= seabed(i, j)`.
+    #[default]
+    FitColumn,
+}
+
+/// Result of one run of the legacy seabed taper loop.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Taper {
+    /// `z_shift(k)` for `k in 0..nk` (already includes `throw`).
+    pub profile: Vec<f64>,
+    /// Samples the profile was rolled down.
+    pub roll: usize,
+    /// Whether the throw at the seabed probe ended `<= 1` (seabed unfaulted).
+    pub ok: bool,
+}
+
+/// The legacy `xyz_dis` vertical profile and seabed taper loop, verbatim.
+pub fn taper(nk: usize, throw: f64, sigma: f64, p: f64, center_k: usize, wb_max: f64) -> Taper {
     let roll_int = (10.0 * sigma).trunc().max(0.0) as usize;
     let m = nk + 2 * roll_int;
     let sig = sigma as f32 as f64; // np.float32(sig)
     let g = |n: usize| throw * general_gaussian(n, m, p, sig);
-    let argmax = if m % 2 == 1 { (m - 1) / 2 } else { m / 2 - 1 };
+    // np.argmax(g): the *first* index of the maximum. For large sigma and p
+    // the general gaussian has a plateau of samples that are exactly `throw`
+    // in f64, so walk left from the analytic centre across it.
+    let mut argmax = if m % 2 == 1 { (m - 1) / 2 } else { m / 2 - 1 };
+    let gmax = g(argmax);
+    while argmax > 0 && g(argmax - 1) >= gmax {
+        argmax -= 1;
+    }
     let mi = m as i64;
     let mut shift = (center_k + argmax + roll_int) as i64;
     let rolled = |t: i64, shift: i64| g((t - shift).rem_euclid(mi) as usize);
@@ -273,10 +321,114 @@ pub fn vertical_profile(
             break;
         }
     }
+    let ok = rolled(probe, shift) <= 1.0;
     let profile = (0..nk)
         .map(|k| rolled((roll_int + k) as i64, shift))
         .collect();
-    (profile, count)
+    Taper {
+        profile,
+        roll: count,
+        ok,
+    }
+}
+
+/// Vertical reach of a general gaussian of height `throw`: the distance from
+/// its peak at which it drops to 1 sample, `sigma * (2 ln throw)^(1/(2p))`.
+pub fn vertical_reach(throw: f64, sigma: f64, p: f64) -> f64 {
+    if throw <= 1.0 {
+        return 0.0;
+    }
+    sigma * (2.0 * throw.ln()).powf(1.0 / (2.0 * p))
+}
+
+/// Largest `sigma` whose vertical reach fits the sub-seabed column the taper
+/// loop can use, with a 2 % margin:
+///
+/// ```text
+/// d_max  = (center_k - 1.5 - wb_max) + 5 * floor((nk - wb_max) / 5)
+/// sigma' = 0.98 * d_max / (2 ln throw)^(1/(2p))
+/// ```
+///
+/// `d_max` is the furthest the loop can push the profile peak (which sits
+/// 1-1.5 samples above `center_k`) below the seabed probe `wb_max`. Returns
+/// `None` when there is no room (`d_max <= 0`) or `throw <= 1`.
+pub fn fit_sigma_to_column(
+    nk: usize,
+    throw: f64,
+    p: f64,
+    center_k: usize,
+    wb_max: f64,
+) -> Option<f64> {
+    if throw <= 1.0 || (nk as f64) < wb_max {
+        return None;
+    }
+    let room = 5.0 * ((nk as f64 - wb_max) / 5.0).floor();
+    let d_max = center_k as f64 - 1.5 - wb_max + room;
+    if d_max <= 0.0 {
+        return None;
+    }
+    Some(0.98 * d_max / (2.0 * throw.ln()).powf(1.0 / (2.0 * p)))
+}
+
+/// Smallest sigma tried by the [`ReachMode::FitColumn`] rescue.
+pub const MIN_RESCUE_SIGMA: f64 = 0.5;
+
+/// Outcome of [`vertical_profile_mode`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerticalProfile {
+    pub profile: Vec<f64>,
+    pub roll: usize,
+    /// Sigma actually used (== the drawn sigma unless rescued).
+    pub sigma: f64,
+    /// Whether the seabed probe ended with throw `<= 1`.
+    pub seabed_ok: bool,
+    /// Whether [`ReachMode::FitColumn`] had to shrink sigma.
+    pub rescued: bool,
+}
+
+/// Vertical profile under `mode`. `FitColumn` is identical to `Legacy`
+/// whenever the legacy taper succeeds; otherwise sigma is set to
+/// `min(sigma, fit_sigma_to_column(..))` and then shrunk by 10 % per try until
+/// the (unchanged) taper loop succeeds or sigma < [`MIN_RESCUE_SIGMA`]. If no
+/// sigma works the legacy profile is kept (the mask clamp still applies).
+pub fn vertical_profile_mode(
+    nk: usize,
+    throw: f64,
+    sigma: f64,
+    p: f64,
+    center_k: usize,
+    wb_max: f64,
+    mode: ReachMode,
+) -> VerticalProfile {
+    let legacy = taper(nk, throw, sigma, p, center_k, wb_max);
+    let keep = |t: Taper| VerticalProfile {
+        profile: t.profile,
+        roll: t.roll,
+        sigma,
+        seabed_ok: t.ok,
+        rescued: false,
+    };
+    if mode == ReachMode::Legacy || legacy.ok {
+        return keep(legacy);
+    }
+    let Some(fit) = fit_sigma_to_column(nk, throw, p, center_k, wb_max) else {
+        return keep(legacy);
+    };
+    let mut s = fit.min(sigma);
+    while s >= MIN_RESCUE_SIGMA {
+        let t = taper(nk, throw, s, p, center_k, wb_max);
+        if t.ok {
+            return VerticalProfile {
+                profile: t.profile,
+                roll: t.roll,
+                sigma: s,
+                seabed_ok: true,
+                rescued: true,
+            };
+        }
+        s *= 0.9;
+    }
+    keep(legacy)
 }
 
 /// Port of `get_middle_z`: from sub-seabed fault-surface voxels (C-order),
@@ -376,12 +528,27 @@ pub fn survey_surface(
 
 /// Resolve one fault: centre (explicit or seeded `get_middle_z`), lateral
 /// gaussian and vertical profile. `Err` means Python would skip the fault.
+///
+/// Uses [`ReachMode::Legacy`]; see [`resolve_fault_mode`].
 pub fn resolve_fault(
     shape: [usize; 3],
     params: &FaultParams,
     seabed: &Seabed,
     rng: &mut FaultRng,
     survey_tile: [usize; 2],
+) -> Result<ResolvedFault, FaultSkip> {
+    resolve_fault_mode(shape, params, seabed, rng, survey_tile, ReachMode::Legacy)
+}
+
+/// [`resolve_fault`] with an explicit [`ReachMode`] for the vertical profile.
+/// The centre, geometry and lateral gaussian do not depend on `mode`.
+pub fn resolve_fault_mode(
+    shape: [usize; 3],
+    params: &FaultParams,
+    seabed: &Seabed,
+    rng: &mut FaultRng,
+    survey_tile: [usize; 2],
+    mode: ReachMode,
 ) -> Result<ResolvedFault, FaultSkip> {
     let geometry = FaultGeometry::new(shape, params);
     let (cands, wb_max) = survey_surface(shape, &geometry, seabed, survey_tile);
@@ -397,13 +564,14 @@ pub fn resolve_fault(
         }
     };
     let wb_max = wb_max.unwrap_or(0.0);
-    let (profile, seabed_roll) = vertical_profile(
+    let vp = vertical_profile_mode(
         shape[2],
         params.throw,
         params.sigma,
         params.p,
         center[2],
         wb_max,
+        mode,
     );
     let lateral = LateralGaussian::new(
         shape,
@@ -416,8 +584,11 @@ pub fn resolve_fault(
         params: params.clone(),
         geometry,
         center,
-        profile,
-        seabed_roll,
+        profile: vp.profile,
+        seabed_roll: vp.roll,
+        sigma_used: vp.sigma,
+        seabed_ok: vp.seabed_ok,
+        reach_rescued: vp.rescued,
         hockey_stick_deferred: params.is_hockey_stick(),
         lateral,
     })

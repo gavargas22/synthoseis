@@ -338,10 +338,17 @@ tiling or worker count. It displaces layer labels and continuous volumes and
 writes a binary `data/fault_labels` MDIO variable. Faulting is off by default
 (`FaultConfig::count == 0`), and existing outputs are bit-identical when it is off.
 
+Vertical reach: by default (`FaultConfig::legacy_reach = false`, `ReachMode::FitColumn`)
+each fault runs the legacy seabed taper unchanged and keeps it whenever it succeeds, so it
+is bit-identical to legacy on cubes with ≳ 582 samples below the seabed. Only when the
+legacy taper gives up (short cubes) is σ scaled to fit the sub-seabed column, and fault
+labels are never written above the seabed. `legacy_reach = true` reproduces the legacy
+water-column slab exactly.
+
 ```bash
 cd rust
 cargo run -p synthoseis -- run --e2e --chunked --faults 4 --seed 4 --shape 48,48,64 --store /tmp/faults.mdio
-cargo test -p synthoseis-geo --test faults_parity -- --nocapture   # parity vs the Python fixture
+cargo test -p synthoseis-geo --test faults_parity -- --nocapture   # parity vs the Python fixtures
 ```
 
 Design notes, the Python → Rust mapping, parity numbers and deferred items are in

@@ -4,11 +4,17 @@
 //! `tests/fixtures/generate_fault_cubes.py`, which runs the real
 //! `Faults.build_faults` + `apply_xyz_displacement` with recorded random draws.
 //! Rust is fed the identical explicit parameters (random draws bypassed).
+//!
+//! The committed 32×32×48 fixture is too short for the legacy seabed taper
+//! (sigma draws up to 300 samples), so it is compared in `ReachMode::Legacy`.
+//! `tests/fixtures/fault_cubes_tall.json` (16×16×640, taper always succeeds)
+//! is compared in the default `ReachMode::FitColumn`, which must be
+//! bit-identical to legacy there.
 
 use serde::Deserialize;
 use synthoseis_geo::faults::{
     horizon_depth_from_age, middle_candidates, survey_surface, FaultGeometry, FaultModel,
-    FaultParams, Seabed,
+    FaultParams, ReachMode, Seabed,
 };
 
 #[derive(Deserialize)]
@@ -84,12 +90,19 @@ fn load() -> Fixture {
     // `generate_fault_cubes.py --sweep N` run that is not committed).
     let path = std::env::var("SYNTHOSEIS_FAULT_FIXTURE")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../tests/fixtures/fault_cubes.json")
-        });
-    let text = std::fs::read_to_string(&path).expect("read fault_cubes.json");
-    serde_json::from_str(&text).expect("parse fault_cubes.json")
+        .unwrap_or_else(|_| fixture_path("fault_cubes.json"));
+    load_from(&path)
+}
+
+fn fixture_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures")
+        .join(name)
+}
+
+fn load_from(path: &std::path::Path) -> Fixture {
+    let text = std::fs::read_to_string(path).expect("read fault fixture");
+    serde_json::from_str(&text).expect("parse fault fixture")
 }
 
 fn decode_runs(runs: &[u64]) -> Vec<u8> {
@@ -151,16 +164,18 @@ fn age_volume(case: &Case) -> Vec<f32> {
 }
 
 fn run_case(case: &Case, tile: [usize; 2]) -> (Vec<u8>, Vec<f32>, FaultModel) {
-    run_case_with(case, tile, false)
+    run_case_with(case, tile, false, ReachMode::Legacy)
 }
 
 fn run_case_with(
     case: &Case,
     tile: [usize; 2],
     replay_ties: bool,
+    mode: ReachMode,
 ) -> (Vec<u8>, Vec<f32>, FaultModel) {
     let ps = params_with(case, replay_ties);
-    let model = FaultModel::resolve(case.shape, &ps, &Seabed::Flat(case.wb_const), 0);
+    let model =
+        FaultModel::resolve_with_mode(case.shape, &ps, &Seabed::Flat(case.wb_const), 0, mode);
     let mut age = age_volume(case);
     let mask = model.apply_to_volume_f32(&mut age, tile);
     (mask, age, model)
@@ -227,7 +242,7 @@ fn fault_parity_vs_python_fixture() {
             case.name
         );
         let p = parity(case, &mask, &age);
-        let (mask_r, age_r, _) = run_case_with(case, [8, 8], true);
+        let (mask_r, age_r, _) = run_case_with(case, [8, 8], true, ReachMode::Legacy);
         let pr = parity(case, &mask_r, &age_r);
         println!("{}: analytic {p:?}", case.name);
         println!("{}: replay   {pr:?}", case.name);
@@ -310,4 +325,95 @@ fn fault_parity_tiling_invariant() {
     assert_eq!(m1, m3);
     assert_eq!(a1, a2);
     assert_eq!(a1, a3);
+}
+
+/// Legacy parity + default-mode exactness on a cube tall enough for the
+/// legacy seabed taper (16×16×640, wb = 4): `FitColumn` must not rescue any
+/// fault and must be bit-identical to `Legacy`, hence match Python equally.
+#[test]
+fn tall_fixture_default_mode_is_legacy_exact() {
+    // SYNTHOSEIS_FAULT_TALL_FIXTURE: e.g. `generate_fault_cubes.py --tall
+    // --tall-seeds 1,2,...,30 --out /tmp/tall.json` (not committed).
+    let path = std::env::var("SYNTHOSEIS_FAULT_TALL_FIXTURE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| fixture_path("fault_cubes_tall.json"));
+    let sweep = std::env::var("SYNTHOSEIS_FAULT_TALL_FIXTURE").is_ok();
+    let fx = load_from(&path);
+    assert!(!fx.cases.is_empty());
+    for case in &fx.cases {
+        for replay in [false, true] {
+            let (m_leg, a_leg, leg) = run_case_with(case, [8, 8], replay, ReachMode::Legacy);
+            let (m_def, a_def, def) = run_case_with(case, [8, 8], replay, ReachMode::FitColumn);
+            let py_active = case.faults.iter().filter(|f| f.center.is_some()).count();
+            assert_eq!(
+                def.faults().len(),
+                py_active,
+                "{}: active faults",
+                case.name
+            );
+            assert!(
+                leg.faults().iter().all(|f| f.seabed_ok),
+                "{}: legacy taper",
+                case.name
+            );
+            assert_eq!(def.reach_rescued(), 0, "{}: rescued", case.name);
+            assert_eq!(m_def, m_leg, "{}: mask default vs legacy", case.name);
+            assert_eq!(a_def, a_leg, "{}: age default vs legacy", case.name);
+            let p = parity(case, &m_def, &a_def);
+            println!("{} (default mode, replay_ties={replay}): {p:?}", case.name);
+            assert!(p.mask_iou >= 0.95, "{}: mask IoU {p:?}", case.name);
+            assert!(p.mask_agreement >= 0.999, "{}: agreement {p:?}", case.name);
+            if replay && !sweep {
+                // Analytic mode differs from Python only on exact 4-way argmax
+                // ties of the lateral gaussian (tall_5 fault 0 has one). In
+                // sweeps, numpy's SIMD `exp` can also move the vertical
+                // plateau argmax by one sample (see docs/faults-port.md).
+                assert!(
+                    p.horizon_frac_within_0p01 >= 0.999,
+                    "{}: horizons {p:?}",
+                    case.name
+                );
+            }
+            let wb = case.wb_const;
+            let [ni, nj, nk] = case.shape;
+            let above = (0..ni * nj)
+                .flat_map(|c| (0..nk).map(move |k| (c, k)))
+                .filter(|&(c, k)| (k as f64) < wb && m_def[c * nk + k] == 1)
+                .count();
+            assert_eq!(above, 0, "{}: fault voxels above seabed", case.name);
+        }
+    }
+}
+
+/// On the short fixture the legacy taper gives up; `FitColumn` rescues it:
+/// every seabed taper succeeds, no fault voxel sits above the seabed, and the
+/// result stays tiling-invariant and deterministic.
+#[test]
+fn short_fixture_fit_column_keeps_water_column_clean() {
+    let fx = load();
+    for case in &fx.cases {
+        let (m, a, model) = run_case_with(case, [8, 8], false, ReachMode::FitColumn);
+        assert!(model.faults().iter().all(|f| f.seabed_ok), "{}", case.name);
+        let (m2, a2, _) = run_case_with(case, [5, 7], false, ReachMode::FitColumn);
+        assert_eq!(m, m2, "{}: tiling", case.name);
+        assert_eq!(a, a2, "{}: tiling", case.name);
+        let [ni, nj, nk] = case.shape;
+        let wb = case.wb_const;
+        for c in 0..ni * nj {
+            for k in 0..nk {
+                if (k as f64) < wb {
+                    assert_eq!(m[c * nk + k], 0, "{}: mask above seabed", case.name);
+                }
+            }
+        }
+        let (m_leg, _, _) = run_case(case, [8, 8]);
+        let n = |v: &[u8]| v.iter().map(|&x| x as u64).sum::<u64>();
+        println!(
+            "{}: legacy voxels={} fit_column voxels={} rescued={}",
+            case.name,
+            n(&m_leg),
+            n(&m),
+            model.reach_rescued()
+        );
+    }
 }
