@@ -9,8 +9,8 @@ use synthoseis_seismic::ricker;
 use crate::parity;
 use crate::pipeline::{E2eConfig, E2eReport, TINY_DIGI};
 use crate::pipeline_stream::{
-    depth_trends, fuse_tile_local, generate_chunked, generate_labels, resolve_chunk_shape,
-    WorkingSetStats, DEFAULT_INCIDENCE_DEG,
+    depth_trends, fuse_tile_filtered, generate_chunked, generate_labels, resolve_chunk_shape,
+    SeismicFilters, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
 };
 
 type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>);
@@ -27,6 +27,7 @@ pub fn run_e2e_streaming_overlapped(
         .as_ref()
         .ok_or_else(|| "run_e2e_streaming_overlapped requires store_path".to_string())?
         .clone();
+    let filters = SeismicFilters::from_config(cfg)?;
     let (labels, shape) = generate_labels(cfg);
     let [ni, nj, nk] = shape;
     let chunks = resolve_chunk_shape(cfg);
@@ -88,7 +89,7 @@ pub fn run_e2e_streaming_overlapped(
         for (j_chunk, j0) in (0..nj).step_by(cj).enumerate() {
             let j1 = (j0 + cj).min(nj);
             let tj = j1 - j0;
-            fuse_tile_local(
+            fuse_tile_filtered(
                 &labels,
                 shape,
                 i0,
@@ -98,6 +99,7 @@ pub fn run_e2e_streaming_overlapped(
                 &trends,
                 &wavelet,
                 DEFAULT_INCIDENCE_DEG,
+                filters.as_ref(),
                 &mut tile_angles,
                 &mut stats,
             );
@@ -195,6 +197,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed,
             inline_count: shape[0],
             crossline_count: shape[1],

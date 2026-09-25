@@ -22,6 +22,7 @@ pub fn run_e2e(
     chunk_shape: Option<[usize; 3]>,
     config: &RunConfig,
     faults: usize,
+    filters: synthoseis_core::FilterConfig,
 ) {
     if geo_many {
         let angle_list = if let Some(ref csv) = angles {
@@ -37,6 +38,7 @@ pub fn run_e2e(
         };
         let cfg = synthoseis_core::pipeline::E2eConfig {
             faults: synthoseis_core::FaultConfig::with_count(faults),
+            filters: filters.clone(),
             seed,
             inline_count,
             crossline_count,
@@ -46,6 +48,7 @@ pub fn run_e2e(
                 Some(synthoseis_core::resolve_chunk_shape(
                     &synthoseis_core::pipeline::E2eConfig {
                         faults: Default::default(),
+                        filters: Default::default(),
                         seed,
                         inline_count,
                         crossline_count,
@@ -71,6 +74,7 @@ pub fn run_e2e(
             stats.peak_temp_bytes
         );
         print_fault_summary(&cfg);
+        print_filter_summary(&cfg);
         for st in &report.stacks {
             println!(
                 "  angle={:.0}° parity(iou={:.4}, mae={:.3e}) store={:?}",
@@ -91,6 +95,7 @@ pub fn run_e2e(
             Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                 &synthoseis_core::pipeline::E2eConfig {
                     faults: Default::default(),
+                    filters: Default::default(),
                     seed,
                     inline_count,
                     crossline_count,
@@ -132,6 +137,7 @@ pub fn run_e2e(
     if chunked || chunk_shape.is_some() {
         let cfg = synthoseis_core::pipeline::E2eConfig {
             faults: synthoseis_core::FaultConfig::with_count(faults),
+            filters: filters.clone(),
             seed,
             inline_count,
             crossline_count,
@@ -141,6 +147,7 @@ pub fn run_e2e(
                 Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                     &synthoseis_core::pipeline::E2eConfig {
                         faults: Default::default(),
+                        filters: Default::default(),
                         seed,
                         inline_count,
                         crossline_count,
@@ -179,6 +186,7 @@ pub fn run_e2e(
             report.parity.angle_max_abs
         );
         print_fault_summary(&cfg);
+        print_filter_summary(&cfg);
         if let Some(path) = report.store_path {
             println!(
                 "wrote MDIO labels+angle-stack at {} (sub-volume chunks, parity round-trip ok)",
@@ -215,6 +223,21 @@ pub fn run_e2e(
             path.display()
         );
     }
+}
+
+fn print_filter_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
+    let fc = &cfg.filters;
+    if !fc.enabled() {
+        return;
+    }
+    let bandpass = match fc.bandpass_hz {
+        Some([lo, hi]) => format!("{lo}-{hi} Hz order {}", fc.bandpass_order),
+        None => "off".into(),
+    };
+    println!(
+        "filters: bandpass={bandpass}, lateral_size={} (applied to data/angle_stack)",
+        fc.lateral_size
+    );
 }
 
 fn print_fault_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {

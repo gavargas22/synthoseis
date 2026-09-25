@@ -9,6 +9,7 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
         .ok_or_else(|| "run_e2e_streaming requires store_path".to_string())?
         .clone();
 
+    let filters = SeismicFilters::from_config(cfg)?;
     let (labels, shape) = generate_labels(cfg);
     let [ni, nj, nk] = shape;
     let chunks = resolve_chunk_shape(cfg);
@@ -59,7 +60,7 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
         while j0 < nj {
             let j1 = (j0 + cj).min(nj);
             let tj = j1 - j0;
-            fuse_tile_local(
+            fuse_tile_filtered(
                 &labels,
                 shape,
                 i0,
@@ -69,6 +70,7 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
                 &trends,
                 &wavelet,
                 DEFAULT_INCIDENCE_DEG,
+                filters.as_ref(),
                 &mut tile_angles,
                 &mut stats,
             );

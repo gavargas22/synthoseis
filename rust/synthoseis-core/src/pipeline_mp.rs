@@ -13,7 +13,7 @@ use crate::parity;
 use crate::pipeline::{E2eConfig, E2eReport, TINY_DIGI};
 use crate::pipeline_stream::{
     depth_trends, fault_model, generate_chunked, generate_fault_labels, generate_labels,
-    resolve_chunk_shape, write_strip_partition, WorkingSetStats,
+    resolve_chunk_shape, write_strip_partition, SeismicFilters, WorkingSetStats,
 };
 
 /// Default path for the JobPartitionPlan JSON written next to a multiprocess store.
@@ -65,6 +65,7 @@ pub fn prepare_multiprocess_store(
         .store_path
         .clone()
         .ok_or_else(|| "prepare_multiprocess_store requires store_path".to_string())?;
+    SeismicFilters::from_config(cfg)?;
 
     let mut cfg = cfg.clone();
     if let Some(c) = chunk_shape {
@@ -161,6 +162,7 @@ pub fn run_worker_partition(
     // Each worker rebuilds the (deterministic) fault model and evaluates only
     // its own tiles.
     let faults = fault_model(cfg);
+    let filters = SeismicFilters::from_config(cfg)?;
     let (stats, samples) = write_strip_partition(
         store_path,
         &part,
@@ -170,6 +172,7 @@ pub fn run_worker_partition(
         &trends,
         &wavelet,
         faults.as_ref(),
+        filters.as_ref(),
     )?;
 
     let side = multiprocess_sidecar_dir(store_path);
@@ -310,6 +313,7 @@ mod tests {
         let path = dir.path().join("mp.mdio");
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 42,
             inline_count: 8,
             crossline_count: 8,

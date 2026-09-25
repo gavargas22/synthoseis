@@ -51,6 +51,55 @@ pub struct E2eConfig {
     /// Default is disabled (`count == 0`): geology, labels and angle stacks
     /// are bit-identical to the pre-fault pipeline.
     pub faults: FaultConfig,
+    /// Optional post-convolution seismic filters (port of the legacy
+    /// Butterworth bandpass + lateral filter, `datagenerator/Seismic.py`).
+    ///
+    /// Default is disabled: angle stacks are bit-identical to the unfiltered
+    /// pipeline. See `docs/filters-port.md`.
+    pub filters: FilterConfig,
+}
+
+/// Post-convolution filters applied to each fused angle-stack tile.
+///
+/// Legacy `postprocess_rfc_cubes` order: bandpass (`apply_bandlimits`), then
+/// the lateral filter (`apply_lateral_filter`, only when `size > 1`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FilterConfig {
+    /// Butterworth bandpass corners `[low, high]` in Hz (`None` = off).
+    /// Legacy draws `low ~ U(bandwidth_low)`, `high ~ U(bandwidth_high)`
+    /// (example config: 3-6 Hz and 20-35 Hz).
+    pub bandpass_hz: Option<[f64; 2]>,
+    /// Butterworth order (legacy `bandwidth_ord`, default 4).
+    pub bandpass_order: usize,
+    /// Lateral box-filter size `n` (legacy `lateral_filter_size`: 1, 3 or 5).
+    /// `<= 1` = off.
+    pub lateral_size: usize,
+}
+
+impl Default for FilterConfig {
+    fn default() -> Self {
+        Self {
+            bandpass_hz: None,
+            bandpass_order: 4,
+            lateral_size: 1,
+        }
+    }
+}
+
+impl FilterConfig {
+    /// Legacy defaults: order-4 bandpass `[low, high]` Hz and an `n x n`
+    /// lateral filter.
+    pub fn legacy(low_hz: f64, high_hz: f64, lateral_size: usize) -> Self {
+        Self {
+            bandpass_hz: Some([low_hz, high_hz]),
+            bandpass_order: 4,
+            lateral_size,
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.bandpass_hz.is_some() || self.lateral_size > 1
+    }
 }
 
 /// Fault settings for the e2e pipeline (random-mode draw, seeded from
@@ -106,6 +155,7 @@ impl Default for E2eConfig {
             store_path: None,
             chunk_shape: None,
             faults: FaultConfig::default(),
+            filters: FilterConfig::default(),
         }
     }
 }
@@ -241,7 +291,10 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     }
     // Short wavelet: higher frequency keeps support reasonable for tiny nk.
     let wavelet = ricker(40.0, TINY_DIGI, 1);
-    let angle_stack = apply_wavelet_traces(&angle_cube, [ni, nj, nk], &wavelet);
+    let mut angle_stack = apply_wavelet_traces(&angle_cube, [ni, nj, nk], &wavelet);
+
+    // --- optional post-convolution filters (no-op when disabled) ---
+    crate::pipeline_stream::apply_filters_to_volume(cfg, &mut angle_stack);
 
     E2eVolumes {
         labels,
@@ -278,6 +331,7 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
 
 /// Run the full e2e path: generate → (optional MDIO write) → second-pass parity.
 pub fn run_e2e(cfg: &E2eConfig) -> Result<E2eReport, String> {
+    crate::pipeline_stream::SeismicFilters::from_config(cfg)?;
     let volumes = generate_tiny_cube(cfg);
     let second = generate_tiny_cube(cfg);
     let parity = parity::compare_volumes(

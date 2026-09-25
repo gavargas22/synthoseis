@@ -27,6 +27,7 @@ fn cfg(seed: u64, shape: [usize; 3], chunks: [usize; 3]) -> E2eConfig {
         store_path: None,
         chunk_shape: Some(chunks),
         faults: FaultConfig::default(),
+        filters: Default::default(),
     }
 }
 

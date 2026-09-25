@@ -96,6 +96,17 @@ enum Commands {
         /// Cube shape `NI,NJ,NK` for single-worker `--e2e --chunked` (default 8,8,8).
         #[arg(long)]
         shape: Option<String>,
+        /// Legacy post-convolution Butterworth bandpass `LOW,HIGH[,ORDER]` in Hz
+        /// (port of Seismic.apply_bandlimits; zero-phase filtfilt, order 4 by
+        /// default). Off by default. Requires single-worker `--e2e --chunked`
+        /// and more than 6*ORDER+3 samples per trace.
+        #[arg(long)]
+        bandpass: Option<String>,
+        /// Legacy lateral box filter size N (port of
+        /// Seismic.apply_lateral_filter; legacy draws 1, 3 or 5). Default 1 = off.
+        /// Requires single-worker `--e2e --chunked`.
+        #[arg(long, default_value_t = 1)]
+        lateral_filter: usize,
     },
 }
 
@@ -134,6 +145,32 @@ fn parse_shape(s: &str) -> Result<(usize, usize, usize), String> {
     }
 }
 
+fn parse_filters(
+    bandpass: Option<&str>,
+    lateral_filter: usize,
+) -> Result<synthoseis_core::FilterConfig, String> {
+    let mut fc = synthoseis_core::FilterConfig {
+        lateral_size: lateral_filter.max(1),
+        ..Default::default()
+    };
+    if let Some(s) = bandpass {
+        let v: Vec<f64> = s
+            .split(',')
+            .map(|t| t.trim().parse::<f64>())
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("--bandpass: {e}"))?;
+        match v.as_slice() {
+            [lo, hi] => fc.bandpass_hz = Some([*lo, *hi]),
+            [lo, hi, ord] if *ord >= 1.0 && ord.fract() == 0.0 => {
+                fc.bandpass_hz = Some([*lo, *hi]);
+                fc.bandpass_order = *ord as usize;
+            }
+            _ => return Err(format!("--bandpass expects LOW,HIGH[,ORDER], got {s:?}")),
+        }
+    }
+    Ok(fc)
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -161,6 +198,8 @@ fn main() {
             gpu,
             faults,
             shape,
+            bandpass,
+            lateral_filter,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -203,6 +242,18 @@ fn main() {
             {
                 eprintln!(
                     "--faults / --shape currently require single-worker `--e2e --chunked` (no --overlap / --multiprocess / --worker-id)"
+                );
+                std::process::exit(2);
+            }
+            let filters = parse_filters(bandpass.as_deref(), lateral_filter).unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(2);
+            });
+            if filters.enabled()
+                && !(e2e && chunked && workers == 1 && !multiprocess && worker_id.is_none())
+            {
+                eprintln!(
+                    "--bandpass / --lateral-filter currently require single-worker `--e2e --chunked` (no --multiprocess / --worker-id)"
                 );
                 std::process::exit(2);
             }
@@ -295,6 +346,7 @@ fn main() {
                     chunk_shape,
                     &config,
                     faults,
+                    filters,
                 );
             } else if workers == 1 {
                 cli_e2e::run_single_worker_placeholder(&config, store, seed);

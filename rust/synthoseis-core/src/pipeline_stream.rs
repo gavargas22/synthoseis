@@ -17,3 +17,4 @@ include!("pipeline_stream_4.rs");
 include!("pipeline_stream_5.rs");
 include!("pipeline_stream_6.rs");
 include!("pipeline_stream_7.rs");
+include!("pipeline_stream_8.rs");
