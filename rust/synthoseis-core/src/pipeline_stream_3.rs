@@ -9,8 +9,9 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
         .ok_or_else(|| "run_e2e_streaming requires store_path".to_string())?
         .clone();
 
-    let filters = SeismicFilters::from_config(cfg)?;
+    SeismicFilters::from_config(cfg)?;
     let (labels, shape) = generate_labels(cfg);
+    let filters = SeismicFilters::resolve(cfg, &labels, shape)?;
     let [ni, nj, nk] = shape;
     let chunks = resolve_chunk_shape(cfg);
     let mut stats = WorkingSetStats {

@@ -5,6 +5,10 @@ apply the legacy post-convolution **Butterworth bandpass** (zero-phase
 `filtfilt`) and the **lateral box filter** (`uniform_filter` over inline and
 crossline) to every angle stack it produces.
 
+It also ports the legacy additive noise (`add_weighted_noise`) as a
+deterministic, tiling-invariant, statistically equivalent stage (see
+[Noise](#noise-add_weighted_noise)).
+
 The filters are **off by default** (`E2eConfig::filters == FilterConfig::default()`).
 With them off, every existing output stays bit-identical: a test pins hashes
 recorded on master `ca11a457`. When they are on, the filtered stacks match the
@@ -19,7 +23,7 @@ steps on the 4-D `(angles, ni, nj, nk)` reflectivity cube:
 | # | Legacy step | Code | Ported? |
 |---|---|---|---|
 | 1 | Reflectivity per angle | `create_rfc_volumes` | yes (earlier: `compute_rfc_volumes`, fused tile path) |
-| 2 | Noise | `add_weighted_noise(depth_maps)` | **deferred** (see below) |
+| 2 | Noise | `add_weighted_noise(depth_maps)` | **yes**, opt-in: deterministic and statistically equivalent, not bit-exact (see [Noise](#noise-add_weighted_noise)) |
 | 3 | Bandpass | `apply_bandlimits` → `derive_butterworth_bandpass` + `apply_butterworth_bandpass` | **yes** |
 | 4 | Lateral filter, only if `lateral_filter_size > 1` | `apply_lateral_filter` → `uniform_filter(size=(0, n, n, 0))` | **yes** |
 | 5 | Scaling and output | `write_final_cubes_to_disk` → `_scale_seismic` (global std → 100) and rpm near/mid/far factors | deferred |
@@ -227,20 +231,145 @@ Figures, produced by `plot_filters_demo.py`:
 Rust, legacy, difference) and `filters_spectra.png` (mean amplitude spectra
 with the ideal `|H(f)|²`).
 
+## Noise (`add_weighted_noise`)
+
+Noise is **off by default** (`FilterConfig::noise == NoiseConfig::default()`,
+`snr_db: None`). With it off, every output is bit-identical to before (the
+filters-off golden hashes and the `keep_ricker` hashes recorded on master
+`9d5d2051` are pinned in `noise_pipeline.rs`).
+
+### What the legacy code does
+
+`SeismicVolume.add_weighted_noise(faulted_depth_maps)` (`Seismic.py`) runs
+before `postprocess_rfc_cubes`:
+
+1. `noise_3d` (called twice, for `noise_0deg` and `noise_45deg`): draws
+   `rng.exponential(1/100, N)` and a sign from `rng.binomial(1, 0.5, N)`
+   (0 → −1). That is white **Laplace** noise with scale 0.01, no frequency
+   shaping. (It also draws two unused seed integers.) Both cubes are shared by
+   every angle.
+2. Per angle: `weighted = noise_0deg·cos(ang)² + noise_45deg·sin(ang)²`,
+   with `from math import sin, cos` fed the angle **in degrees** (the bug that
+   `tests/test_seismic_noise.py` documents; the fix was never applied to
+   `Seismic.py`).
+3. `noise = weighted · (data_std / weighted.std()) / std_ratio`, with
+   `std_ratio = sqrt(10^(sn_db/10))`, stored as float32 and added to the raw
+   reflectivity in float32 (`rfc_noise_added = noise + rfc_raw`). It is added
+   everywhere, including the water column.
+4. `data_std` is the std of the **middle** angle's raw reflectivity
+   (`rfc_raw[1]`, or `[2]` with `model_qc_volumes`) over the samples
+   `k >= wb / (digi + 15) · digi`, where `wb = faulted_depth_maps[..., 0]`
+   (the seabed in `digi` units; NaN/0 holes are infilled). The variable is
+   called `wb_plus_15samples`, so `wb / digi + 15` was probably intended. As
+   written, for digi = 4 the threshold is `0.84 ×` the seabed sample, i.e.
+   slightly *above* the seabed.
+5. `sn_db` is drawn per model from a triangular distribution over
+   `signal_to_noise_ratio_db` (example config 7.5 / 12.5 / 17.5 dB).
+   `_calculate_snr_after_lateral_filter` is never called.
+
+### Rust design
+
+| Legacy | Rust |
+|---|---|
+| numpy `default_rng` stream, `exponential` × `binomial` sign | **Philox4x32-10** counter-based RNG (Random123 known-answer tests pass), key = SplitMix64(seed ^ salt), counter = global voxel index `(i·nj + j)·nk + k`. One 128-bit block per voxel gives two independent unit Laplace draws `(n0, n45)`: `−ln(u)` with `u = (m + 1)/2^53` from the top 53 bits and the sign from bit 0 |
+| `n0·cos² + n45·sin²` | same, with `(w0, w45)` = `hilterman_noise_weights` (radians, the default) or, with `legacy_angle_weights`, `legacy_degree_noise_weights` (`math.cos(deg)`, exact legacy) |
+| `/ weighted.std()` (sample std of the whole cube) | `/ sqrt(2 (w0² + w45²))`, the analytic population std of the mix. This needs no second pass, and every tile knows its scale up front. It is identical in expectation; the relative gap is `O(1/sqrt(N))` (0.04–0.14 % on 97 k voxels) |
+| `data_std` = `rfc_raw[mid][mask].std()` (float32 numpy) | `noise_signal_std`: one streaming pass that fuses the raw reflectivity at `NOISE_NORM_ANGLE_DEG` (15°) one inline row at a time (memory = one `nj × nk` row). Samples `k >= legacy_noise_mask_threshold(seabed, digi)` of the `nk − 1` Zoeppritz samples are reduced with Welford in fixed global `(i, j, k)` order, in f64. The result does not depend on chunking or workers, and every worker or process recomputes the same bits |
+| `noise.astype(f32) + rfc_raw` | `WeightedNoise::sample(g) = f32(mix · scale)`, added in f32 to the fused raw-reflectivity tile |
+| seabed `faulted_depth_maps[..., 0]` | toy seabed `fault_seabed(cfg)` (top horizon, unfaulted) in samples × digi |
+
+**Where it sits.** When noise is on, `fuse_tile_filtered` works through the
+halo tile in legacy order:
+
+1. fuse the halo tile as raw reflectivity (`NO_WAVELET`);
+2. add the noise, keyed by global voxel index, so halo columns get exactly
+   the noise of the tile that owns them;
+3. convolve the Ricker wavelet when it is not skipped (noise only, lateral
+   only, or `keep_ricker`), using the same f32 → f64 `convolve_same_1d` → f32
+   path as the fused kernel;
+4. apply the bandpass, then the lateral filter.
+
+The classic whole-cube path (`generate_tiny_cube`) does the same steps on the
+full cube. `SeismicFilters::resolve(cfg, labels, shape)` builds the filters
+and runs the `data_std` pass. Every generation path (chunked, streaming,
+overlapped, strip-stitch, multi-process worker, geometry-once, classic) calls
+it after `generate_labels`, so geometry still runs once. All angles share the
+same Philox counters, which matches legacy sharing `noise_0deg` and
+`noise_45deg` across angles.
+
+**GPU.** With `--gpu`, the reflectivity tile comes from the WGSL kernel with
+`NO_WAVELET` (the Ricker-skip PR #26). The noise and the Ricker wavelet are then applied
+on the CPU. `data_std` then uses the GPU reflectivity (0.14 % difference on
+24×20×64). On llvmpipe, the GPU−CPU gap with noise on (max 1.1e-2, at the
+k = 0 sample) is the same as with noise off. That gap is a pre-existing f32
+Zoeppritz difference, not caused by noise.
+
+### Legacy statistical equivalence
+
+Bit parity with the numpy stream is impossible (and not wanted) in tiles, so
+equivalence is statistical. `tests/fixtures/generate_seismic_noise.py` runs
+the **real** legacy `add_weighted_noise` for 64 seeds. Its input is the Rust
+raw reflectivity from the `noise_demo` example (32×32×96, seed 7, no faults,
+angles 5/15/25°, S/N 12.5 dB). It records the noise mean, std, excess
+kurtosis, a 6-band amplitude spectrum and the inter-angle correlations. It
+does this twice: legacy as written (`legacy_degrees`), and legacy with the
+radian fix (`radians`).
+
+`noise_pipeline.rs::noise_statistics_match_legacy` compares 16 Rust seeds
+(spectra from 4) against those references. `SE` below is the legacy
+seed-to-seed std × `sqrt(1/64 + 1/S_rust)`.
+
+| Statistic | Tolerance | Result (worst case over 2 modes × 3 angles) |
+|---|---|---|
+| `data_std` | relative 1e-6 | Rust 7.849921151e-3, legacy 7.849921472e-3 (4e-8) |
+| mean | ≤ 5 SE (≈ 8e-6, 0.4 % of std) | ≤ 3.7e-6 |
+| std | seed-averaged ≤ 0.5 %, every seed ≤ 2 % | −0.14 % … +0.04 % (legacy std = `data_std/std_ratio` = 1.861510e-3 exactly) |
+| excess kurtosis | ≤ 5 SE (0.08–0.16) | radians 2.99 / 2.96 / 2.74 vs 2.99 / 2.96 / 2.73; legacy weights 2.90 / 1.65 / 2.99 vs 2.97 / 1.63 / 2.99 |
+| amplitude spectrum, 6 bands (white, ≈ 0.885 = √π/2) | ≤ 5 SE (0.010–0.016) | max \|Δ\| 0.0060 |
+| corr(5°, 25°), corr(5°, 15°) | ≤ 5 SE | radians 0.9788 / 0.9980 vs 0.9787 / 0.9979; legacy weights 0.1054 / 0.6588 vs 0.1046 / 0.6592 |
+
+The test can tell the two weightings apart. At 15°, the legacy-degree mix has
+excess kurtosis 1.63, against 2.96 for the radian mix.
+
+**Chain parity.** `plot_noise_demo.py` feeds the Rust reflectivity plus the
+Rust noise to the real legacy `apply_bandlimits` + `apply_lateral_filter`
+(4–30 Hz, order 4, lateral 3). The result matches the Rust pipeline output
+**bit for bit**: 98,304 of 98,304 samples, max error 0. The 16×16 and 5×7
+tilings are also bit-identical.
+
+**Invariance** (`noise_pipeline.rs`, exact `to_bits`, four noise configs:
+noise only with the Ricker kept, legacy chain with bandpass + lateral 3,
+`keep_ricker` + lateral 5, legacy weights + bandpass). Checked across:
+
+- chunk shapes 24×20, 8×5, 5×7, 1×20, 24×1 (ck 16), 7×3 (ck 32), plus the
+  classic path;
+- streaming and overlapped streaming (2 chunkings);
+- strip-stitch with 2, 3 and 4 workers;
+- multi-process with 1, 2 and 3 workers;
+- geometry-once (0° and 15°);
+- `data_std` bits across chunk shapes.
+
+Other checks: the same seed gives identical output and different seeds
+differ (< 0.1 % equal samples). The default seed is `E2eConfig::seed`.
+
+Figures: `noise_slices.png` (Rust and legacy noise, the noisy reflectivity,
+the noisy bandpassed stack, and the Rust − legacy chain difference) and
+`noise_spectra.png` (amplitude spectra, pdfs with kurtosis, std, and
+inter-angle correlation, for both weightings).
+
 ## Deferred items and follow-ups
 
-- **Noise (`add_weighted_noise`).** It draws exponential noise with a random
-  sign for 0° and 45°, Hilterman-weights it per angle (`cos²` / `sin²`), and
-  scales it by the *global* std of the middle-angle RFC below seabed + 15 and by
-  `sqrt(10^(sn_db/10))`. It also depends on `_calculate_snr_after_lateral_filter`
-  (pre-smear SNR). The existing kernels `snr_std_ratio` and
-  `hilterman_noise_weights` cover the scalar parts. A tiled port needs two things:
-  - a global statistics pass, computable from labels in a first sweep;
-  - a counter-based per-voxel RNG, because bit parity with the numpy stream is
-    impossible in tiles.
-
-  Noise must be added *before* the bandpass, so it slots in at the start of
-  `fuse_tile_filtered`.
+- **Noise follow-ups.**
+  - The per-model draw of `sn_db` (triangular over
+    `signal_to_noise_ratio_db`) is not ported; `NoiseConfig::snr_db` is
+    explicit.
+  - `data_std` is recomputed by every worker or process (one extra fused
+    angle pass). Caching it in the multi-process plan sidecar would avoid
+    that.
+  - The seabed is the unfaulted toy top horizon. Legacy uses the faulted
+    depth map and infills NaN/0 holes.
+  - The legacy `wb / (digi + 15) · digi` threshold and the degree weights
+    are replicated or selectable, not fixed.
 - `_scale_seismic` (global std → 100) and the rpm near/mid/far factors both
   need a global std pass.
 - The relative acoustic impedance deliverable (`apply_cumsum`): the kernel is
@@ -249,7 +378,7 @@ with the ideal `|H(f)|²`).
 - The random draws of `lowfreq`, `highfreq` and `lateral_filter_size` from the
   config.
 - The wavelet path (`bandlimit_volumes_wavelets`) and augmentations / RMO.
-- CLI: `--bandpass` / `--lateral-filter` currently require single-worker
+- CLI: `--bandpass` / `--lateral-filter` / `--noise-snr-db` currently require single-worker
   `--e2e --chunked`, like `--faults`. Multi-process children do not receive
   the flags yet. The library API supports every path.
 
@@ -271,4 +400,11 @@ python synthoseis-core/examples/plot_ricker_skip.py /tmp/fd /tmp/ricker_skip_spe
 cargo run -p synthoseis -- run --e2e --chunked --bandpass 4,30 --keep-ricker --store /tmp/keep.mdio
 # regenerate the fixture
 python ../tests/fixtures/generate_seismic_filters.py
+# noise (legacy add_weighted_noise, opt-in): CLI, tests, legacy stats + figures
+cargo run -p synthoseis -- run --e2e --chunked --shape 48,48,64 --bandpass 4,30 \
+    --lateral-filter 3 --noise-snr-db 12.5 --noise-seed 7 --store /tmp/noisy.mdio
+cargo test -p synthoseis-core --test noise_pipeline -- --nocapture
+cargo run --release -p synthoseis-core --example noise_demo -- /tmp/noise_demo
+python ../tests/fixtures/generate_seismic_noise.py /tmp/noise_demo   # seismic_noise.json
+python synthoseis-core/examples/plot_noise_demo.py /tmp/noise_demo /tmp/noise
 ```
