@@ -127,10 +127,10 @@ pub use pipeline_mp::{
 };
 pub use pipeline_overlap::run_e2e_streaming_overlapped;
 pub use pipeline_stream::{
-    fault_model, fault_tile, generate_angle_stack_from_labels, generate_chunked,
-    generate_chunked_at_angle, generate_fault_labels, generate_labels, resolve_chunk_shape,
-    run_e2e_chunked, run_e2e_streaming, run_e2e_strip_stitched, seismic_filters,
-    write_strip_partition, SeismicFilters, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
+    effective_wavelet, fault_model, fault_tile, generate_angle_stack_from_labels, generate_chunked,
+    generate_chunked_at_angle, generate_fault_labels, generate_labels, generate_reflectivity,
+    resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming, run_e2e_strip_stitched,
+    seismic_filters, write_strip_partition, SeismicFilters, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
     GENERATE_LABELS_CALLS,
 };
 
