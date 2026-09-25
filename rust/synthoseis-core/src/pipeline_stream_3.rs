@@ -32,6 +32,11 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
     };
     let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
     store.ensure_labels_array().map_err(|e| e.to_string())?;
+    let faults = fault_model(cfg);
+    if faults.is_some() {
+        store.ensure_fault_labels_array().map_err(|e| e.to_string())?;
+    }
+    let mut chunk_faults = Vec::new();
 
     let trends = depth_trends(nk);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
@@ -68,6 +73,10 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
                 &mut stats,
             );
             stats.tiles_processed += 1;
+            let fault_tile = faults.as_ref().map(|m| m.compute_tile(i0, i1, j0, j1));
+            if let Some(t) = &fault_tile {
+                stats.observe(t.lookup.capacity() * 4 + t.mask.capacity() * 2);
+            }
 
             let mut k0 = 0usize;
             let mut k_chunk = 0usize;
@@ -97,6 +106,12 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
                 store
                     .write_labels_chunk([i_chunk, j_chunk, k_chunk], &chunk_labels)
                     .map_err(|e| e.to_string())?;
+                if let Some(t) = &fault_tile {
+                    fault_tile_chunk(t, k0, k1, &mut chunk_faults);
+                    store
+                        .write_fault_labels_chunk([i_chunk, j_chunk, k_chunk], &chunk_faults)
+                        .map_err(|e| e.to_string())?;
+                }
                 stats_samples.extend_from_slice(&chunk_angles);
                 k0 = k1;
                 k_chunk += 1;
@@ -122,6 +137,12 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
         &second.angle_stack,
         &back_angles,
     );
+    if let Some(reference) = generate_fault_labels(cfg) {
+        let back = opened.read_fault_labels_u8().map_err(|e| e.to_string())?;
+        if back != reference {
+            return Err("streaming fault_labels diverged from tile-wise reference".into());
+        }
+    }
     if !parity.passes_defaults() {
         return Err(format!(
             "streaming MDIO parity failed: iou={:.6} agr={:.6} mae={:.6e} maxabs={:.6e}",

@@ -139,5 +139,10 @@ pub fn write_e2e_mdio_chunked(
     store
         .write_labels_u8(&volumes.labels)
         .map_err(|e| e.to_string())?;
+    if let Some(mask) = generate_fault_labels(cfg) {
+        store
+            .write_fault_labels_u8(&mask)
+            .map_err(|e| e.to_string())?;
+    }
     Ok(chunks)
 }
