@@ -45,6 +45,7 @@ mod tests {
     fn larger_cube_chunked_parity_and_bound() {
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 3,
             inline_count: 32,
             crossline_count: 32,
@@ -78,6 +79,7 @@ mod tests {
         let path = dir.path().join("stream.mdio");
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 11,
             inline_count: 16,
             crossline_count: 16,
@@ -104,6 +106,7 @@ mod tests {
         let path = dir.path().join("strip.mdio");
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 42,
             inline_count: 8,
             crossline_count: 8,
@@ -130,6 +133,7 @@ mod tests {
         let path = dir.path().join("strip16.mdio");
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 7,
             inline_count: 16,
             crossline_count: 16,
@@ -151,6 +155,7 @@ mod tests {
         let path = dir.path().join("one.mdio");
         let cfg = E2eConfig {
             faults: Default::default(),
+            filters: Default::default(),
             seed: 3,
             inline_count: 8,
             crossline_count: 8,
