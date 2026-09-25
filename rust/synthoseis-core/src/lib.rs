@@ -115,7 +115,7 @@ pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
     MultiWorkerRunner, SpatialStrip,
 };
-pub use pipeline::{FaultConfig, FilterConfig};
+pub use pipeline::{FaultConfig, FilterConfig, NoiseConfig, NOISE_NORM_ANGLE_DEG};
 pub use pipeline_geometry_many::{
     angle_store_path, angles_from_seismic_many, parse_angles_csv, run_e2e_geometry_once_as_report,
     run_e2e_geometry_once_seismic_many, AngleStackDeliverable, GeometryOnceReport,
@@ -128,10 +128,10 @@ pub use pipeline_mp::{
 pub use pipeline_overlap::run_e2e_streaming_overlapped;
 pub use pipeline_stream::{
     effective_wavelet, fault_model, fault_tile, generate_angle_stack_from_labels, generate_chunked,
-    generate_chunked_at_angle, generate_fault_labels, generate_labels, generate_reflectivity,
-    resolve_chunk_shape, run_e2e_chunked, run_e2e_streaming, run_e2e_strip_stitched,
-    seismic_filters, write_strip_partition, SeismicFilters, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
-    GENERATE_LABELS_CALLS,
+    generate_chunked_at_angle, generate_fault_labels, generate_labels, generate_noise,
+    generate_reflectivity, noise_signal_std, resolve_chunk_shape, run_e2e_chunked,
+    run_e2e_streaming, run_e2e_strip_stitched, seismic_filters, write_strip_partition,
+    SeismicFilters, SeismicNoise, WorkingSetStats, DEFAULT_INCIDENCE_DEG, GENERATE_LABELS_CALLS,
 };
 
 #[cfg(test)]

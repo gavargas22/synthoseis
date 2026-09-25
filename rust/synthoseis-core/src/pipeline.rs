@@ -88,6 +88,9 @@ pub struct FilterConfig {
     /// wavelet when the bandpass is on (legacy chain). Ignored when the
     /// bandpass is off.
     pub keep_ricker: bool,
+    /// Additive random noise before the wavelet / bandpass (legacy
+    /// `add_weighted_noise`). Off by default.
+    pub noise: NoiseConfig,
 }
 
 impl Default for FilterConfig {
@@ -97,6 +100,61 @@ impl Default for FilterConfig {
             bandpass_order: 4,
             lateral_size: 1,
             keep_ricker: false,
+            noise: NoiseConfig::default(),
+        }
+    }
+}
+
+/// Deterministic replacement for legacy `SeismicVolume.add_weighted_noise`.
+///
+/// Legacy draws two white Laplace cubes (`noise_0deg`, `noise_45deg`), mixes
+/// them per angle with Hilterman weights `cos²θ n0 + sin²θ n45`, rescales the
+/// mix to `data_std / std_ratio` (`data_std` = std of the middle-angle raw
+/// reflectivity below the seabed, `std_ratio = sqrt(10^(sn_db/10))`) and adds
+/// it to the raw reflectivity before the bandpass. The Rust port draws the
+/// same distribution from a counter-based RNG (Philox4x32-10 keyed by the
+/// seed, counter = global voxel index), so the noise is identical for any
+/// tiling, worker split or process count. `data_std` comes from one
+/// deterministic streaming pass over the reflectivity at
+/// [`NOISE_NORM_ANGLE_DEG`]. See `docs/filters-port.md`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NoiseConfig {
+    /// Signal-to-noise ratio in dB (legacy `sn_db`; example config draws it
+    /// from a triangular distribution over `signal_to_noise_ratio_db`).
+    /// `None` = no noise.
+    pub snr_db: Option<f64>,
+    /// Noise seed. `None` = [`E2eConfig::seed`].
+    pub seed: Option<u64>,
+    /// Replicate the legacy angle weights exactly: `math.cos(ang)` with the
+    /// angle in degrees fed to a radian function (see
+    /// `tests/test_seismic_noise.py`). Default `false` = correct radian
+    /// weights ([`synthoseis_seismic::hilterman_noise_weights`]).
+    pub legacy_angle_weights: bool,
+}
+
+/// Incidence angle whose raw reflectivity normalises the noise (legacy uses
+/// the middle angle of `incident_angles`; the example config's is 15 deg).
+pub const NOISE_NORM_ANGLE_DEG: f64 = 15.0;
+
+impl NoiseConfig {
+    /// Noise at `snr_db` dB with the default seed.
+    pub fn snr(snr_db: f64) -> Self {
+        Self {
+            snr_db: Some(snr_db),
+            ..Self::default()
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.snr_db.is_some()
+    }
+
+    /// `(w0, w45)` noise weights at `angle_deg`.
+    pub fn weights(&self, angle_deg: f64) -> (f64, f64) {
+        if self.legacy_angle_weights {
+            synthoseis_seismic::legacy_degree_noise_weights(angle_deg)
+        } else {
+            synthoseis_seismic::hilterman_noise_weights(angle_deg)
         }
     }
 }
@@ -110,11 +168,14 @@ impl FilterConfig {
             bandpass_order: 4,
             lateral_size,
             keep_ricker: false,
+            noise: NoiseConfig::default(),
         }
     }
 
+    /// `true` when any post-convolution stage (bandpass, lateral filter or
+    /// noise) is on.
     pub fn enabled(&self) -> bool {
-        self.bandpass_hz.is_some() || self.lateral_size > 1
+        self.bandpass_hz.is_some() || self.lateral_size > 1 || self.noise.enabled()
     }
 
     /// `true` when the Ricker convolution is skipped: the bandpass is on and
@@ -311,6 +372,15 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
             }
         }
     }
+    // --- optional additive noise on the raw reflectivity (legacy order) ---
+    let filters = crate::pipeline_stream::SeismicFilters::resolve(cfg, &labels, [ni, nj, nk])
+        .unwrap_or_else(|e| panic!("invalid FilterConfig: {e}"));
+    if let Some(noise) = filters.as_ref().and_then(|f| f.noise.as_ref()) {
+        noise
+            .at_angle(angles[0])
+            .add_to_tile(&mut angle_cube, (0, ni), (0, nj), [ni, nj, nk]);
+    }
+
     // Short wavelet: higher frequency keeps support reasonable for tiny nk.
     // Skipped (empty wavelet = identity) when the bandpass replaces it.
     let wavelet = ricker(40.0, TINY_DIGI, 1);
