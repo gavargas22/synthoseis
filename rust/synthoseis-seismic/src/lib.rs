@@ -28,7 +28,8 @@ pub use kernels::{
     apply_wavelet_traces, butterworth_bandpass, compute_rfc_volumes, convolve_same_1d,
     cumsum_traces_f32, hanflat, hilterman_noise_weights, laplace_pair, lateral_source_range,
     lateral_uniform_tile, lateral_uniform_volume, legacy_degree_noise_weights,
-    legacy_digitisation_ms, legacy_noise_mask_threshold, lfilter_zi, noise_key, philox4x32_10,
-    reflect_index, ricker, snr_std_ratio, splitmix64, uniform_window, weighted_laplace_std,
-    zoeppritz_pp, FilterError, IirFilter, RunningStats, WeightedNoise,
+    legacy_digitisation_ms, legacy_noise_mask_threshold, lfilter_zi, noise_key,
+    noise_mask_threshold, philox4x32_10, reflect_index, ricker, snr_std_ratio, splitmix64,
+    uniform_window, weighted_laplace_std, zoeppritz_pp, FilterError, IirFilter, RunningStats,
+    WeightedNoise,
 };

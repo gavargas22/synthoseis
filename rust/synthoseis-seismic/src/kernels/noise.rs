@@ -218,3 +218,15 @@ impl RunningStats {
 pub fn legacy_noise_mask_threshold(seabed_samples: f64, digi: f64) -> f64 {
     seabed_samples * digi / (digi + 15.0) * digi
 }
+
+/// Normalisation mask threshold in samples: the seabed itself (`k >=
+/// seabed_samples`, only sub-seabed reflectivity) by default, or the exact
+/// legacy expression ([`legacy_noise_mask_threshold`], `~0.84 x` the seabed
+/// sample for digi = 4, i.e. partly in the water column) when `legacy`.
+pub fn noise_mask_threshold(seabed_samples: f64, digi: f64, legacy: bool) -> f64 {
+    if legacy {
+        legacy_noise_mask_threshold(seabed_samples, digi)
+    } else {
+        seabed_samples
+    }
+}
