@@ -26,6 +26,16 @@
 //! - [`fuse_tile_gpu`] — request GPU; CPU fallback when no device / no feature
 //! - [`fuse_tile_auto`] — prefer GPU when available, else CPU
 //! - [`fuse_tile_dispatch`] — honors [`set_prefer_gpu`] (CLI `--gpu`)
+//!
+//! # No wavelet (raw reflectivity)
+//!
+//! Passing [`NO_WAVELET`] (an empty slice) skips the convolution on every
+//! backend: the CPU adapter stores the Zoeppritz reflectivity as-is
+//! (`convolve_same_1d` with an empty kernel is the identity, so this is
+//! bit-identical to the reflectivity trace), and the WGSL kernel copies its
+//! reflectivity scratch straight to the output when `wavelet_len == 0`. The
+//! core pipeline uses this when the legacy Butterworth bandpass replaces the
+//! Ricker wavelet, so `--gpu` honours the skip instead of falling back.
 
 mod cpu;
 mod device;
@@ -39,6 +49,10 @@ pub use cpu::{fuse_tile_cpu, fuse_tile_scratch_bytes, props_f32};
 pub use device::{backend_status, gpu_device_available, FuseBackend};
 
 static PREFER_GPU: AtomicBool = AtomicBool::new(false);
+
+/// Empty wavelet: fuse raw Zoeppritz reflectivity with no convolution, on the
+/// CPU adapter (bit-identical to the reflectivity) and on WGSL alike.
+pub const NO_WAVELET: &[f64] = &[];
 
 /// Prefer the GPU auto path for subsequent [`fuse_tile_dispatch`] calls.
 ///
@@ -202,6 +216,40 @@ mod tests {
         if !gpu_device_available() {
             assert_eq!(backend, FuseBackend::Cpu);
         }
+    }
+
+    #[test]
+    fn no_wavelet_cpu_is_raw_reflectivity() {
+        let shape = [2usize, 2, 8];
+        let mut labels = vec![0u8; 2 * 2 * 8];
+        labels[3] = 1;
+        labels[13] = 2;
+        labels[21] = 1;
+        let trends = tiny_trends(8);
+        let mut out = vec![0.0f32; 2 * 2 * 8];
+        fuse_tile_cpu(
+            &labels, shape, 0, 2, 0, 2, &trends, NO_WAVELET, 15.0, &mut out,
+        );
+        for t in 0..4 {
+            for k in 0..8 {
+                let expect = if k == 7 {
+                    0.0
+                } else {
+                    let a = props_f32(labels[t * 8 + k], k, &trends);
+                    let b = props_f32(labels[t * 8 + k + 1], k + 1, &trends);
+                    synthoseis_seismic::zoeppritz_pp(
+                        a.0 as f64, a.1 as f64, a.2 as f64, b.0 as f64, b.1 as f64, b.2 as f64,
+                        15.0,
+                    ) as f32
+                };
+                assert_eq!(
+                    out[t * 8 + k].to_bits(),
+                    expect.to_bits(),
+                    "trace {t} k {k}"
+                );
+            }
+        }
+        assert!(out.iter().any(|&v| v != 0.0));
     }
 
     #[test]

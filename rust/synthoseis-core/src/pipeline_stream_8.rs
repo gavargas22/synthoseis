@@ -6,6 +6,9 @@ pub struct SeismicFilters {
     pub bandpass: Option<synthoseis_seismic::IirFilter>,
     /// Legacy lateral box filter size (`<= 1` = off).
     pub lateral_size: usize,
+    /// Skip the Ricker convolution (bandpass on, `keep_ricker == false`):
+    /// the tile is fused as raw reflectivity, then bandpassed (legacy chain).
+    pub skip_wavelet: bool,
 }
 
 impl SeismicFilters {
@@ -40,7 +43,18 @@ impl SeismicFilters {
         Ok(Some(Self {
             bandpass,
             lateral_size: fc.lateral_size.max(1),
+            skip_wavelet: fc.skips_ricker(),
         }))
+    }
+
+    /// The wavelet to fuse with: `wavelet`, or [`synthoseis_gpu::NO_WAVELET`]
+    /// (identity: raw reflectivity) when the Ricker convolution is skipped.
+    pub fn wavelet<'a>(&self, wavelet: &'a [f64]) -> &'a [f64] {
+        if self.skip_wavelet {
+            synthoseis_gpu::NO_WAVELET
+        } else {
+            wavelet
+        }
     }
 
     /// Filter one fused source tile in place (bandpass on every trace).
@@ -61,6 +75,43 @@ pub fn seismic_filters(cfg: &E2eConfig) -> Option<SeismicFilters> {
     SeismicFilters::from_config(cfg).unwrap_or_else(|e| panic!("invalid FilterConfig: {e}"))
 }
 
+/// Wavelet the pipeline convolves with for `cfg`: `wavelet`, or the empty
+/// [`synthoseis_gpu::NO_WAVELET`] (no convolution) when the bandpass is on and
+/// [`crate::pipeline::FilterConfig::keep_ricker`] is off.
+pub fn effective_wavelet<'a>(cfg: &E2eConfig, wavelet: &'a [f64]) -> &'a [f64] {
+    if cfg.filters.skips_ricker() {
+        synthoseis_gpu::NO_WAVELET
+    } else {
+        wavelet
+    }
+}
+
+/// Raw reflectivity stack for `cfg` at `angle_deg`: fused elastic →
+/// Zoeppritz with no wavelet and no filters (the legacy `rfc_raw` angle
+/// cube). This is the input the legacy `postprocess_rfc_cubes` bandpasses;
+/// used for parity checks and QC. Memory is the full `(ni, nj, nk)` output.
+pub fn generate_reflectivity(cfg: &E2eConfig, angle_deg: f64) -> Vec<f32> {
+    let (labels, shape) = generate_labels(cfg);
+    let [ni, nj, nk] = shape;
+    let trends = depth_trends(nk);
+    let mut out = vec![0.0f32; ni * nj * nk];
+    let mut stats = WorkingSetStats::default();
+    fuse_tile_local(
+        &labels,
+        shape,
+        0,
+        ni,
+        0,
+        nj,
+        &trends,
+        synthoseis_gpu::NO_WAVELET,
+        angle_deg,
+        &mut out,
+        &mut stats,
+    );
+    out
+}
+
 /// Apply the optional filters to a whole `(ni, nj, nk)` angle stack in place
 /// (classic full-cube path). No-op when disabled.
 pub fn apply_filters_to_volume(cfg: &E2eConfig, volume: &mut [f32]) {
@@ -79,8 +130,9 @@ pub fn apply_filters_to_volume(cfg: &E2eConfig, volume: &mut [f32]) {
 /// post-convolution filters.
 ///
 /// With `filters == None` this is exactly [`fuse_tile_local`]. Otherwise the
-/// tile is fused with a lateral halo (the columns the box filter reads,
-/// including reflected boundary columns; see
+/// tile is fused (as raw reflectivity when [`SeismicFilters::skip_wavelet`],
+/// i.e. the bandpass replaces the Ricker wavelet) with a lateral halo (the
+/// columns the box filter reads, including reflected boundary columns; see
 /// [`synthoseis_seismic::lateral_source_range`]), every halo trace is
 /// bandpassed, and the lateral filter is evaluated for the tile's own
 /// columns. Fusing and bandpassing are per-trace functions of the labels, so
@@ -117,7 +169,17 @@ pub fn fuse_tile_filtered(
     // Halo tile + lateral intermediate + filtfilt scratch.
     stats.observe(src.capacity() * 4 * 2 + (nk + 2 * 64) * 8 * 2);
     fuse_tile_local(
-        labels, shape, si0, si1, sj0, sj1, trends, wavelet, angle_deg, &mut src, stats,
+        labels,
+        shape,
+        si0,
+        si1,
+        sj0,
+        sj1,
+        trends,
+        f.wavelet(wavelet),
+        angle_deg,
+        &mut src,
+        stats,
     );
     f.bandpass_traces(&mut src, nk);
     synthoseis_seismic::lateral_uniform_tile(
