@@ -353,3 +353,25 @@ cargo test -p synthoseis-geo --test faults_parity -- --nocapture   # parity vs t
 
 Design notes, the Python → Rust mapping, parity numbers and deferred items are in
 [`docs/faults-port.md`](../docs/faults-port.md).
+
+## Post-convolution seismic filters (geology realism, second slice)
+
+**Landed:** a port of the legacy Butterworth bandpass (`apply_bandlimits`,
+scipy `butter` + `filtfilt`) and the lateral box filter (`apply_lateral_filter`,
+`uniform_filter` over inline and crossline) in `synthoseis-seismic`. They are
+applied to every fused angle-stack tile through `E2eConfig::filters`
+(`FilterConfig`). The filters are off by default, and outputs are bit-identical
+to master when they are off. When on, they are bit-exact against the legacy
+Python code, and lateral halos are recomputed per tile, so the output is
+bit-identical for any chunk shape, strip-worker count or multi-process
+partition.
+
+```bash
+cd rust
+cargo run -p synthoseis -- run --e2e --chunked --shape 48,48,64 --bandpass 4,30 --lateral-filter 3 --store /tmp/filtered.mdio
+cargo test -p synthoseis-seismic --test filters_parity -- --nocapture   # parity vs the Python fixtures
+cargo test -p synthoseis-core --test filters_pipeline                    # tiling / worker invariance
+```
+
+Design notes, the mapping, parity numbers and deferred items (noise, scaling,
+the cumsum deliverable) are in [`docs/filters-port.md`](../docs/filters-port.md).
