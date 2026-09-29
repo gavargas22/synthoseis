@@ -10,14 +10,16 @@
 //! * Bit-exact: per-column closure voxel counts of a two-layer sand unit
 //!   with a pinched-out upper layer, closed on the unit top down to the unit
 //!   base.
-//! * Statistical: closure-unit counts, multi-layer units and unit thickness
-//!   vs a legacy population of 3000 models, and the uniform brine / oil /
-//!   gas split (legacy `rng.integers(3)` per closure).
+//! * Statistical, all at the 5 % level: closure-unit counts, multi-layer
+//!   units and unit thickness vs a legacy population of 3000 models (KS),
+//!   and the uniform brine / oil / gas split (legacy `rng.integers(3)` per
+//!   closure) with independence of the unit-top layer and closure rank
+//!   (chi-squared, 2M draws).
 use serde::Deserialize;
 use synthoseis_core::lithology::{closure_units, interval_sand, ToyLithology};
 use synthoseis_core::pipeline::{E2eConfig, FaultConfig, FilterConfig, RockPhysicsConfig};
 use synthoseis_core::rock_physics::{
-    elastic_model, layer_fluids, unit_fluids, ElasticModel, RpmModel,
+    closure_fluid, elastic_model, layer_fluids, unit_fluids, ElasticModel, RpmModel,
 };
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
@@ -108,9 +110,10 @@ fn ks2(a: &[f64], b: &[f64]) -> f64 {
     d
 }
 
-/// KS critical value at alpha = 0.001.
+/// Two-sample KS critical value at the 5 % level (asymptotic; conservative
+/// for these discrete samples).
 fn ks_crit(n: usize, m: usize) -> f64 {
-    1.95 * (((n + m) as f64) / ((n * m) as f64)).sqrt()
+    1.358 * (((n + m) as f64) / ((n * m) as f64)).sqrt()
 }
 
 fn mean(v: &[f64]) -> f64 {
@@ -144,7 +147,7 @@ fn closure_unit_statistics_match_legacy_population() {
         let d = ks2(&rust, &legacy);
         let crit = ks_crit(rust.len(), legacy.len());
         eprintln!(
-            "{name}: rust mean {:.3} (n={}), legacy mean {:.3} (n={}), KS D {d:.4} (crit {crit:.4})",
+            "{name}: rust mean {:.3} (n={}), legacy mean {:.3} (n={}), KS D {d:.4} (5 % crit {crit:.4})",
             mean(&rust),
             rust.len(),
             mean(&legacy),
@@ -316,24 +319,106 @@ fn model_shares_unit_closures_across_member_layers() {
     assert_ne!(h(&c), h(&layered(SEED, SHAPE, sandy(true))));
 }
 
-/// Statistical: fluids are uniform over closures (legacy `rng.integers(3)`
-/// per closure), and the effect of per-unit closures on closure counts.
+/// Chi-squared statistic of a contingency table (rows x 3 fluids) for
+/// independence of the fluid from the row.
+fn chi2_independence(rows: &[[u64; 3]]) -> f64 {
+    let n: u64 = rows.iter().flatten().sum();
+    let col: Vec<u64> = (0..3).map(|f| rows.iter().map(|r| r[f]).sum()).collect();
+    rows.iter()
+        .flat_map(|r| {
+            let rs: u64 = r.iter().sum();
+            (0..3).map(move |f| (rs, f, r[f]))
+        })
+        .map(|(rs, f, o)| {
+            let e = rs as f64 * col[f] as f64 / n as f64;
+            (o as f64 - e) * (o as f64 - e) / e
+        })
+        .sum()
+}
+
+fn chi2_uniform(by: &[u64; 3]) -> f64 {
+    let e = by.iter().sum::<u64>() as f64 / 3.0;
+    by.iter()
+        .map(|&o| (o as f64 - e) * (o as f64 - e) / e)
+        .sum()
+}
+
+/// Chi-squared critical values at the 5 % level.
+const CHI2_5PCT_DF2: f64 = 5.991;
+const CHI2_5PCT_DF6: f64 = 12.592;
+const CHI2_5PCT_DF98: f64 = 122.108;
+
+/// Statistical (5 % level): the closure fluid draw is uniform over
+/// brine / oil / gas (legacy `rng.integers(3)` per closure) and independent
+/// of the unit-top layer and the closure rank. Fixed design, 2M draws:
+/// seeds 0..10000 x layers 0..50 x ranks 0..4.
+#[test]
+fn closure_fluid_draw_is_uniform_and_independent() {
+    let (ns, nl, nr) = (10_000u64, 50usize, 4u64);
+    let mut by_layer = vec![[0u64; 3]; nl];
+    let mut by_rank = vec![[0u64; 3]; nr as usize];
+    for s in 0..ns {
+        for (l, row) in by_layer.iter_mut().enumerate() {
+            for r in 0..nr {
+                let f = closure_fluid(s, l, r) as usize;
+                row[f] += 1;
+                by_rank[r as usize][f] += 1;
+            }
+        }
+    }
+    let mut by = [0u64; 3];
+    for row in &by_layer {
+        for f in 0..3 {
+            by[f] += row[f];
+        }
+    }
+    let (u, il, ir) = (
+        chi2_uniform(&by),
+        chi2_independence(&by_layer),
+        chi2_independence(&by_rank),
+    );
+    eprintln!(
+        "fluid draws n={} brine/oil/gas {by:?}: uniform chi2 {u:.2} (df 2, 5 % crit {CHI2_5PCT_DF2}); \
+         x layer chi2 {il:.1} (df 98, crit {CHI2_5PCT_DF98}); x rank chi2 {ir:.2} (df 6, crit {CHI2_5PCT_DF6})",
+        by.iter().sum::<u64>()
+    );
+    assert!(u < CHI2_5PCT_DF2, "uniform {u}");
+    assert!(il < CHI2_5PCT_DF98, "layer {il}");
+    assert!(ir < CHI2_5PCT_DF6, "rank {ir}");
+}
+
+/// The closure path draws its fluid from [`closure_fluid`] keyed by the unit
+/// top, and over 30000 seeds (fixed design) the split is uniform at 5 %.
 #[test]
 fn unit_closure_fluid_split_is_uniform() {
-    // Many seeds on the placement unit: one closure per seed.
-    let p = fixture().placement;
-    let labels = placement_labels(&p);
-    let mut by = [0f64; 3];
-    let n = 3000;
-    for seed in 0..n {
-        let f = unit_fluids(&labels, p.shape, &[1, 2], 1, seed, 1e9, 1);
-        by[f.closures[0].0 as usize] += 1.0;
+    let (ni, nj, nk) = (20usize, 18usize, 64usize);
+    let mut labels = vec![0u8; ni * nj * nk];
+    for i in 0..ni {
+        for j in 0..nj {
+            let r2 = (i as f64 - 9.5).powi(2) + (j as f64 - 8.3).powi(2);
+            let t = (20.0 + 0.1 * r2).min(40.0) as usize;
+            let g = (i * nj + j) * nk;
+            labels[g + t..g + t + 3].fill(1);
+            labels[g + t + 3..g + t + 7].fill(2);
+            labels[g + t + 7..g + nk].fill(3);
+        }
     }
-    let e = n as f64 / 3.0;
-    let chi2: f64 = by.iter().map(|&o| (o - e) * (o - e) / e).sum();
-    eprintln!("fluid split over {n} seeds (brine/oil/gas): {by:?}, chi2 {chi2:.2} (2 dof, crit 13.82 at 0.001)");
-    assert!(chi2 < 13.82);
+    let mut by = [0u64; 3];
+    let n = 30_000u64;
+    for seed in 0..n {
+        let f = unit_fluids(&labels, [ni, nj, nk], &[1, 2], 1, seed, 1e9, 1);
+        assert_eq!(f.closures.len(), 1);
+        assert_eq!(f.closures[0].0, closure_fluid(seed, 1, 0));
+        by[f.closures[0].0 as usize] += 1;
+    }
+    let chi2 = chi2_uniform(&by);
+    eprintln!("unit closure fluid over {n} seeds (brine/oil/gas): {by:?}, chi2 {chi2:.2} (df 2, 5 % crit {CHI2_5PCT_DF2})");
+    assert!(chi2 < CHI2_5PCT_DF2);
+}
 
+/// Closure counts per unit vs per layer on models.
+#[test]
+fn unit_closures_are_fewer_than_per_layer() {
     // Models: closures per unit vs per layer.
     let (mut unit, mut layer) = ([0usize; 3], [0usize; 3]);
     for seed in 0..12u64 {

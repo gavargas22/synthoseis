@@ -61,15 +61,31 @@ legacy `Closures.find_top_lith_horizons` (stub `self`), `Facies` /
 `MarkovChainFacies` and `flood_fill_heap`. The tests are in
 `rust/synthoseis-core/tests/closure_units.rs`.
 
-| check | Rust | legacy | result |
-|---|---|---|---|
-| unit grouping and selection, 222 facies sequences (200 legacy Markov chains, 22 edge cases) | — | — | bit-exact, all 222 |
-| closure placement, 2-layer unit with pinch-outs (40×36 columns) | 5016 voxels | 5016 voxels | per-column counts bit-exact |
-| closure units per model (3000 models, 40 layers, f ~ U(0.05, 0.25), T = 2) | mean 2.988 | mean 2.945 | KS D 0.015 (0.1 % critical 0.050) |
-| multi-layer closure units per model | mean 1.467 | mean 1.448 | KS D 0.014 (0.050) |
-| sand layers inside closure units per model | mean 5.817 | mean 5.742 | KS D 0.013 (0.050) |
-| closure unit thickness (layers) | mean 1.947 | mean 1.949 | KS D 0.003 (0.029) |
-| fluid split, 3000 seeds (brine / oil / gas) | 949 / 985 / 1066 | 1/3 each (`rng.integers(3)`) | χ² 7.2, 2 df (0.1 % critical 13.8) |
+All statistical tests use the **5 % level** with fixed, pre-set designs.
+KS criticals are the asymptotic two-sample values `1.358 sqrt((n + m) / (n m))`,
+which are conservative for these discrete samples. p-values come from scipy
+on the same data.
+
+| check | Rust | legacy / expected | statistic | 5 % critical | p |
+|---|---|---|---|---|---|
+| unit grouping and selection, 222 facies sequences (200 legacy Markov chains, 22 edge cases) | — | — | bit-exact, all 222 | — | — |
+| closure placement, 2-layer unit with pinch-outs (40×36 columns) | 5016 voxels | 5016 voxels | per-column counts bit-exact | — | — |
+| closure units per model (3000 vs 3000 models, 40 layers, f ~ U(0.05, 0.25), T = 2) | mean 2.988 | mean 2.945 | KS D 0.0153 | 0.0351 | 0.87 |
+| multi-layer closure units per model | mean 1.467 | mean 1.448 | KS D 0.0140 | 0.0351 | 0.93 |
+| sand layers inside closure units per model | mean 5.817 | mean 5.742 | KS D 0.0130 | 0.0351 | 0.96 |
+| closure unit thickness (layers; 8965 vs 8836 units) | mean 1.947 | mean 1.949 | KS D 0.0027 | 0.0204 | 1.00 |
+| fluid draw `closure_fluid`, 2M draws (seeds 0..10000 × unit-top layers 0..50 × closure ranks 0..4), brine / oil / gas | 666 344 / 667 585 / 666 071 | 1/3 each (`rng.integers(3)`) | χ² 1.95, df 2 | 5.991 | 0.38 |
+| fluid independent of the unit-top layer (50 × 3 table) | — | — | χ² 104.7, df 98 | 122.1 | 0.30 |
+| fluid independent of the closure rank (4 × 3 table) | — | — | χ² 4.85, df 6 | 12.59 | 0.56 |
+| fluid through the closure path (`unit_fluids`), 30 000 seeds | 10 008 / 9 946 / 10 046 | 1/3 each | χ² 0.51, df 2 | 5.991 | 0.78 |
+
+The first version of this PR checked the split on only 3000 seeds (one
+unit-top key). It got 949 / 985 / 1066, χ² 7.18, p = 0.028, which fails at
+5 %, and it wrongly quoted the 0.1 % critical (13.8). At large n there is no
+bias: the draw is `floor(3 u)` of a 53-bit keyed splitmix64 unit, so the
+rounding bias is below 1e-15. The 3000-seed result was an ordinary
+fluctuation (about 1 in 36). No code change to the draw was needed, so
+every golden, including `--closures-per-layer` = 8b5988f, is unchanged.
 
 On the placement case, the same unit under per-layer closures gives 5443
 voxels in 2 + 3 closures (upper and lower layer). Legacy closes the upper

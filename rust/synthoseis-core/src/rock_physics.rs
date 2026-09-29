@@ -452,6 +452,16 @@ pub fn layer_fluids(
     unit_fluids(labels, shape, &[lab], layer, seed, max_column, min_voxels)
 }
 
+/// Fluid of closure `rank` on the top of `layer` (a sand layer, or the top
+/// interval of a sand unit): brine / oil / gas with probability 1/3 each
+/// (legacy `rng.integers(3)`), `floor(3 u)` of the keyed unit draw
+/// `u = keyed_unit(seed, STREAM_FLUID, layer, rank)` (53-bit, so the
+/// rounding bias is below 1e-15).
+pub fn closure_fluid(seed: u64, layer: usize, rank: u64) -> Fluid {
+    let code = (keyed_unit(&[seed, STREAM_FLUID, layer as u64, rank]) * 3.0) as u32;
+    Fluid::from_code(code.min(2))
+}
+
 impl LayerFluids {
     /// No closures: all brine.
     pub fn empty(n: usize) -> Self {
@@ -595,8 +605,7 @@ pub fn unit_fluids(
         if voxels < min_voxels.max(1) {
             continue;
         }
-        let code = (keyed_unit(&[seed, STREAM_FLUID, layer as u64, this]) * 3.0) as u32;
-        let fluid = Fluid::from_code(code.min(2));
+        let fluid = closure_fluid(seed, layer, this);
         for &c in &cells {
             out.contact[c] = contact as f32;
             out.fluid[c] = fluid;
