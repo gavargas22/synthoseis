@@ -63,19 +63,19 @@ pub fn run_e2e_strip_stitched(
     let faults_ref = faults.as_ref();
 
     let labels = std::sync::Arc::new(labels);
-    let trends = depth_trends(nk);
+    let trends = elastic_model(cfg, &labels, shape);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
 
     // FS ownership is the lock: partitions from from_config_chunk_aligned never
     // share an MDIO chunk key. write_strip_partition takes no Mutex.
     let worker_results: Vec<Result<(WorkingSetStats, Vec<f32>), String>> =
         std::thread::scope(|scope| {
+            let trends = &trends;
             let mut handles = Vec::with_capacity(plan.partitions.len());
             for part in &plan.partitions {
                 let part = part.clone();
                 let labels = labels.clone();
                 let wavelet = wavelet.clone();
-                let trends = trends.clone();
                 let store_path = path.clone();
                 handles.push(scope.spawn(move || {
                     write_strip_partition(
@@ -84,7 +84,7 @@ pub fn run_e2e_strip_stitched(
                         &labels,
                         shape,
                         chunks,
-                        &trends,
+                        trends,
                         &wavelet,
                         faults_ref,
                         filters_ref,
