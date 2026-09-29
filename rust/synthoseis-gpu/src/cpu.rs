@@ -80,6 +80,76 @@ pub fn fuse_tile_cpu(
     }
 }
 
+/// Zoeppritz + convolution of one trace from its f32 properties.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn fuse_trace(
+    vp: &[f32],
+    vs: &[f32],
+    rho: &[f32],
+    wavelet: &[f64],
+    angle_deg: f64,
+    rfc_tr: &mut [f32],
+    trace_f64: &mut [f64],
+    out: &mut [f32],
+) {
+    let nk = vp.len();
+    for k in 0..(nk - 1) {
+        rfc_tr[k] = zoeppritz_pp(
+            vp[k] as f64,
+            vs[k] as f64,
+            rho[k] as f64,
+            vp[k + 1] as f64,
+            vs[k + 1] as f64,
+            rho[k + 1] as f64,
+            angle_deg,
+        );
+    }
+    rfc_tr[nk - 1] = 0.0;
+    for k in 0..nk {
+        trace_f64[k] = rfc_tr[k] as f64;
+    }
+    let conv = convolve_same_1d(trace_f64, wavelet);
+    for k in 0..nk {
+        out[k] = conv[k] as f32;
+    }
+}
+
+/// Fuse one tile from precomputed per-voxel properties.
+///
+/// `vp`, `vs`, `rho` and `tile_out` are `(ti, tj, nk)` row-major tile
+/// buffers (`n_traces = ti * tj`). Same per-trace arithmetic as
+/// [`fuse_tile_cpu`]: f32 properties, f64 Zoeppritz, `rfc[nk-1] = 0`,
+/// `convolve_same_1d`.
+pub fn fuse_props_tile_cpu(
+    vp: &[f32],
+    vs: &[f32],
+    rho: &[f32],
+    nk: usize,
+    wavelet: &[f64],
+    angle_deg: f64,
+    tile_out: &mut [f32],
+) {
+    assert!(nk >= 1);
+    let n = tile_out.len();
+    assert!(vp.len() == n && vs.len() == n && rho.len() == n && n % nk == 0);
+    let mut rfc_tr = vec![0.0f32; nk];
+    let mut trace_f64 = vec![0.0f64; nk];
+    for t in 0..n / nk {
+        let r = t * nk..(t + 1) * nk;
+        fuse_trace(
+            &vp[r.clone()],
+            &vs[r.clone()],
+            &rho[r.clone()],
+            wavelet,
+            angle_deg,
+            &mut rfc_tr,
+            &mut trace_f64,
+            &mut tile_out[r],
+        );
+    }
+}
+
 /// Scratch bytes used by [`fuse_tile_cpu`] for one tile (trace temps only).
 pub fn fuse_tile_scratch_bytes(nk: usize) -> usize {
     // vp + vs + rho + rfc (f32) + trace_f64
