@@ -23,6 +23,7 @@ pub fn run_e2e(
     config: &RunConfig,
     faults: usize,
     filters: synthoseis_core::FilterConfig,
+    rock: synthoseis_core::RockPhysicsConfig,
 ) {
     if geo_many {
         let angle_list = if let Some(ref csv) = angles {
@@ -55,9 +56,11 @@ pub fn run_e2e(
                         samples,
                         store_path: None,
                         chunk_shape: None,
+                        rock_physics: Default::default(),
                     },
                 ))
             }),
+            rock_physics: rock.clone(),
         };
         let (report, stats) =
             run_e2e_geometry_once_seismic_many(&cfg, &angle_list).unwrap_or_else(|e| {
@@ -75,6 +78,7 @@ pub fn run_e2e(
         );
         print_fault_summary(&cfg);
         print_filter_summary(&cfg);
+        print_rock_summary(&cfg.rock_physics);
         for st in &report.stacks {
             println!(
                 "  angle={:.0}° parity(iou={:.4}, mae={:.3e}) store={:?}",
@@ -102,12 +106,13 @@ pub fn run_e2e(
                     samples,
                     store_path: None,
                     chunk_shape: None,
+                    rock_physics: Default::default(),
                 },
             ))
         });
         let runner = MultiWorkerRunner::new(config.clone());
         let (report, stats) = runner
-            .run_e2e_strip_stitched(Some(store_path), resolved)
+            .run_e2e_strip_stitched_with(Some(store_path), resolved, &rock)
             .unwrap_or_else(|e| {
                 eprintln!("strip-stitch e2e failed: {e}");
                 std::process::exit(1);
@@ -154,9 +159,11 @@ pub fn run_e2e(
                         samples,
                         store_path: None,
                         chunk_shape: None,
+                        rock_physics: Default::default(),
                     },
                 ))
             }),
+            rock_physics: rock.clone(),
         };
         let result = if overlap {
             synthoseis_core::run_e2e_streaming_overlapped(&cfg)
@@ -187,6 +194,7 @@ pub fn run_e2e(
         );
         print_fault_summary(&cfg);
         print_filter_summary(&cfg);
+        print_rock_summary(&cfg.rock_physics);
         if let Some(path) = report.store_path {
             println!(
                 "wrote MDIO labels+angle-stack at {} (sub-volume chunks, parity round-trip ok)",
@@ -197,7 +205,7 @@ pub fn run_e2e(
     }
 
     let runner = MultiWorkerRunner::new(config.clone());
-    let report = runner.run_e2e(store.clone()).unwrap_or_else(|e| {
+    let report = runner.run_e2e_with(store.clone(), &rock).unwrap_or_else(|e| {
         eprintln!("e2e failed: {e}");
         std::process::exit(1);
     });
@@ -223,6 +231,27 @@ pub fn run_e2e(
             path.display()
         );
     }
+}
+
+pub fn print_rock_summary(rp: &synthoseis_core::RockPhysicsConfig) {
+    if rp.legacy_toy_depth {
+        println!("rock physics: legacy toy depth (master 10f4dcd: k * 100 m, label >= 2 oil)");
+        return;
+    }
+    let ng = match &rp.net_to_gross {
+        synthoseis_core::NetToGross::Constant(v) => format!("constant {v}"),
+        synthoseis_core::NetToGross::Legacy { avg, .. } => {
+            format!("legacy maps {}-{}", avg[0], avg[1])
+        }
+    };
+    println!(
+        "rock physics: {} m/sample below seabed, mixing={}, net_to_gross={}, first_random_layer={}, fluids={}",
+        rp.depth_step_m,
+        rp.mixing.as_str(),
+        ng,
+        rp.first_random_layer,
+        if rp.fluids { "closures" } else { "brine" }
+    );
 }
 
 fn print_filter_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
