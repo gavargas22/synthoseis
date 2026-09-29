@@ -86,8 +86,10 @@ are forward-filled like legacy `fix_zero_values_at_base`.
 On faulted cubes the run is shifted by the observed integer throw
 `(run end − floor(z_{n+1})) − seabed shift` (§5).
 
-Lithology alternates by interval: even intervals are shale and odd are sand,
-with sand mixed with shale by N/G.
+Lithology comes from the legacy sand-fraction Markov chain on the layered
+geometry; see [toy-lithology.md](toy-lithology.md). With the planar
+geometry, `--legacy-toy-depth` or `--toy-lithology alternating`, even
+intervals are shale and odd are sand. Sand is mixed with shale by N/G.
 
 ### 3.2 Net-to-gross maps
 

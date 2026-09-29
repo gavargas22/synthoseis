@@ -133,6 +133,7 @@ pub mod pipeline_mp;
 pub mod pipeline_overlap;
 pub mod pipeline_stream;
 pub mod rock_physics;
+pub mod lithology;
 pub mod toy_geometry;
 
 pub use partition::{
@@ -161,6 +162,7 @@ pub use rock_physics::{
     elastic_model, ElasticModel, MixingMethod, NetToGross, RockPhysicsConfig, RpmModel,
     ZoeppritzForm,
 };
+pub use lithology::ToyLithology;
 pub use toy_geometry::ToyGeometry;
 
 #[cfg(test)]

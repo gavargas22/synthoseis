@@ -253,6 +253,27 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         }
     };
     println!("toy geometry: {} ({nh} horizons)", g.as_str());
+    let rp = &cfg.rock_physics;
+    let lith = cfg.effective_lithology();
+    let sand = synthoseis_core::lithology::interval_sand(
+        lith,
+        cfg.seed,
+        nh.saturating_sub(1),
+        rp.sand_layer_fraction,
+        rp.sand_layer_thickness,
+    );
+    let n_sand = sand.iter().filter(|&&s| s).count();
+    match lith {
+        synthoseis_core::ToyLithology::Alternating => {
+            println!("toy lithology: alternating ({n_sand}/{} sand layers)", sand.len())
+        }
+        synthoseis_core::ToyLithology::Markov => println!(
+            "toy lithology: markov (sand fraction {:.3}, sand unit {} layers, {n_sand}/{} sand layers)",
+            synthoseis_core::lithology::sand_fraction(cfg.seed, rp.sand_layer_fraction),
+            rp.sand_layer_thickness,
+            sand.len()
+        ),
+    }
 }
 
 pub fn print_rock_summary(rp: &synthoseis_core::RockPhysicsConfig) {

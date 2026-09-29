@@ -70,8 +70,9 @@ worker count and the code path.
    one-sample 255 gap under every horizon. After rounding, the only 255
    samples are the water column.
 5. **Downstream:** faults, the depth trace, N/G maps, shifts, closures and
-   Zoeppritz are unchanged. The layers alternate shale and sand (even and
-   odd labels) as before.
+   Zoeppritz are unchanged. Lithology comes from the legacy sand-fraction
+   Markov chain, or alternates with `--toy-lithology alternating`; see
+   [toy-lithology.md](toy-lithology.md).
 
 ## Results (64×64×256, seed 7, 4 faults requested)
 
@@ -133,8 +134,9 @@ Figures (from `examples/layered_geometry_demo.rs` and
 
 - Onlaps, channels and salt bodies.
 - Legacy Perlin thickness maps: fbm is used instead.
-- Legacy sand-fraction lithology, which replaces the even/odd shale/sand
-  alternation.
+- ~~Legacy sand-fraction lithology.~~ Done: it is now the default on the
+  layered geometry, and `--toy-lithology alternating` keeps the even/odd
+  rule. See [toy-lithology.md](toy-lithology.md).
 - Legacy `partial_voxels`.
 - Python bindings do not expose `--toy-geometry` (or the other rock-physics
   options).

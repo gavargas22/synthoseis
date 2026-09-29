@@ -165,6 +165,20 @@ enum Commands {
         /// See docs/layered-toy-geometry.md.
         #[arg(long)]
         toy_geometry: Option<String>,
+        /// Per-layer lithology of the layered geometry: `markov` (default:
+        /// legacy sand-fraction Markov chain, `create_facies_array`) or
+        /// `alternating` (even layers shale, odd sand; the previous default).
+        /// The planar geometry always alternates. See docs/toy-lithology.md.
+        #[arg(long)]
+        toy_lithology: Option<String>,
+        /// Fixed model sand fraction (0-1) for `--toy-lithology markov`.
+        /// Default: legacy per-model draw U(0.05, 0.25).
+        #[arg(long)]
+        sand_layer_fraction: Option<f64>,
+        /// Mean sand unit thickness in layers for `--toy-lithology markov`
+        /// (legacy `sand_layer_thickness`, default 2).
+        #[arg(long)]
+        sand_layer_thickness: Option<f64>,
     },
 }
 
@@ -317,6 +331,47 @@ fn parse_geometry(
     })
 }
 
+/// `--toy-lithology` / `--sand-layer-fraction` / `--sand-layer-thickness`.
+/// The planar geometry (and `--legacy-toy-depth`) always alternates, so the
+/// Markov options are rejected there; so are the sand options with
+/// `alternating`.
+fn apply_lithology(
+    mut rock: synthoseis_core::RockPhysicsConfig,
+    geometry: synthoseis_core::ToyGeometry,
+    arg: Option<&str>,
+    sand_layer_fraction: Option<f64>,
+    sand_layer_thickness: Option<f64>,
+) -> Result<synthoseis_core::RockPhysicsConfig, String> {
+    let lith = match arg {
+        Some(s) => synthoseis_core::ToyLithology::parse(s)?,
+        None => synthoseis_core::ToyLithology::default(),
+    };
+    let sand_opts = sand_layer_fraction.is_some() || sand_layer_thickness.is_some();
+    if geometry == synthoseis_core::ToyGeometry::Planar {
+        if arg == Some("markov") || sand_opts {
+            return Err(
+                "--toy-lithology markov / --sand-layer-fraction / --sand-layer-thickness have no effect with the planar geometry (always alternating)"
+                    .into(),
+            );
+        }
+        rock.lithology = synthoseis_core::ToyLithology::Alternating;
+        return Ok(rock);
+    }
+    if lith == synthoseis_core::ToyLithology::Alternating && sand_opts {
+        return Err(
+            "--sand-layer-fraction / --sand-layer-thickness have no effect with --toy-lithology alternating"
+                .into(),
+        );
+    }
+    rock.lithology = lith;
+    rock.sand_layer_fraction = sand_layer_fraction;
+    if let Some(t) = sand_layer_thickness {
+        rock.sand_layer_thickness = t;
+    }
+    rock.validate()?;
+    Ok(rock)
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -358,6 +413,9 @@ fn main() {
             first_random_layer,
             no_fluids,
             toy_geometry,
+            toy_lithology,
+            sand_layer_fraction,
+            sand_layer_thickness,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -439,6 +497,17 @@ fn main() {
                     eprintln!("{e}");
                     std::process::exit(2);
                 });
+            let rock = apply_lithology(
+                rock,
+                geometry,
+                toy_lithology.as_deref(),
+                sand_layer_fraction,
+                sand_layer_thickness,
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(2);
+            });
             let (inline_count, crossline_count, samples) = if let Some(ref s) = shape {
                 parse_shape(s).unwrap_or_else(|e| {
                     eprintln!("{e}");
