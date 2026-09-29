@@ -486,13 +486,23 @@ fn rich(chunks: [usize; 3]) -> E2eConfig {
 /// Default model (plus Backus, random shifts, closures, filters, noise and
 /// faults) is bit-identical across chunk shapes, the classic path,
 /// streaming, overlap, strip-stitch 2/3/4, multi-process 1/2/3 and
-/// geometry-once; the legacy switch too.
+/// geometry-once; the legacy switches (`--legacy-toy-depth`,
+/// `--legacy-zoeppritz`) too.
 #[test]
 fn default_model_invariant_to_tiling_workers_and_paths() {
     let dir = tempdir().unwrap();
     let read = |p: &std::path::Path| bits(&MdioStore::open(p).unwrap().read_volume().unwrap());
-    for (n, base) in [rich([8, 5, 64]), cfg(4, [24, 20, 48], [8, 5, 48], 2), legacy(rich([8, 5, 64]))]
-        .into_iter()
+    let legacy_zoeppritz = |c: E2eConfig| E2eConfig {
+        rock_physics: RockPhysicsConfig { legacy_zoeppritz: true, ..c.rock_physics.clone() },
+        ..c
+    };
+    for (n, base) in [
+        rich([8, 5, 64]),
+        cfg(4, [24, 20, 48], [8, 5, 48], 2),
+        legacy(rich([8, 5, 64])),
+        legacy_zoeppritz(rich([8, 5, 64])),
+    ]
+    .into_iter()
         .enumerate()
     {
         let with = |chunks: [usize; 3], store: Option<std::path::PathBuf>| E2eConfig {

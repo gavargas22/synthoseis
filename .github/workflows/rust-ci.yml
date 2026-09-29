@@ -55,6 +55,8 @@ jobs:
         run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --lateral-filter 3 --noise-snr-db 12.5 --noise-seed 7 --store /tmp/noise.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --noise-snr-db 12.5 --noise-legacy-seabed --store /tmp/noise-gpu.mdio
       - name: rock physics smoke (default, legacy switch, backus + gpu, multiprocess)
         run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --store /tmp/rp.mdio && cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-toy-depth --store /tmp/rp-legacy.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --mixing backus --first-random-layer 0 --shape 24,20,64 --store /tmp/rp-backus-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --mixing backus --store /tmp/rp-mp.mdio
+      - name: zoeppritz smoke (textbook default, --legacy-zoeppritz cpu + gpu + multiprocess)
+        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-zoeppritz --store /tmp/zl.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --legacy-zoeppritz --store /tmp/zl-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --store /tmp/zx-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --legacy-zoeppritz --store /tmp/zl-mp.mdio
 
   msrv:
     name: MSRV (Rust 1.83)

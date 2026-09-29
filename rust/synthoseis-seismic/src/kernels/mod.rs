@@ -16,4 +16,7 @@ pub use noise::{
     splitmix64, weighted_laplace_std, RunningStats, WeightedNoise,
 };
 pub use wavelets::{apply_wavelet_traces, convolve_same_1d, hanflat, ricker};
-pub use zoeppritz::{compute_rfc_volumes, zoeppritz_pp};
+pub use zoeppritz::{
+    compute_rfc_volumes, compute_rfc_volumes_form, zoeppritz_pp, zoeppritz_pp_complex,
+    zoeppritz_pp_exact, zoeppritz_pp_form, ZoeppritzForm,
+};

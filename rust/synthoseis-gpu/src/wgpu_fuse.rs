@@ -15,6 +15,8 @@ const SHADER: &str = include_str!("shaders/fuse_tile.wgsl");
 struct FuseParams {
     nj: u32, nk: u32, i0: u32, i1: u32, j0: u32, j1: u32,
     wavelet_len: u32, wavelet_off: u32, angle_deg: f32, mode: u32, sin_t: f32, cos_t: f32,
+    // 1: legacy `det` typo in the Zoeppritz numerator, 0: textbook `d`.
+    legacy_det: u32, _pad0: u32, _pad1: u32, _pad2: u32,
 }
 
 struct GpuContext {
@@ -162,6 +164,8 @@ pub fn fuse_tile_wgpu(
         wavelet_len: wavelet.len() as u32, wavelet_off,
         angle_deg: angle_deg as f32, mode: 0,
         sin_t: angle_deg.to_radians().sin() as f32, cos_t: angle_deg.to_radians().cos() as f32,
+        // The label-trend path is the master toy model: legacy Zoeppritz.
+        legacy_det: 1, _pad0: 0, _pad1: 0, _pad2: 0,
     };
     run_fuse(&g, &params, &labels_u32, &trends_wavelet, ti * tj, tile_out)
 }
@@ -174,6 +178,7 @@ fn push_wavelet(buf: &mut Vec<f32>, wavelet: &[f64]) -> u32 {
 }
 
 /// Property-mode dispatch: `vp`, `vs`, `rho` are `(n_traces, nk)` tile buffers.
+#[allow(clippy::too_many_arguments)]
 pub fn fuse_props_tile_wgpu(
     vp: &[f32],
     vs: &[f32],
@@ -181,6 +186,7 @@ pub fn fuse_props_tile_wgpu(
     nk: usize,
     wavelet: &[f64],
     angle_deg: f64,
+    form: crate::ZoeppritzForm,
     tile_out: &mut [f32],
 ) -> Option<FuseBackend> {
     let gpu = ctx()?;
@@ -199,6 +205,7 @@ pub fn fuse_props_tile_wgpu(
         wavelet_len: wavelet.len() as u32, wavelet_off,
         angle_deg: angle_deg as f32, mode: 1,
         sin_t: angle_deg.to_radians().sin() as f32, cos_t: angle_deg.to_radians().cos() as f32,
+        legacy_det: u32::from(form == crate::ZoeppritzForm::Legacy), _pad0: 0, _pad1: 0, _pad2: 0,
     };
     run_fuse(&g, &params, &[0u32], &props_wavelet, n_traces, tile_out)
 }

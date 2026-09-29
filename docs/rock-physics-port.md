@@ -263,8 +263,9 @@ Figures come from `examples/rock_physics_demo.rs` and
 - Legacy's deepest-layer skip and its below-base water fill. Rust
   forward-fills instead.
 - The exact faulted re-pick (§5).
-- The textbook Zoeppritz term. Both backends keep the legacy `det` form
-  (decision below).
+- ~~The textbook Zoeppritz term.~~ Done: the textbook form is now the
+  default on CPU and GPU, `--legacy-zoeppritz` keeps the legacy `det` form;
+  see [zoeppritz-fix.md](zoeppritz-fix.md).
 - The noise statistics fixture (`noise_pipeline.rs`) was generated on
   master reflectivity, so it stays pinned to `--legacy-toy-depth`.
 - Python bindings (`synthoseis-py`) do not expose the rock-physics options
@@ -272,9 +273,9 @@ Figures come from `examples/rock_physics_demo.rs` and
 
 ## 9. Decisions for Guillermo
 
-1. **Zoeppritz `det` vs `d`.** Should the legacy/CPU kernel be fixed to the
-   textbook form? That changes every non-zero-angle output and breaks
-   legacy parity.
+1. ~~**Zoeppritz `det` vs `d`.**~~ Decided (2026-09-28): fixed, default
+   on, `--legacy-zoeppritz` restores the typo; `--legacy-toy-depth`
+   implies it. See [zoeppritz-fix.md](zoeppritz-fix.md).
 2. **Richer toy geometry.** The default toy now yields 2 interfaces per trace
    and no closures. Should a domed or multi-layer toy horizon set be added,
    so that shifts (default `first_random_layer` 20) and fluids actually

@@ -245,12 +245,13 @@ pub fn print_rock_summary(rp: &synthoseis_core::RockPhysicsConfig) {
         }
     };
     println!(
-        "rock physics: {} m/sample below seabed, mixing={}, net_to_gross={}, first_random_layer={}, fluids={}",
+        "rock physics: {} m/sample below seabed, mixing={}, net_to_gross={}, first_random_layer={}, fluids={}, zoeppritz={}",
         rp.depth_step_m,
         rp.mixing.as_str(),
         ng,
         rp.first_random_layer,
-        if rp.fluids { "closures" } else { "brine" }
+        if rp.fluids { "closures" } else { "brine" },
+        if rp.legacy_zoeppritz { "legacy (det typo)" } else { "textbook" }
     );
 }
 

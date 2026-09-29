@@ -17,7 +17,7 @@ use synthoseis_geo::{
     enforce_nonnegative_thicknesses, eval_plane, fill_layer_labels, fit_plane_lsq,
 };
 use synthoseis_io::{CreateConfig, DeliverableWriter, Dimension, MdioStore};
-use synthoseis_seismic::{apply_wavelet_traces, compute_rfc_volumes, ricker};
+use synthoseis_seismic::{apply_wavelet_traces, compute_rfc_volumes_form, ricker};
 
 use crate::parity::{self, ParityReport};
 pub use crate::rock_physics::RockPhysicsConfig;
@@ -355,7 +355,7 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
 
     // --- seismic: single mid-angle RFC + Ricker wavelet → angle stack ---
     let angles = [15.0_f64];
-    let rfc = compute_rfc_volumes(&vp, &vs, &rho, [ni, nj, nk], &angles);
+    let rfc = compute_rfc_volumes_form(&vp, &vs, &rho, [ni, nj, nk], &angles, model.zoeppritz_form());
     // rfc shape: (1, ni, nj, nk-1) — pad last sample with 0 to match nk.
     let mut angle_cube = vec![0.0f32; ni * nj * nk];
     let zm1 = nk - 1;

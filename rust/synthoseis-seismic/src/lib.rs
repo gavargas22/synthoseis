@@ -33,3 +33,7 @@ pub use kernels::{
     uniform_window, weighted_laplace_std, zoeppritz_pp, FilterError, IirFilter, RunningStats,
     WeightedNoise,
 };
+pub use kernels::{
+    compute_rfc_volumes_form, zoeppritz_pp_complex, zoeppritz_pp_exact, zoeppritz_pp_form,
+    ZoeppritzForm,
+};

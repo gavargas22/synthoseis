@@ -139,6 +139,7 @@ pub use pipeline_mp::{
 pub use pipeline_overlap::run_e2e_streaming_overlapped;
 pub use rock_physics::{
     elastic_model, ElasticModel, MixingMethod, NetToGross, RockPhysicsConfig, RpmModel,
+    ZoeppritzForm,
 };
 pub use pipeline_stream::{
     effective_wavelet, fault_model, fault_tile, generate_angle_stack_from_labels, generate_chunked,

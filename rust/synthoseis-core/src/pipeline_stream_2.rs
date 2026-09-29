@@ -34,7 +34,7 @@ pub fn fuse_tile_local(
             stats.observe(synthoseis_gpu::fuse_tile_scratch_bytes(nk) + 3 * n * 4);
             trends.tile_properties(labels, shape, i0, i1, j0, j1, &mut vp, &mut vs, &mut rho);
             let _backend = synthoseis_gpu::fuse_props_tile_dispatch(
-                &vp, &vs, &rho, nk, wavelet, angle_deg, tile_out,
+                &vp, &vs, &rho, nk, wavelet, angle_deg, trends.zoeppritz_form(), tile_out,
             );
         }
     }

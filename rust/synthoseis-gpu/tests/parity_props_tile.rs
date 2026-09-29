@@ -1,11 +1,12 @@
 //! Property-tile fuse path (default rock-physics model): the CPU adapter is
 //! bit-identical to the trend path when fed the same properties, honours the
-//! no-wavelet skip, and WGSL mode 1 is near-parity when an adapter exists.
+//! no-wavelet skip, and WGSL mode 1 is near-parity when an adapter exists,
+//! for both Zoeppritz forms (textbook and legacy `det` typo).
 
 use synthoseis_gpu::{
     fuse_props_tile_cpu, fuse_props_tile_dispatch, fuse_props_tile_gpu, fuse_tile_cpu,
-    gpu_device_available, props_f32, set_prefer_gpu, FuseBackend, GPU_CPU_MAX_ABS_TOL,
-    NO_WAVELET,
+    gpu_device_available, props_f32, set_prefer_gpu, FuseBackend, ZoeppritzForm,
+    GPU_CPU_MAX_ABS_TOL, NO_WAVELET,
 };
 use synthoseis_seismic::ricker;
 
@@ -77,8 +78,16 @@ fn props_cpu_bit_identical_to_trend_path() {
             let mut a = vec![0f32; labels.len()];
             let mut b = vec![0f32; labels.len()];
             fuse_tile_cpu(&labels, shape, 0, ni, 0, nj, &trends, wavelet, angle, &mut a);
-            fuse_props_tile_cpu(&vp, &vs, &rho, nk, wavelet, angle, &mut b);
+            fuse_props_tile_cpu(&vp, &vs, &rho, nk, wavelet, angle, ZoeppritzForm::Legacy, &mut b);
             assert_eq!(a, b, "angle {angle} wavelet len {}", wavelet.len());
+            // The textbook form equals the legacy one only at normal incidence.
+            let mut c = vec![0f32; labels.len()];
+            fuse_props_tile_cpu(&vp, &vs, &rho, nk, wavelet, angle, ZoeppritzForm::Exact, &mut c);
+            if angle == 0.0 {
+                assert_eq!(a, c);
+            } else {
+                assert_ne!(a, c, "angle {angle}");
+            }
         }
     }
 }
@@ -88,12 +97,13 @@ fn props_gpu_near_parity_when_adapter() {
     let (labels, shape, trends, wav) = fixture();
     let nk = shape[2];
     let (vp, vs, rho) = tile_props(&labels, shape, &trends);
+    for form in [ZoeppritzForm::Exact, ZoeppritzForm::Legacy] {
     for wavelet in [&wav[..], NO_WAVELET] {
         for angle in [0.0, 30.0] {
             let mut cpu = vec![0f32; labels.len()];
             let mut gpu = vec![0f32; labels.len()];
-            fuse_props_tile_cpu(&vp, &vs, &rho, nk, wavelet, angle, &mut cpu);
-            let backend = fuse_props_tile_gpu(&vp, &vs, &rho, nk, wavelet, angle, &mut gpu);
+            fuse_props_tile_cpu(&vp, &vs, &rho, nk, wavelet, angle, form, &mut cpu);
+            let backend = fuse_props_tile_gpu(&vp, &vs, &rho, nk, wavelet, angle, form, &mut gpu);
             if gpu_device_available() {
                 assert_eq!(backend, FuseBackend::Gpu);
                 let d = max_abs_diff(&cpu, &gpu);
@@ -101,12 +111,14 @@ fn props_gpu_near_parity_when_adapter() {
                 // Pre-critical interfaces use exact sin/cos(asin) identities
                 // and the host angle, so the gap is f32 rounding (~5e-7 on
                 // llvmpipe) even for the strong water/sediment contrast.
-                assert!(d <= 1e-4, "props gpu vs cpu {d} (angle {angle})");
+                assert!(d <= 1e-4, "props gpu vs cpu {d} (angle {angle}, {form:?})");
+                eprintln!("props gpu vs cpu {form:?} angle {angle} wavelet {}: {d:e}", wavelet.len());
             } else {
                 assert_eq!(backend, FuseBackend::Cpu);
                 assert_eq!(cpu, gpu);
             }
         }
+    }
     }
 }
 
@@ -117,9 +129,9 @@ fn props_dispatch_honours_prefer_gpu() {
     let (vp, vs, rho) = tile_props(&labels, shape, &trends);
     let mut cpu = vec![0f32; labels.len()];
     let mut out = vec![0f32; labels.len()];
-    fuse_props_tile_cpu(&vp, &vs, &rho, nk, &wav, 15.0, &mut cpu);
+    fuse_props_tile_cpu(&vp, &vs, &rho, nk, &wav, 15.0, ZoeppritzForm::Exact, &mut cpu);
     set_prefer_gpu(false);
-    let b = fuse_props_tile_dispatch(&vp, &vs, &rho, nk, &wav, 15.0, &mut out);
+    let b = fuse_props_tile_dispatch(&vp, &vs, &rho, nk, &wav, 15.0, ZoeppritzForm::Exact, &mut out);
     assert_eq!(b, FuseBackend::Cpu);
     assert_eq!(cpu, out);
 }
