@@ -5,7 +5,7 @@ fn fuse_tile_into_volume(
     i1: usize,
     j0: usize,
     j1: usize,
-    trends: &[Vec<f64>; 9],
+    trends: &ElasticModel,
     wavelet: &[f64],
     angle_deg: f64,
     filters: Option<&SeismicFilters>,
@@ -75,9 +75,9 @@ pub fn generate_angle_stack_from_labels(
         ..WorkingSetStats::default()
     };
 
-    let trends = depth_trends(nk);
+    let trends = elastic_model(cfg, labels, shape);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
-    stats.observe(wavelet.len() * 8 + 9 * nk * 8);
+    stats.observe(wavelet.len() * 8 + trends.model_bytes());
     let filters = SeismicFilters::resolve(cfg, labels, shape)
         .unwrap_or_else(|e| panic!("invalid FilterConfig: {e}"));
 

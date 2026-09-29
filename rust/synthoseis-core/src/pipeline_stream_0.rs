@@ -13,6 +13,7 @@ use synthoseis_rpm::RpmExampleTrends;
 use synthoseis_seismic::ricker;
 
 use crate::parity;
+use crate::rock_physics::{elastic_model, ElasticModel};
 use crate::pipeline::{
     E2eConfig, E2eReport, E2eVolumes, DEPTH_PER_SAMPLE, TINY_DIGI,
 };
@@ -106,7 +107,7 @@ pub fn generate_labels(cfg: &E2eConfig) -> (Vec<u8>, [usize; 3]) {
 
 /// Toy horizon stack `(ni, nj, nh)` shared by label generation and the fault
 /// model's seabed (top horizon).
-fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
+pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
     let [ni, nj, nk] = cfg.shape();
     let seed_f = cfg.seed as f64;
     let a0 = 0.05 + (seed_f % 7.0) * 0.01;
