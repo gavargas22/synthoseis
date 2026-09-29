@@ -88,10 +88,20 @@ impl SingleWorkerRunner {
         &self,
         store: Option<std::path::PathBuf>,
     ) -> Result<pipeline::E2eReport, String> {
+        self.run_e2e_with(store, &RockPhysicsConfig::default())
+    }
+
+    /// [`Self::run_e2e`] with explicit rock physics settings.
+    pub fn run_e2e_with(
+        &self,
+        store: Option<std::path::PathBuf>,
+        rock_physics: &RockPhysicsConfig,
+    ) -> Result<pipeline::E2eReport, String> {
         // Tiny-cube floor: bump sub-8³ defaults (CLI smoke uses 8³).
         let cfg = pipeline::E2eConfig {
             faults: Default::default(),
             filters: Default::default(),
+            rock_physics: rock_physics.clone(),
             seed: self.config.seed,
             inline_count: self.config.inline_count.max(pipeline::TINY_DIM),
             crossline_count: self.config.crossline_count.max(pipeline::TINY_DIM),
@@ -110,6 +120,7 @@ pub mod pipeline_geometry_many;
 pub mod pipeline_mp;
 pub mod pipeline_overlap;
 pub mod pipeline_stream;
+pub mod rock_physics;
 
 pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
@@ -126,6 +137,9 @@ pub use pipeline_mp::{
     run_e2e_multiprocess, run_worker_partition,
 };
 pub use pipeline_overlap::run_e2e_streaming_overlapped;
+pub use rock_physics::{
+    elastic_model, ElasticModel, MixingMethod, NetToGross, RockPhysicsConfig, RpmModel,
+};
 pub use pipeline_stream::{
     effective_wavelet, fault_model, fault_tile, generate_angle_stack_from_labels, generate_chunked,
     generate_chunked_at_angle, generate_fault_labels, generate_labels, generate_noise,
@@ -234,6 +248,7 @@ mod tests {
             samples: 8,
             store_path: Some(path),
             chunk_shape: Some([2, 4, 8]),
+            rock_physics: Default::default(),
         };
         let (report, stats) = run_e2e_multiprocess(&cfg, 4).expect("mp");
         assert_eq!(report.status, "ok-e2e-multiprocess");
