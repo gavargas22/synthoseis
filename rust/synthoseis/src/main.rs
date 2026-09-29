@@ -132,6 +132,27 @@ enum Commands {
         /// actual seabed. Requires `--noise-snr-db`.
         #[arg(long, default_value_t = false)]
         noise_legacy_seabed: bool,
+        /// Reproduce master 10f4dcd elastic properties bit for bit: toy depth
+        /// `k * 100 m` from the cube top and label >= 2 (including 255) as oil
+        /// sand. Default: the corrected legacy rock physics (4 m per sample,
+        /// one depth per layer below the seabed, water column, net-to-gross
+        /// mixing, closure fluids). See docs/rock-physics-port.md.
+        #[arg(long, default_value_t = false)]
+        legacy_toy_depth: bool,
+        /// Sand/shale mixing: `inverse-velocity` (legacy default) or `backus`.
+        #[arg(long, default_value = "inverse-velocity")]
+        mixing: String,
+        /// Constant net-to-gross for every sand voxel (0-1). Default: legacy
+        /// random net-to-gross maps per sand layer.
+        #[arg(long)]
+        net_to_gross: Option<f32>,
+        /// Random per-layer depth shifts apply to legacy layers deeper than
+        /// this (legacy `first_random_lyr`, default 20).
+        #[arg(long, default_value_t = 20)]
+        first_random_layer: usize,
+        /// All sands brine (no oil / gas from closures).
+        #[arg(long, default_value_t = false)]
+        no_fluids: bool,
     },
 }
 
@@ -216,6 +237,48 @@ fn parse_filters(
     Ok(fc)
 }
 
+fn parse_rock_physics(
+    legacy_toy_depth: bool,
+    mixing: &str,
+    net_to_gross: Option<f32>,
+    first_random_layer: usize,
+    no_fluids: bool,
+) -> Result<synthoseis_core::RockPhysicsConfig, String> {
+    let mixing = match mixing {
+        "inverse-velocity" | "inv-vel" => synthoseis_core::MixingMethod::InverseVelocity,
+        "backus" => synthoseis_core::MixingMethod::BackusModuli,
+        other => {
+            return Err(format!(
+                "--mixing expects inverse-velocity or backus, got {other:?}"
+            ))
+        }
+    };
+    let defaults = synthoseis_core::RockPhysicsConfig::default();
+    let customised = mixing != defaults.mixing
+        || net_to_gross.is_some()
+        || first_random_layer != defaults.first_random_layer
+        || no_fluids;
+    if legacy_toy_depth && customised {
+        return Err(
+            "--mixing / --net-to-gross / --first-random-layer / --no-fluids have no effect with --legacy-toy-depth"
+                .into(),
+        );
+    }
+    let rp = synthoseis_core::RockPhysicsConfig {
+        legacy_toy_depth,
+        mixing,
+        net_to_gross: match net_to_gross {
+            Some(v) => synthoseis_core::NetToGross::Constant(v),
+            None => defaults.net_to_gross.clone(),
+        },
+        first_random_layer,
+        fluids: !no_fluids,
+        ..defaults
+    };
+    rp.validate()?;
+    Ok(rp)
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -250,6 +313,11 @@ fn main() {
             noise_seed,
             noise_legacy_weights,
             noise_legacy_seabed,
+            legacy_toy_depth,
+            mixing,
+            net_to_gross,
+            first_random_layer,
+            no_fluids,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -314,6 +382,17 @@ fn main() {
                 );
                 std::process::exit(2);
             }
+            let rock = parse_rock_physics(
+                legacy_toy_depth,
+                &mixing,
+                net_to_gross,
+                first_random_layer,
+                no_fluids,
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(2);
+            });
             let (inline_count, crossline_count, samples) = if let Some(ref s) = shape {
                 parse_shape(s).unwrap_or_else(|e| {
                     eprintln!("{e}");
@@ -353,6 +432,7 @@ fn main() {
                 crossline_count,
                 samples,
                 chunk_shape,
+                &rock,
             ) {
                 return;
             }
@@ -383,6 +463,7 @@ fn main() {
                 crossline_count,
                 samples,
                 chunk_shape,
+                &rock,
             ) {
                 return;
             }
@@ -404,6 +485,7 @@ fn main() {
                     &config,
                     faults,
                     filters,
+                    rock,
                 );
             } else if workers == 1 {
                 cli_e2e::run_single_worker_placeholder(&config, store, seed);
