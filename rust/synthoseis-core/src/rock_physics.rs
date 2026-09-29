@@ -18,9 +18,11 @@
 //! * **Water** above the seabed: rho 1.028, Vp 1500, Vs 1000. Label 255 below
 //!   the seabed (gaps between layers, the base pad) forward-fills the sample
 //!   above (legacy `fix_zero_values_at_base`).
-//! * **Lithology.** Even layers are shale, odd layers sand; sand voxels mix
-//!   brine / oil / gas sand with shale by the layer's net-to-gross map
-//!   (inverse velocity by default, Backus optional).
+//! * **Lithology.** Sand or shale per layer from the legacy sand-fraction
+//!   Markov chain ([`crate::lithology`]; even shale / odd sand with
+//!   `--toy-lithology alternating`, the planar geometry or the legacy toy);
+//!   sand voxels mix brine / oil / gas sand with shale by the layer's
+//!   net-to-gross map (inverse velocity by default, Backus optional).
 //! * **Random depth shifts** per layer (and per property), keyed by seed and
 //!   layer, for layers deeper than [`RockPhysicsConfig::first_random_layer`].
 //! * **Fluids** from spill-point closures of each sand layer's post-fault top.
@@ -49,6 +51,7 @@ pub use synthoseis_rpm::{Elastic32, Fluid, MixingMethod};
 pub use synthoseis_seismic::ZoeppritzForm;
 
 use crate::pipeline::E2eConfig;
+pub use crate::lithology::ToyLithology;
 
 /// Net-to-gross of sand layers.
 #[derive(Debug, Clone, PartialEq)]
@@ -106,6 +109,17 @@ pub struct RockPhysicsConfig {
     /// Evaluate Zoeppritz with the legacy `det` typo instead of the textbook
     /// expression. CLI `--legacy-zoeppritz`. Implied by `legacy_toy_depth`.
     pub legacy_zoeppritz: bool,
+    /// Per-layer lithology rule of the layered toy geometry (default: legacy
+    /// sand-fraction Markov chain). CLI `--toy-lithology`. The planar
+    /// geometry and `legacy_toy_depth` always alternate; see
+    /// [`crate::lithology`].
+    pub lithology: ToyLithology,
+    /// Model sand fraction for [`ToyLithology::Markov`]. `None` = legacy
+    /// per-model draw U(0.05, 0.25). CLI `--sand-layer-fraction`.
+    pub sand_layer_fraction: Option<f64>,
+    /// Mean sand unit thickness in layers (legacy `sand_layer_thickness`,
+    /// 2). CLI `--sand-layer-thickness`.
+    pub sand_layer_thickness: f64,
 }
 
 impl Default for RockPhysicsConfig {
@@ -122,6 +136,9 @@ impl Default for RockPhysicsConfig {
             max_column_m: 150.0,
             min_closure_voxels: 500,
             legacy_zoeppritz: false,
+            lithology: ToyLithology::default(),
+            sand_layer_fraction: None,
+            sand_layer_thickness: crate::lithology::SAND_LAYER_THICKNESS,
         }
     }
 }
@@ -133,6 +150,7 @@ impl RockPhysicsConfig {
         Self {
             legacy_toy_depth: true,
             legacy_zoeppritz: true,
+            lithology: ToyLithology::Alternating,
             ..Self::default()
         }
     }
@@ -154,6 +172,11 @@ impl RockPhysicsConfig {
         if !(self.max_column_m.is_finite() && self.max_column_m >= 0.0) {
             return Err(format!("max_column_m must be >= 0, got {}", self.max_column_m));
         }
+        // Worst case of the legacy draw is its upper bound.
+        crate::lithology::validate(
+            self.sand_layer_fraction.unwrap_or(crate::lithology::SAND_LAYER_FRACTION[1]),
+            self.sand_layer_thickness,
+        )?;
         match &self.net_to_gross {
             NetToGross::Constant(v) if !(0.0..=1.0).contains(v) => {
                 Err(format!("net-to-gross must be in [0, 1], got {v}"))
@@ -545,11 +568,22 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
         return ElasticModel::LegacyToy(Box::new(crate::pipeline_stream::depth_trends(shape[2])));
     }
     let (maps, nh) = crate::pipeline_stream::toy_horizon_maps(cfg);
-    ElasticModel::Rpm(Box::new(RpmModel::build(cfg.seed, &cfg.rock_physics, &maps, nh, labels, shape)))
+    let rp = &cfg.rock_physics;
+    let sand = crate::lithology::interval_sand(
+        cfg.effective_lithology(),
+        cfg.seed,
+        nh,
+        rp.sand_layer_fraction,
+        rp.sand_layer_thickness,
+    );
+    ElasticModel::Rpm(Box::new(RpmModel::build(cfg.seed, rp, &maps, nh, labels, shape, &sand)))
 }
 
 impl RpmModel {
-    /// Build from horizon maps `(ni, nj, nh)` and labels.
+    /// Build from horizon maps `(ni, nj, nh)`, labels and the per-interval
+    /// sand flags (see [`crate::lithology::interval_sand`]; intervals beyond
+    /// `sand` are shale).
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         seed: u64,
         rp: &RockPhysicsConfig,
@@ -557,6 +591,7 @@ impl RpmModel {
         nh: usize,
         labels: &[u8],
         shape: [usize; 3],
+        sand: &[bool],
     ) -> Self {
         let [ni, nj, nk] = shape;
         assert_eq!(maps.len(), ni * nj * nh);
@@ -568,7 +603,7 @@ impl RpmModel {
             .iter()
             .enumerate()
             .map(|(lab, &h)| {
-                let sand = h % 2 == 1;
+                let sand = sand.get(h).copied().unwrap_or(false);
                 LayerModel {
                     interval: h,
                     sand,

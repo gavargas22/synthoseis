@@ -279,6 +279,17 @@ impl E2eConfig {
         }
     }
 
+    /// Lithology actually used: alternating for the planar geometry and
+    /// `legacy_toy_depth` (their goldens), else
+    /// [`RockPhysicsConfig::lithology`].
+    pub fn effective_lithology(&self) -> crate::lithology::ToyLithology {
+        if self.effective_geometry() == ToyGeometry::Planar {
+            crate::lithology::ToyLithology::Alternating
+        } else {
+            self.rock_physics.lithology
+        }
+    }
+
     pub fn tiny(seed: u64) -> Self {
         Self {
             seed,

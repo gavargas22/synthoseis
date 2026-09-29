@@ -11,7 +11,7 @@ use synthoseis_core::rock_physics::{elastic_model, ElasticModel, Fluid};
 use synthoseis_core::toy_geometry::{
     layer_thickness, layered_horizon_maps, LayeredParams, SEABED_MIN_DEPTH_M,
 };
-use synthoseis_core::{generate_chunked, generate_labels, generate_reflectivity, ToyGeometry};
+use synthoseis_core::{generate_chunked, generate_labels, generate_reflectivity, ToyGeometry, ToyLithology};
 
 fn fnv(bytes: impl Iterator<Item = u8>) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -36,7 +36,8 @@ fn demo(seed: u64, shape: [usize; 3], faults: usize) -> E2eConfig {
         chunk_shape: Some([16, 16, shape[2]]),
         faults: FaultConfig::with_count(faults),
         filters: FilterConfig::default(),
-        rock_physics: RockPhysicsConfig::default(),
+        // Goldens of the layered geometry before the Markov lithology.
+        rock_physics: RockPhysicsConfig { lithology: ToyLithology::Alternating, ..RockPhysicsConfig::default() },
         geometry: ToyGeometry::Layered,
     }
 }
@@ -265,6 +266,7 @@ fn layered_statistics_match_legacy() {
         let c = E2eConfig {
             rock_physics: RockPhysicsConfig {
                 min_closure_voxels: 1,
+                lithology: ToyLithology::Alternating,
                 ..RockPhysicsConfig::default()
             },
             ..demo(seed, [32, 32, 128], 0)

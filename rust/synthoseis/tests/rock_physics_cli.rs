@@ -252,3 +252,73 @@ fn invalid_toy_geometry_flags_exit_2() {
     assert!(out.status.success(), "{out:?}");
     assert_eq!(store_hash(&ok), MASTER_PLAIN);
 }
+
+// Angle-stack hashes of stores written by the master binary after #30
+// (layered geometry, alternating lithology) with the same flags.
+const MASTER30_PLAIN: u64 = 0x1c8a_d8b3_5687_42d6;
+const MASTER30_RICH: u64 = 0x55d8_6de1_924e_e347;
+const MASTER30_MP: u64 = 0xbdd5_2772_230c_2542;
+const MASTER30_DEEP: u64 = 0xb891_542c_7783_2264;
+const DEEP: &[&str] = &["--shape", "24,20,160", "--faults", "3", "--chunk-i", "5"];
+
+/// `--toy-lithology alternating` reproduces master after #30 bit for bit;
+/// the Markov default differs.
+#[test]
+fn alternating_lithology_reproduces_master_after_30() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (name, base, master) in [
+        ("plain", PLAIN, MASTER30_PLAIN),
+        ("rich", RICH, MASTER30_RICH),
+        ("mp", MP, MASTER30_MP),
+        ("deep", DEEP, MASTER30_DEEP),
+    ] {
+        let alt = dir.path().join(format!("{name}-alt.mdio"));
+        let out = run(&with(base, &["--toy-lithology", "alternating"]), &alt);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("toy lithology: alternating"), "{name}: {stdout}");
+        assert_eq!(store_hash(&alt), master, "{name}: --toy-lithology alternating vs master after #30");
+    }
+    let markov = dir.path().join("deep-markov.mdio");
+    let out = run(DEEP, &markov);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("toy lithology: markov (sand fraction"));
+    assert_ne!(store_hash(&markov), MASTER30_DEEP, "default must use the Markov lithology");
+}
+
+/// Lithology options reach multi-process workers.
+#[test]
+fn lithology_flags_reach_multiprocess_workers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for flags in [
+        &[][..],
+        &["--sand-layer-fraction", "0.5", "--sand-layer-thickness", "1"][..],
+        &["--toy-lithology", "alternating"][..],
+        &["--toy-geometry", "planar"][..],
+    ] {
+        let single = dir.path().join("single.mdio");
+        let out = run(&with(&MP[3..], flags), &single);
+        assert!(out.status.success(), "{flags:?}: {out:?}");
+        let mp = dir.path().join("mp.mdio");
+        let out = run(&with(MP, flags), &mp);
+        assert!(out.status.success(), "{flags:?}: {out:?}");
+        assert_eq!(store_hash(&single), store_hash(&mp), "{flags:?}: multiprocess vs single");
+    }
+}
+
+#[test]
+fn invalid_lithology_flags_exit_2() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (bad, msg) in [
+        (["--toy-geometry", "planar", "--toy-lithology", "markov"].as_slice(), "planar geometry"),
+        (&["--legacy-toy-depth", "--sand-layer-fraction", "0.2"], "planar geometry"),
+        (&["--toy-lithology", "alternating", "--sand-layer-thickness", "3"], "no effect with --toy-lithology alternating"),
+        (&["--sand-layer-fraction", "0.7"], "unreachable"),
+        (&["--sand-layer-thickness", "0.5"], "--sand-layer-thickness must be >= 1"),
+        (&["--toy-lithology", "fluvial"], "--toy-lithology expects markov or alternating"),
+    ] {
+        let out = run(&with(PLAIN, bad), &dir.path().join("bad.mdio"));
+        assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains(msg), "{bad:?}: {out:?}");
+    }
+}

@@ -489,7 +489,8 @@ fn rich(chunks: [usize; 3]) -> E2eConfig {
 /// streaming, overlap, strip-stitch 2/3/4, multi-process 1/2/3 and
 /// geometry-once; the legacy switches (`--legacy-toy-depth`,
 /// `--legacy-zoeppritz`) too, and the layered default toy geometry (with
-/// default shifts active in the 160-sample case).
+/// default shifts active in the 160-sample case) with its Markov lithology
+/// (default and with explicit sand fraction / unit thickness).
 #[test]
 fn default_model_invariant_to_tiling_workers_and_paths() {
     let dir = tempdir().unwrap();
@@ -511,6 +512,16 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
         // Plain default model on the layered default geometry, deep enough
         // (> 20 layers) for the default random depth shifts.
         layered(cfg(4, [24, 20, 160], [8, 5, 160], 2)),
+        // Legacy sand-fraction lithology with explicit options (the two
+        // layered cases above use the default Markov chain).
+        E2eConfig {
+            rock_physics: RockPhysicsConfig {
+                sand_layer_fraction: Some(0.4),
+                sand_layer_thickness: 3.0,
+                ..rich([8, 5, 64]).rock_physics
+            },
+            ..layered(rich([8, 5, 64]))
+        },
     ]
     .into_iter()
         .enumerate()
@@ -520,6 +531,15 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
             store_path: store,
             ..base.clone()
         };
+        if n >= 4 {
+            assert_eq!(base.effective_lithology(), synthoseis_core::ToyLithology::Markov);
+        }
+        if n == 6 {
+            let (labels, shape) = generate_labels(&base);
+            let ElasticModel::Rpm(m) = elastic_model(&base, &labels, shape) else { panic!() };
+            let n_sand = m.layers.iter().filter(|l| l.sand).count();
+            assert!(n_sand > 0 && n_sand < m.layers.len(), "mixed lithology {n_sand}/{}", m.layers.len());
+        }
         if n == 5 {
             let (labels, shape) = generate_labels(&base);
             let ElasticModel::Rpm(m) = elastic_model(&base, &labels, shape) else {
