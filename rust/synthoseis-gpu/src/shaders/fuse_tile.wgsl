@@ -15,14 +15,14 @@ struct FuseParams {
     wavelet_len: u32,
     wavelet_off: u32, // index into trends_wavelet where wavelet samples begin
     angle_deg: f32,
-    _p1: f32,
-    _p2: f32,
-    _p3: f32,
+    mode: u32, // 0: labels + 9 trends; 1: per-voxel tile props [vp, vs, rho]
+    sin_t: f32, // sin(angle), computed on the host in f64
+    cos_t: f32, // cos(angle), computed on the host in f64
 }
 
 @group(0) @binding(0) var<uniform> params: FuseParams;
 @group(0) @binding(1) var<storage, read> labels: array<u32>;
-@group(0) @binding(2) var<storage, read> trends_wavelet: array<f32>; // 9*nk then wavelet
+@group(0) @binding(2) var<storage, read> trends_wavelet: array<f32>; // mode 0: 9*nk trends, mode 1: 3*n_traces*nk props; then wavelet
 @group(0) @binding(3) var<storage, read_write> scratch: array<f32>;
 @group(0) @binding(4) var<storage, read_write> tile_out: array<f32>;
 
@@ -82,25 +82,44 @@ fn c_asin(z: C) -> C {
     return C(w.im, -w.re);
 }
 
+// sin / cos of asin(x) for real x. Pre-critical (|x| <= 1) uses the exact
+// identities sin = x, cos = sqrt(1 - x^2): WGSL only bounds sin / cos / log /
+// atan2 to ~2^-11 absolute error, which cost up to ~3e-2 on 30-degree seabed
+// reflections; sqrt is accurate to a few ULP. Post-critical keeps the complex
+// asin branch (same branch as num_complex).
+struct SinCos {
+    s: C,
+    c: C,
+}
+
+fn asin_sin_cos(x: f32) -> SinCos {
+    if (abs(x) <= 1.0) {
+        return SinCos(C(x, 0.0), C(sqrt(max(1.0 - x * x, 0.0)), 0.0));
+    }
+    let a = c_asin(C(x, 0.0));
+    return SinCos(c_sin(a), c_cos(a));
+}
+
+// `sin_t` / `cos_t`: sine and cosine of the incidence angle, from the host
+// in f64 then rounded (FuseParams).
 fn zoeppritz_pp(
     vp1: f32, vs1: f32, rho1: f32,
     vp2: f32, vs2: f32, rho2: f32,
-    angle_deg: f32,
+    sin_t: f32, cos_t: f32,
 ) -> f32 {
-    let theta = C(radians(angle_deg), 0.0);
-    let p = c_scale(c_sin(theta), 1.0 / vp1);
-    let theta2 = c_asin(c_scale(p, vp2));
-    let phi1 = c_asin(c_scale(p, vs1));
-    let phi2 = c_asin(c_scale(p, vs2));
+    let p = C(sin_t / vp1, 0.0);
+    let t2 = asin_sin_cos(p.re * vp2);
+    let f1 = asin_sin_cos(p.re * vs1);
+    let f2 = asin_sin_cos(p.re * vs2);
 
-    let sin_phi1 = c_sin(phi1);
-    let sin_phi2 = c_sin(phi2);
+    let sin_phi1 = f1.s;
+    let sin_phi2 = f2.s;
     let sin_phi1_sq = c_mul(sin_phi1, sin_phi1);
     let sin_phi2_sq = c_mul(sin_phi2, sin_phi2);
-    let cos_theta = c_cos(theta);
-    let cos_theta2 = c_cos(theta2);
-    let cos_phi1 = c_cos(phi1);
-    let cos_phi2 = c_cos(phi2);
+    let cos_theta = C(cos_t, 0.0);
+    let cos_theta2 = t2.c;
+    let cos_phi1 = f1.c;
+    let cos_phi2 = f2.c;
 
     let a = c_sub(
         c_scale(c_sub(C(1.0, 0.0), c_scale(sin_phi2_sq, 2.0)), rho2),
@@ -141,9 +160,15 @@ fn zoeppritz_pp(
             c_scale(c_mul(c, cos_theta2), 1.0 / vp2),
         ),
     );
+    // Mirrors the CPU / legacy kernel term for term, including its use of
+    // `det` (not `d`) here: legacy `zoeppritz_kernel.py` and
+    // `tests/_zoeppritz_reference.py` write `aa + det * ct / vp1 * cp2 / vs2`,
+    // which differs from the textbook (bruges) `a + d * ...` at non-zero
+    // angles. The GPU follows the CPU so the two backends agree; see
+    // docs/rock-physics-port.md.
     let inner = c_add(
         a,
-        c_mul(c_mul(c_scale(c_mul(d, cos_theta), 1.0 / vp1), cos_phi2), C(1.0 / vs2, 0.0)),
+        c_mul(c_mul(c_scale(c_mul(det, cos_theta), 1.0 / vp1), cos_phi2), C(1.0 / vs2, 0.0)),
     );
     let term2 = c_mul(c_mul(h, c_mul(p, p)), inner);
     let zoep = c_div(c_sub(term1, term2), det);
@@ -165,6 +190,11 @@ fn props(lab: u32, k: u32, nk: u32) -> vec3<f32> {
     return vec3(vp, vs, rho);
 }
 
+// Mode 1: (vp, vs, rho) of tile voxel `t` from the three tile planes.
+fn tile_props(t: u32, n: u32) -> vec3<f32> {
+    return vec3(trends_wavelet[t], trends_wavelet[n + t], trends_wavelet[2u * n + t]);
+}
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let ti = params.i1 - params.i0;
@@ -184,12 +214,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if (nk >= 2u) {
         for (var k: u32 = 0u; k < nk - 1u; k = k + 1u) {
-            let idx0 = (i * nj + j) * nk + k;
-            let idx1 = idx0 + 1u;
-            let p0 = props(labels[idx0], k, nk);
-            let p1 = props(labels[idx1], k + 1u, nk);
+            var p0: vec3<f32>;
+            var p1: vec3<f32>;
+            if (params.mode == 1u) {
+                p0 = tile_props(base + k, n_traces * nk);
+                p1 = tile_props(base + k + 1u, n_traces * nk);
+            } else {
+                let idx0 = (i * nj + j) * nk + k;
+                let idx1 = idx0 + 1u;
+                p0 = props(labels[idx0], k, nk);
+                p1 = props(labels[idx1], k + 1u, nk);
+            }
             scratch[base + k] = zoeppritz_pp(
-                p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, params.angle_deg,
+                p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, params.sin_t, params.cos_t,
             );
         }
     }
