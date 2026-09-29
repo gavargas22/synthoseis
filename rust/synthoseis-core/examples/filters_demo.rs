@@ -63,6 +63,7 @@ fn main() {
         chunk_shape: Some([16, 16, nk]),
         faults: FaultConfig::with_count(count),
         filters: FilterConfig::default(),
+        rock_physics: Default::default(),
     };
     let cfg = E2eConfig {
         filters: FilterConfig::legacy(low, high, lateral),

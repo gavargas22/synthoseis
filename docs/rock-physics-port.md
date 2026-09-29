@@ -1,136 +1,283 @@
-# Rock physics port: reflectivity root cause and plan
+# Rock physics port
 
-Status: **survey and plan only. The pipeline is unchanged** (no Rust code in
-this PR yet). The root cause below is a real bug in the Rust Zoeppritz
-*inputs*, so per the port rules the default behaviour is not changed until
-the fix is approved.
+Status (PR #28): the **corrected legacy depth model is the default**, and
+`--legacy-toy-depth` (`RockPhysicsConfig::legacy_toy()`) reproduces master
+10f4dcd bit for bit. Sections 1–2 give the root cause and the legacy survey
+that led to the port. Sections 3–7 describe what was built and how it was
+checked.
 
-## 1. Root cause: DC offset and reflectivity down to −16.1
+## 1. Root cause: DC offset and reflectivity down to −16.1 (master)
 
-On the 64×64×128, seed 7, 4-fault demo cube at 15°, the raw Rust
-reflectivity (`angle_rfc.f32`) has:
+On the 64×64×128, seed 7, 4-fault demo cube at 15°, master's raw
+reflectivity ranged from −16.13 to 0.119 (mean −0.049; 0.40 % of samples
+with |r| > 1; ~100 % non-zero). Real PP coefficients lie in [−1, 1] and are
+zero inside homogeneous layers.
 
-| | value |
-|---|---|
-| range | −16.13 … 0.119 |
-| mean | −0.0489 |
-| median | +0.0006 |
-| samples with \|r\| > 1 | 0.40 % |
-| non-zero samples | 100 % |
+`synthoseis-seismic::zoeppritz_pp` matches `datagenerator/zoeppritz_kernel.py`
+term for term. `tests/fixtures/rpm_reflectivity_rootcause.py` rebuilds
+master's reflectivity bit for bit from the labels, the `rpm_example` trends
+and that formula. The bug was in the elastic *inputs*:
 
-Real PP coefficients lie in [−1, 1] and are zero inside homogeneous layers.
+1. **The depth scale was 25× legacy.** Master used 100 m per sample; legacy
+   uses `digi` (4 m). A 128-sample cube reached 12.7 km. The `rpm_example`
+   quadratics turn over at about 4–10 km (shale Vp is 0 at 9.92 km). The
+   −16.1 sample was a post-critical shale (Vp 447) over brine sand
+   (Vp 5809) interface at 9.6 km.
+2. **Depth was per sample from the cube top.** Legacy uses one depth per
+   layer: the layer-base TVD below the mudline. With per-sample depth,
+   every sample inside a layer is an impedance step, which gives +0.01 to
+   +0.03 at every sample (the DC offset and the red spectrum).
+3. **The water column used oil sand.** Label 255 above the seabed fell
+   through to the oil-sand trend. Legacy `water_properties` uses
+   1.028 g/cc, 1500 m/s, 1000 m/s.
 
-**Zoeppritz is not the bug.** `synthoseis-seismic::zoeppritz_pp` matches
-`datagenerator/zoeppritz_kernel.py` term for term (complex arithmetic, real
-part), and the `seismic_kernels.json` goldens pass. A numpy rebuild from the
-labels, the `rpm_example` trends and that formula reproduces the Rust
-reflectivity **bit for bit** (`tests/fixtures/rpm_reflectivity_rootcause.py`).
-The problem is the elastic inputs built in `pipeline.rs::generate_tiny_cube`
-and `pipeline_stream_0.rs::depth_trends` (+ `synthoseis-gpu::props_f32`).
-There are three defects.
+## 2. Legacy survey
 
-1. **Depth scale is 25× legacy.** `DEPTH_PER_SAMPLE = 100.0` m per sample.
-   Legacy converts samples to metres with `digi` (4 m; `Faults.py`,
-   `work_cube_depth *= digi`), and the example config spans 1250 × 4 m = 5 km.
-   The `rpm_example` quadratics are only meaningful over about 0–5 km:
-   - shale Vp peaks at 4.35 km and reaches 0 at 9.92 km;
-   - shale Vs reaches 0 at 9.88 km.
-
-   A 128-sample Rust cube reaches 12.7 km. The −16.1 sample is at k = 96
-   (9.6 km), where a shale sits over a brine sand:
-
-   | layer | Vp (m/s) | Vs (m/s) | ρ (g/cc) |
-   |---|---|---|---|
-   | shale (upper) | 447 | 279 | 4.50 |
-   | brine sand (lower) | 5809 | 3785 | 2.45 |
-
-   At 15°, `p·Vp2 = 3.36`, so the interface is post-critical, and the
-   real part of the complex Zoeppritz ratio is −16.1. The legacy kernel gives
-   the same value for these inputs.
-2. **Depth is per sample from the cube top, not per layer below the mudline.**
-   Legacy's depth cube is the layer's TVD below mudline
-   (`tvdml_map = previous_depth_map − seabed`), constant inside a layer (per
-   trace, fraction-weighted for partial voxels). Properties are therefore
-   constant inside a layer, and reflectivity is zero except at interfaces.
-   Rust evaluates the trends at `k·100 m`, so every sample inside a layer is
-   an impedance step of 2–5 %. That produces a reflection of +0.01 … +0.03
-   at *every* sample (the DC offset and the "red" spectrum). It turns
-   negative below the shale-Vp vertex.
-3. **The water column is oil sand.** Label 255 (above the seabed) falls
-   through the `_ =>` arm to the oil-sand trend. Legacy `water_properties`
-   uses ρ 1.028, Vp 1500, Vs 1000 (the legacy Vs is non-physical but
-   harmless). This only affects the top 1–4 samples of the toy cube.
-
-Effect of fixing each one:
-
-| inputs | min | max | mean | \|r\| > 1 | non-zero |
-|---|---|---|---|---|---|
-| master (defects 1–3) | −16.1 | 0.119 | −0.0489 | 0.40 % | 100 % |
-| 4 m/sample only (fix 1) | −0.091 | 0.104 | 0.00077 | 0 | 100 % |
-| legacy depth model: per-layer TVDML × 4 m + water (fixes 1–3) | −0.535 | 0.519 | 0.0012 | 0 | 2.8 % |
-
-The remaining ±0.53 is the seabed (water over shale, ρ 1.028 → 1.96),
-which is also what legacy produces. Figure:
-`/workspace/synthoseis-bench/out/reflectivity_rootcause_before_after.png`
-(range and mean per sample, histogram, spectrum, before/after sections).
-
-## 2. Legacy rock physics survey
-
-| Legacy | What it does | Rust today |
+| Legacy | What it does | Rust (this PR) |
 |---|---|---|
-| `rockphysics/rpm_example.py` `RPMExample` | quadratic/cubic depth trends (z in m below mudline) for shale, brine, oil and gas sand: Vp, Vs, ρ | `RpmExampleTrends::*` (golden-tested); gas unused |
-| `rpm_tagilsk_trends.py` | alternative polynomial trend set | `tagilsk_*` kernels, partly (oil-sand polys missing) |
-| `Faults.py` depth cube | depth = TVDML of the layer base × `digi`, constant per layer per trace; partial voxels fraction-weighted; faulted with the geology | per-sample `k·100 m` (defects 1–2) |
-| `Seismic.build_property_models_randomised_depth` | per layer above `first_random_lyr`: random depth shifts `k_rho, k_vp, k_vs` (independent per property, ±half_range) → decorrelates Vp/Vs/ρ | none |
-| `calculate_shales` | shale everywhere except water | label 0 |
-| `calculate_sands` + `EndMemberMixing` | sand (brine/oil/gas by closure fluid) mixed with shale by net-to-gross: `inverse_velocity_mixing` (default: arithmetic ρ, harmonic velocity) or `backus_moduli_mixing` | label 1 = pure brine sand; no N/G, no oil/gas closures |
-| fluids | "fluid substitution" is **trend selection** (brine/oil/gas trend sets per closure); there is no Gassmann step in legacy | none |
-| `water_properties` | lith < 0 → 1.028 / 1500 / 1000 | oil sand (defect 3) |
-| salt | ρ 2.17 and fixed velocities | none |
-| `fix_zero_values_at_base` | forward-fill zero properties at the trace base | n/a |
-| `clip_vs_via_poissons_ratio` / `clip_vp_via_poissons_ratio` | Poisson-ratio guards | none |
+| `Faults.build_faulted_property_geomodels` | re-picks the horizons from the *faulted* age cube; depth = (layer base − seabed) × `digi`, constant per layer and trace | per-column from the labels (§3.1); faulted approximation (§5) |
+| `RPMExample` | shale / brine / oil / gas sand depth trends | `synthoseis_rpm::example_f32` (float32 numpy semantics) |
+| `build_property_models_randomised_depth` | per layer above `first_random_lyr`: random layer shift ±`layershiftsamples` and per-property shifts ±`RPshiftsamples`; forward-fill zeros at the base | keyed shifts (§3.3); forward-fill ported |
+| `calculate_sands` + `EndMemberMixing` | sand (brine/oil/gas trend by closure fluid) mixed with shale by net-to-gross: inverse velocity (default) or Backus moduli | `mix_f32`, both methods, bit-exact (§4) |
+| `create_random_net_over_gross_map` | opensimplex fBm per sand layer, rescaled to U(0.45, 0.9) mean and U(0.01, 0.05) sd | keyed value-noise fBm with the same rescaling (§3.2) |
+| closures → oil/gas masks | fluid per closure selects the trend set (no Gassmann in legacy) | 2-D closures per sand layer (§3.4) |
+| `water_properties` | 1.028 / 1500 / 1000 | same |
 
-## 3. Implementation plan (this PR, held, not merged)
+## 3. Design
 
-A `RockPhysicsConfig` (off by default; `E2eConfig` field, CLI `--rock-physics legacy`):
+`RockPhysicsConfig` is an `E2eConfig` field. `elastic_model(cfg, labels, shape)`
+returns an `ElasticModel`:
 
-1. **Legacy depth model.** A per-column pass over the labels:
-   - seabed = first non-water sample;
-   - each label run gets `(run base − seabed)·digi`, constant over the run;
-   - water gets the legacy water properties.
+- **`LegacyToy`**: master's 1-D `[Vec<f64>; 9]` trends and the old fuse
+  kernels, untouched. It is selected by `legacy_toy_depth: true`, i.e. CLI
+  `--legacy-toy-depth`.
+- **`Rpm`** (default): per-label layer models, per-sand-layer N/G maps and
+  closures, and keyed shifts. The properties of a trace are computed per
+  column, from that column's labels and the small per-(i, j) maps, and
+  written into `(ti, tj, nk)` tile buffers. `synthoseis-gpu` then fuses them:
+  `fuse_props_tile_cpu`, or WGSL "mode 1" under `--gpu`.
 
-   It is a pure function of one label column, so every tile, halo, strip
-   worker and process computes identical bits with no extra memory beyond
-   one column. The fuser takes a per-column property provider instead of
-   the 1-D `[Vec<f64>; 9]` trends. `props_f32` and the WGSL buffer keep the
-   current trends when the config is off, so **off is bit-identical to
-   master**.
-2. **End-member mixing.** Net-to-gross mixing (inverse-velocity default,
-   Backus optional), ported from `RockPropertyModels.EndMemberMixing` with
-   golden fixtures from the real Python class.
-3. **Randomised depth shifts.** Per-layer shifts from a counter-based RNG
-   keyed by (seed, layer id, property), the same Philox approach as the
-   noise. Deterministic and tiling-invariant; legacy parity is statistical
-   (distribution of shifts and of Vp/Vs/ρ per layer).
-4. **Fluids.** Oil/gas trend selection wherever closures mark a fluid (the
-   closure fluid labels are already ported in `synthoseis-closures`).
-   There is no Gassmann step, as in legacy.
+Everything a tile needs is a pure function of (config, labels, column). So
+chunk shape, halos, strip workers, OS processes and geometry-once all give
+identical bits. The only extra memory is O(ni·nj) maps per sand layer plus
+one tile of properties (counted in the overlap peak-bytes accounting).
 
-Parity plan:
-- the depth model is bit-exact against legacy on the same labels;
-- mixing gets kernel goldens;
-- labels are unchanged (IoU = 1);
-- angle stacks use the existing parity harness against a legacy-model numpy
-  rebuild, plus statistical checks where legacy is random.
+CLI flags:
 
-Invariance tests reuse the chunk / worker / process / geometry-once matrix
-of `noise_pipeline.rs`. MSRV 1.83.
+| flag | effect |
+|---|---|
+| `--legacy-toy-depth` | master 10f4dcd model |
+| `--mixing inverse-velocity\|backus` | N/G mixing method |
+| `--net-to-gross X` | constant N/G instead of legacy maps |
+| `--first-random-layer N` | random depth shifts for legacy layers > N (default 20, as in the example config) |
+| `--no-fluids` | brine everywhere |
 
-## 4. Decisions needed
+The custom flags are rejected (exit 2) together with `--legacy-toy-depth`.
+Multi-process children receive the same flags.
 
-- **Default fix.** Should the corrected depth model become the default?
-  It changes every angle-stack output. The alternative is to keep master
-  behaviour behind a `legacy`/`toy` switch, as with the noise seabed fix.
-- **Depth scale.** Should `DEPTH_PER_SAMPLE` become `digi` (4 m), or should
-  the toy cubes be treated as sub-sampled (for example `digi × infill`)? It
-  sets how deep a given `nk` reaches.
+### 3.1 Depth (4 m per sample, per-layer TVDML)
+
+Label `n` spans horizon interval `[z_n, z_{n+1})` of the toy maps. Its depth
+is legacy's `(f32(z_{n+1}) − f32(z_0)) × digi`, computed in f32 exactly like
+the float32 legacy cubes. The water column (label 255 above the seabed) gets
+depth 0 and the water properties. Unfilled samples below the deepest horizon
+are forward-filled like legacy `fix_zero_values_at_base`.
+
+On faulted cubes the run is shifted by the observed integer throw
+`(run end − floor(z_{n+1})) − seabed shift` (§5).
+
+Lithology alternates by interval: even intervals are shale and odd are sand,
+with sand mixed with shale by N/G.
+
+### 3.2 Net-to-gross maps
+
+Per sand layer: keyed value-noise fBm (lacunarity 1.9, persistence 0.5,
+9 octaves). It is rescaled like legacy to mean ~ U(0.45, 0.9) and
+sd ~ U(0.01, 0.05), then clipped to [0, 1].
+
+Legacy uses opensimplex, which has no stable cross-language stream. Parity
+is therefore statistical, on the real `create_random_net_over_gross_map`
+over 200 seeds:
+
+| | Rust | legacy |
+|---|---|---|
+| mean | 0.678 | 0.687 |
+| sd | 0.0274 | 0.0283 |
+| lag-1 autocorrelation | 0.970 | 0.972 |
+| range | [0.45, 0.9] | [0.45, 0.9] |
+
+### 3.3 Random depth shifts
+
+For each (seed, layer, property), a splitmix counter draw replaces
+`np.random.uniform` / `triangular`:
+
+- the default half ranges are `triangular(35, 75, 125)` (layer) and
+  `triangular(5, 11, 20)` (property);
+- shifts apply to legacy layer `L + 1 > first_random_layer`;
+- the shifted index uses numpy's `clip(0, nk − 10)` with negative wrap.
+
+The shift PMF and the half-range distributions match legacy draws; see
+`random_parts_match_legacy_statistics`.
+
+### 3.4 Fluids (closures → trend selection)
+
+For each sand layer, closures are found on the post-fault top-of-layer
+surface:
+
+1. A priority-flood fill from the map boundary gives the spill depth.
+2. Connected components give the closures.
+3. The contact is `min(spill, crest + max_column_m / digi)`.
+4. The fluid (brine/oil/gas, uniform) is keyed by seed, layer and closure
+   rank.
+5. Closures smaller than `min_closure_voxels` (500, as in legacy) stay
+   brine.
+
+Voxels above the contact use the oil or gas sand trend. There is no
+Gassmann step, as in legacy. `dome_closure_selects_fluid_above_contact`
+checks crest, spill point, contact, fluid and the properties above and
+below the contact.
+
+## 4. Parity with legacy
+
+Fixture: `tests/fixtures/generate_rock_physics.py` calls the **real** legacy
+`Faults.build_faulted_property_geomodels` and
+`SeismicVolume.build_property_models_randomised_depth` (recording the
+shifts) on an 8×6×48 cube with 3 layers, oil and gas masks, N/G maps and
+pure-shale columns. It writes `tests/fixtures/rock_physics.json`
+(run-length encoded).
+
+| check | result |
+|---|---|
+| depth model vs legacy `faulted_depth` | **1903 / 1903 voxels bit-identical** where both assign the same layer. Layer agreement is 89.8 % of legacy sediment voxels: Rust labels `[ceil z_n, floor z_{n+1})` with a one-sample 255 gap at non-integer horizons, while legacy rounds. The labels are master's and unchanged. |
+| properties, inverse velocity | **2304 voxels × (ρ, Vp, Vs) bit-identical** (trends, shifts, water, brine/oil/gas sand mixing, base forward-fill) |
+| properties, Backus | **2304 voxels × 3 bit-identical** |
+| N/G maps, shifts, fluid choice | statistical (§3.2, §3.3; fluid frequencies uniform over 3) |
+| `--legacy-toy-depth` vs master 10f4dcd | bit-identical: 5 library hashes (labels, angle stacks 15° / 30°, raw reflectivity, filters + noise, `tiny(42)`) and 3 CLI store hashes (plain, faults + bandpass + noise, multi-process) |
+
+**Float32 and AVX-512.** Legacy builds float32 cubes with numpy. The Rust
+kernels reproduce numpy's float32 semantics:
+
+- coefficients are rounded to f32;
+- `z**2` is `z*z`;
+- `z**3` is `powf`;
+- operations follow the same order.
+
+The golden is generated with numpy's portable dispatch
+(`NPY_DISABLE_CPU_FEATURES` = AVX-512 groups). A probe with AVX-512 SVML
+enabled shows the raw `z**3` differs by up to 1 ULP in about 21 % of values,
+but after ρ rounding there are **0 mismatches** on ρ, Vp and Vs.
+
+## 5. Faulted cubes: the approximation
+
+Legacy faults the age cube, **re-picks the horizon depths from the faulted
+age column**, and then computes per-layer TVDML from those faulted horizons,
+which have sub-sample throws.
+
+The Rust default avoids a second global pass. It takes the unfaulted
+interval depth from the maps and adds the integer throw observed in the
+faulted label run of that column.
+
+The reference re-implements legacy exactly: `horizon_depth_from_age` on the
+Rust-faulted age cube. It matches the legacy fault fixture's re-picked
+horizons to 5.1e-5 samples. On the 4 faulted cases of
+`tests/fixtures/fault_cubes.json`, over 85,143 voxels where both assign the
+same layer (73.7 % of legacy sediment):
+
+| metric | label-run approximation | naive "fault the depth cube" |
+|---|---|---|
+| mean \|Δz\| | **0.90 m** | 9.72 m |
+| p50 / p95 / p99 | 0.07 / 4.80 / 7.61 m | — |
+| max | 15.95 m | 101.05 m |
+| exact | 36.4 % | — |
+| within one sample (4 m) | 93.5 % | — |
+
+The residual comes from rounding the throw to whole samples, and from runs
+truncated at a fault, which reach up to ~4 samples. Replicating legacy
+exactly would need the faulted age cube and a horizon re-pick per column.
+That is possible per column but doubles the fault work. Deferred.
+
+## 6. Invariance, GPU and features on top
+
+- `default_model_invariant_to_tiling_workers_and_paths` compares exact bits
+  for 3 configurations:
+  - "rich": Backus, random shifts on every layer, closures enabled,
+    bandpass + lateral filter + noise, 3 faults;
+  - plain default with 2 faults;
+  - the legacy switch.
+
+  Each is run across chunks 1×1, 5×7, full and 3×20×16; the classic path;
+  streaming and overlapped streaming at 2 chunk shapes; strip-stitch 2, 3
+  and 4; multi-process 1, 2 and 3; and geometry-once 0/15/30 against the
+  per-angle runs.
+- The CLI tests check that multi-process with model flags equals single
+  process, and that `--legacy-toy-depth` equals the master stores.
+- Filters (bandpass, lateral, `--keep-ricker`) and noise run on top of
+  both models.
+- **GPU.** `--gpu` fuses the default model's property tiles in WGSL (mode
+  1). The mode-1 output is bit-identical to mode 0 (trends) for the same
+  properties. Two WGSL fixes came with it:
+  1. **The WGSL Zoeppritz now mirrors the CPU/legacy kernel.** Legacy
+     `zoeppritz_kernel.py` / `tests/_zoeppritz_reference.py` use
+     `aa + det * ct / vp1 * cp2 / vs2` where the textbook (bruges) has `d`.
+     The CPU port kept legacy; the WGSL used `d`. At 30° over a water /
+     sediment contrast the backends differed by 2.9e-2 (bruges agrees with
+     the old WGSL).
+  2. **Exact pre-critical sin/cos(asin x) identities and a host-side angle
+     sine/cosine.** WGSL only bounds `sin`, `cos`, `log` and `atan2` to
+     ~2^-11.
+
+  GPU vs CPU max |Δ| on the demo cube (llvmpipe) is now **1.9e-7**
+  (15° reflectivity and stack), and at most 4.9e-7 in the new
+  `parity_props_tile` test. It was 6.6e-3 to 2.9e-2 before.
+
+## 7. Reflectivity before / after
+
+64×64×128, seed 7, 4 faults, raw 15° reflectivity:
+
+| model | min | max | mean | \|r\| > 1 | non-zero |
+|---|---|---|---|---|---|
+| before: master toy (`--legacy-toy-depth`) | −16.13 | 0.119 | −0.0485 | 0.40 % | 99.2 % |
+| after: default (inverse velocity) | 0 | 0.466 | 0.00427 | 0 | 1.56 % |
+| after: Backus | 0 | 0.466 | 0.00417 | 0 | 1.56 % |
+
+The toy geometry has 3 labels, so there are 2 interfaces per trace: the
+seabed and one shale/sand boundary. Both are positive.
+
+Figures come from `examples/rock_physics_demo.rs` and
+`examples/plot_rock_physics_demo.py`:
+
+- `rock_physics_reflectivity.png`
+- `rock_physics_angle_stacks.png`
+- `rock_physics_trends.png`
+- `reflectivity_rootcause_before_after.png`
+
+## 8. Deferred / not replicated
+
+- Salt, the `rpm_scaling_factors` multipliers, `partial_voxels`
+  (fraction-weighted depth), `variable_shale_ng`, and the Poisson-ratio
+  clips.
+- 3-D closures with fault seals. Closures here are 2-D spill analysis on the
+  post-fault surface per sand layer. The toy geometry is planar and forms
+  no closures, so fluids only trigger on real (domed or faulted-trap)
+  horizons.
+- Legacy's deepest-layer skip and its below-base water fill. Rust
+  forward-fills instead.
+- The exact faulted re-pick (§5).
+- The textbook Zoeppritz term. Both backends keep the legacy `det` form
+  (decision below).
+- The noise statistics fixture (`noise_pipeline.rs`) was generated on
+  master reflectivity, so it stays pinned to `--legacy-toy-depth`.
+- Python bindings (`synthoseis-py`) do not expose the rock-physics options
+  yet. They use the default model.
+
+## 9. Decisions for Guillermo
+
+1. **Zoeppritz `det` vs `d`.** Should the legacy/CPU kernel be fixed to the
+   textbook form? That changes every non-zero-angle output and breaks
+   legacy parity.
+2. **Richer toy geometry.** The default toy now yields 2 interfaces per trace
+   and no closures. Should a domed or multi-layer toy horizon set be added,
+   so that shifts (default `first_random_layer` 20) and fluids actually
+   trigger?
+3. **Exact faulted depth (§5).** Is a mean error of 0.9 m acceptable, or
+   should the per-column re-pick be implemented?
