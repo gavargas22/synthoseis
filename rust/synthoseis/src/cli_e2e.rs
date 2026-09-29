@@ -245,12 +245,17 @@ fn print_filter_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
     );
     if let Some(db) = fc.noise.snr_db {
         println!(
-            "noise: snr={db} dB, seed={}, weights={} (added to raw reflectivity before wavelet/bandpass)",
+            "noise: snr={db} dB, seed={}, weights={}, data_std_cutoff={} (added to raw reflectivity before wavelet/bandpass)",
             fc.noise.seed.unwrap_or(cfg.seed),
             if fc.noise.legacy_angle_weights {
                 "legacy-degrees"
             } else {
                 "radians"
+            },
+            if fc.noise.legacy_seabed {
+                "legacy-0.84-seabed"
+            } else {
+                "seabed"
             }
         );
     }
