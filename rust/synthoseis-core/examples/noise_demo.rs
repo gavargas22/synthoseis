@@ -62,6 +62,7 @@ fn main() {
     let angles = [5.0, 15.0, 25.0];
 
     let base = E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Planar,
         seed,
         inline_count: ni,
         crossline_count: nj,

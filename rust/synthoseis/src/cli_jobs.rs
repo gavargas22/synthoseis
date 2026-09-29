@@ -20,6 +20,7 @@ pub fn maybe_run_worker(
     samples: usize,
     chunk_shape: Option<[usize; 3]>,
     rock: &synthoseis_core::RockPhysicsConfig,
+    geometry: synthoseis_core::ToyGeometry,
 ) -> bool {
     let Some(wid) = worker_id else {
         return false;
@@ -64,10 +65,12 @@ pub fn maybe_run_worker(
                     store_path: None,
                     chunk_shape: None,
                     rock_physics: Default::default(),
+                    geometry: Default::default(),
                 },
             ))
         }),
         rock_physics: rock.clone(),
+        geometry,
     };
     let stats = run_worker_partition(&cfg, &plan, wid, &store_path).unwrap_or_else(|e| {
         eprintln!("worker {wid} failed: {e}");
@@ -114,6 +117,7 @@ pub fn maybe_write_partition_plan(
                     store_path: None,
                     chunk_shape: None,
                     rock_physics: Default::default(),
+                    geometry: Default::default(),
                 },
             )[0]
         });
@@ -186,6 +190,7 @@ pub fn maybe_run_multiprocess(
     samples: usize,
     chunk_shape: Option<[usize; 3]>,
     rock: &synthoseis_core::RockPhysicsConfig,
+    geometry: synthoseis_core::ToyGeometry,
 ) -> bool {
     if !multiprocess {
         return false;
@@ -213,6 +218,7 @@ pub fn maybe_run_multiprocess(
                 store_path: None,
                 chunk_shape: None,
                 rock_physics: Default::default(),
+                geometry: Default::default(),
             },
         ))
     });
@@ -226,6 +232,7 @@ pub fn maybe_run_multiprocess(
         store_path: Some(store_path.clone()),
         chunk_shape: resolved,
         rock_physics: rock.clone(),
+        geometry,
     };
     let (store_path, plan, _prep) = prepare_multiprocess_store(&cfg, workers, resolved)
         .unwrap_or_else(|e| {
@@ -263,7 +270,9 @@ pub fn maybe_run_multiprocess(
             .arg(seed.to_string())
             .arg("--workers")
             .arg(workers.to_string())
-            .args(rock_physics_args(rock));
+            .args(rock_physics_args(rock))
+            .arg("--toy-geometry")
+            .arg(geometry.as_str());
         if let Some([ci, cj, ck]) = resolved {
             cmd.arg("--chunk-i")
                 .arg(ci.to_string())
@@ -307,6 +316,7 @@ pub fn maybe_run_multiprocess(
         report.parity.angle_max_abs
     );
     crate::cli_e2e::print_rock_summary(&cfg.rock_physics);
+    crate::cli_e2e::print_geometry_summary(&cfg);
     if let Some(path) = report.store_path {
         println!(
             "wrote shared MDIO labels+angle-stack at {} (multi-process JobPartitionPlan, parity vs single-worker ok)",

@@ -380,6 +380,7 @@ fn dome_closure_selects_fluid_above_contact() {
 
 fn cfg(seed: u64, shape: [usize; 3], chunks: [usize; 3], faults: usize) -> E2eConfig {
     E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Planar,
         seed,
         inline_count: shape[0],
         crossline_count: shape[1],
@@ -487,11 +488,16 @@ fn rich(chunks: [usize; 3]) -> E2eConfig {
 /// faults) is bit-identical across chunk shapes, the classic path,
 /// streaming, overlap, strip-stitch 2/3/4, multi-process 1/2/3 and
 /// geometry-once; the legacy switches (`--legacy-toy-depth`,
-/// `--legacy-zoeppritz`) too.
+/// `--legacy-zoeppritz`) too, and the layered default toy geometry (with
+/// default shifts active in the 160-sample case).
 #[test]
 fn default_model_invariant_to_tiling_workers_and_paths() {
     let dir = tempdir().unwrap();
     let read = |p: &std::path::Path| bits(&MdioStore::open(p).unwrap().read_volume().unwrap());
+    let layered = |c: E2eConfig| E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Layered,
+        ..c
+    };
     let legacy_zoeppritz = |c: E2eConfig| E2eConfig {
         rock_physics: RockPhysicsConfig { legacy_zoeppritz: true, ..c.rock_physics.clone() },
         ..c
@@ -501,6 +507,10 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
         cfg(4, [24, 20, 48], [8, 5, 48], 2),
         legacy(rich([8, 5, 64])),
         legacy_zoeppritz(rich([8, 5, 64])),
+        layered(rich([8, 5, 64])),
+        // Plain default model on the layered default geometry, deep enough
+        // (> 20 layers) for the default random depth shifts.
+        layered(cfg(4, [24, 20, 160], [8, 5, 160], 2)),
     ]
     .into_iter()
         .enumerate()
@@ -510,6 +520,18 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
             store_path: store,
             ..base.clone()
         };
+        if n == 5 {
+            let (labels, shape) = generate_labels(&base);
+            let ElasticModel::Rpm(m) = elastic_model(&base, &labels, shape) else {
+                panic!()
+            };
+            assert!(
+                m.layers
+                    .iter()
+                    .any(|l| l.interval >= 20 && l.shifts.layer != 0),
+                "default shifts active"
+            );
+        }
         let (reference, _) = generate_chunked(&base);
         let want = bits(&reference.angle_stack);
         for chunks in [[1, 1, base.samples], [5, 7, base.samples], [24, 20, base.samples], [3, 20, 16]] {

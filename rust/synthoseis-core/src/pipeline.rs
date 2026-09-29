@@ -13,14 +13,13 @@
 use std::path::{Path, PathBuf};
 
 use synthoseis_closures::{filter_labels_by_min_voxels, relabel_consecutive};
-use synthoseis_geo::{
-    enforce_nonnegative_thicknesses, eval_plane, fill_layer_labels, fit_plane_lsq,
-};
+use synthoseis_geo::fill_layer_labels;
 use synthoseis_io::{CreateConfig, DeliverableWriter, Dimension, MdioStore};
 use synthoseis_seismic::{apply_wavelet_traces, compute_rfc_volumes_form, ricker};
 
 use crate::parity::{self, ParityReport};
 pub use crate::rock_physics::RockPhysicsConfig;
+pub use crate::toy_geometry::ToyGeometry;
 
 /// Default tiny-cube edge length used by the e2e smoke path.
 pub const TINY_DIM: usize = 8;
@@ -65,6 +64,10 @@ pub struct E2eConfig {
     /// [`RockPhysicsConfig::legacy_toy`] reproduces master 10f4dcd bit for
     /// bit. See `docs/rock-physics-port.md`.
     pub rock_physics: RockPhysicsConfig,
+    /// Toy horizon geometry: layered dome (default) or the master planar
+    /// stack. `rock_physics.legacy_toy_depth` forces planar. See
+    /// [`crate::toy_geometry`] and `docs/layered-toy-geometry.md`.
+    pub geometry: ToyGeometry,
 }
 
 /// Post-convolution filters applied to each fused angle-stack tile.
@@ -260,11 +263,22 @@ impl Default for E2eConfig {
             faults: FaultConfig::default(),
             filters: FilterConfig::default(),
             rock_physics: RockPhysicsConfig::default(),
+            geometry: ToyGeometry::default(),
         }
     }
 }
 
 impl E2eConfig {
+    /// Geometry actually used: planar when `legacy_toy_depth` is set (the
+    /// master 10f4dcd guarantee), else [`E2eConfig::geometry`].
+    pub fn effective_geometry(&self) -> ToyGeometry {
+        if self.rock_physics.legacy_toy_depth {
+            ToyGeometry::Planar
+        } else {
+            self.geometry
+        }
+    }
+
     pub fn tiny(seed: u64) -> Self {
         Self {
             seed,
@@ -299,33 +313,8 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     let [ni, nj, nk] = cfg.shape();
     assert!(nk >= 2, "need at least 2 samples for reflectivity");
 
-    // --- geo: two dipping planes from seed-derived control points ---
-    let seed_f = cfg.seed as f64;
-    let a0 = 0.05 + (seed_f % 7.0) * 0.01;
-    let b0 = 0.03 + ((seed_f / 3.0) % 5.0) * 0.01;
-    let c0 = 0.5;
-    let a1 = a0 * 0.5;
-    let b1 = b0 * 0.5;
-    let c1 = (nk as f64) * 0.55;
-
-    // Fit planes from three points each (exercises fit_plane_lsq), then eval.
-    let pts0 = [[0.0, 0.0, c0], [1.0, 0.0, a0 + c0], [0.0, 1.0, b0 + c0]];
-    let pts1 = [[0.0, 0.0, c1], [1.0, 0.0, a1 + c1], [0.0, 1.0, b1 + c1]];
-    let [fa, fb, fc] = fit_plane_lsq(&pts0);
-    let [ga, gb, gc] = fit_plane_lsq(&pts1);
-    let z0 = eval_plane(ni, nj, fa, fb, fc);
-    let z1 = eval_plane(ni, nj, ga, gb, gc);
-    // Bottom horizon: flat near base.
-    let z2 = vec![(nk as f64) - 0.5; ni * nj];
-
-    let nh = 3usize;
-    let mut maps = vec![0.0f64; ni * nj * nh];
-    for n in 0..(ni * nj) {
-        maps[n * nh] = z0[n];
-        maps[n * nh + 1] = z1[n];
-        maps[n * nh + 2] = z2[n];
-    }
-    enforce_nonnegative_thicknesses(&mut maps, [ni, nj, nh]);
+    // --- geo: toy horizon stack (layered dome by default, planar master) ---
+    let (maps, nh) = crate::pipeline_stream::toy_horizon_maps(cfg);
     let mut labels = fill_layer_labels(&maps, [ni, nj, nh], nk);
 
     // --- closures: treat unset as background, relabel, drop tiny bodies ---

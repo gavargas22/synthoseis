@@ -57,6 +57,8 @@ jobs:
         run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --store /tmp/rp.mdio && cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-toy-depth --store /tmp/rp-legacy.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --mixing backus --first-random-layer 0 --shape 24,20,64 --store /tmp/rp-backus-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --mixing backus --store /tmp/rp-mp.mdio
       - name: zoeppritz smoke (textbook default, --legacy-zoeppritz cpu + gpu + multiprocess)
         run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-zoeppritz --store /tmp/zl.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --legacy-zoeppritz --store /tmp/zl-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --store /tmp/zx-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --legacy-zoeppritz --store /tmp/zl-mp.mdio
+      - name: toy geometry smoke (layered default + planar, single + multiprocess + gpu)
+        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,192 --store /tmp/tl.mdio && cargo run -p synthoseis -- run --e2e --chunked --toy-geometry planar --shape 24,20,64 --store /tmp/tp.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --toy-geometry layered --store /tmp/tl-mp.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,160 --store /tmp/tl-gpu.mdio
 
   msrv:
     name: MSRV (Rust 1.83)

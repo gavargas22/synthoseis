@@ -240,8 +240,11 @@ That is possible per column but doubles the fault work. Deferred.
 | after: default (inverse velocity) | 0 | 0.466 | 0.00427 | 0 | 1.56 % |
 | after: Backus | 0 | 0.466 | 0.00417 | 0 | 1.56 % |
 
-The toy geometry has 3 labels, so there are 2 interfaces per trace: the
-seabed and one shale/sand boundary. Both are positive.
+The planar toy geometry (the default when these numbers were taken, now
+`--toy-geometry planar`) has 3 labels, so there are 2 interfaces per trace:
+the seabed and one shale/sand boundary. Both are positive. The layered
+default has ~45 layers on 256 samples (31 % non-zero reflectivity at 15°);
+see [layered-toy-geometry.md](layered-toy-geometry.md).
 
 Figures come from `examples/rock_physics_demo.rs` and
 `examples/plot_rock_physics_demo.py`:
@@ -257,9 +260,9 @@ Figures come from `examples/rock_physics_demo.rs` and
   (fraction-weighted depth), `variable_shale_ng`, and the Poisson-ratio
   clips.
 - 3-D closures with fault seals. Closures here are 2-D spill analysis on the
-  post-fault surface per sand layer. The toy geometry is planar and forms
-  no closures, so fluids only trigger on real (domed or faulted-trap)
-  horizons.
+  post-fault surface per sand layer. The planar toy geometry forms no
+  closures; the layered default (a dome) does, see
+  [layered-toy-geometry.md](layered-toy-geometry.md).
 - Legacy's deepest-layer skip and its below-base water fill. Rust
   forward-fills instead.
 - The exact faulted re-pick (§5).
@@ -276,9 +279,9 @@ Figures come from `examples/rock_physics_demo.rs` and
 1. ~~**Zoeppritz `det` vs `d`.**~~ Decided (2026-09-28): fixed, default
    on, `--legacy-zoeppritz` restores the typo; `--legacy-toy-depth`
    implies it. See [zoeppritz-fix.md](zoeppritz-fix.md).
-2. **Richer toy geometry.** The default toy now yields 2 interfaces per trace
-   and no closures. Should a domed or multi-layer toy horizon set be added,
-   so that shifts (default `first_random_layer` 20) and fluids actually
-   trigger?
+2. ~~**Richer toy geometry.**~~ Done: the default toy geometry is now a
+   domed, many-layer stack (`--toy-geometry layered`) where the default
+   shifts and closure fluids trigger; `--toy-geometry planar` keeps the
+   3-label master geometry. See [layered-toy-geometry.md](layered-toy-geometry.md).
 3. **Exact faulted depth (§5).** Is a mean error of 0.9 m acceptable, or
    should the per-column re-pick be implemented?

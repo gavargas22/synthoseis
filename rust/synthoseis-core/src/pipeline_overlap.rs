@@ -212,6 +212,7 @@ mod tests {
     fn assert_overlap(shape: [usize; 3], chunks: [usize; 3], seed: u64) {
         let dir = tempdir().unwrap();
         let cfg = E2eConfig {
+            geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
             seed,

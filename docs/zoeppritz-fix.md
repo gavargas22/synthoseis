@@ -25,7 +25,7 @@ the seabed, gas sands and post-critical angles.
 |---|---|---|---|
 | depth / rock physics | corrected model | corrected model | master 10f4dcd toy |
 | Zoeppritz | textbook (`d`) | legacy (`det`) | legacy (`det`, implied) |
-| reproduces | — | master 33a3a93 bit for bit | master 10f4dcd bit for bit |
+| reproduces | — | master 33a3a93 bit for bit (add `--toy-geometry planar` once the layered default lands) | master 10f4dcd bit for bit |
 
 - `synthoseis_seismic::ZoeppritzForm { Exact (default), Legacy }`,
   `zoeppritz_pp_form`, `zoeppritz_pp_complex`, `zoeppritz_pp_exact`,

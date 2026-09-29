@@ -5,9 +5,7 @@ use synthoseis_closures::{filter_labels_by_min_voxels, relabel_consecutive};
 use synthoseis_geo::faults::{
     sample_random_faults, FaultModel, FaultTile, RandomFaultConfig, ReachMode, Seabed,
 };
-use synthoseis_geo::{
-    enforce_nonnegative_thicknesses, eval_plane, fill_layer_labels, fit_plane_lsq,
-};
+use synthoseis_geo::fill_layer_labels;
 use synthoseis_io::{CreateConfig, Dimension, MdioStore};
 use synthoseis_rpm::RpmExampleTrends;
 use synthoseis_seismic::ricker;
@@ -105,43 +103,19 @@ pub fn generate_labels(cfg: &E2eConfig) -> (Vec<u8>, [usize; 3]) {
     (labels, [ni, nj, nk])
 }
 
-/// Toy horizon stack `(ni, nj, nh)` shared by label generation and the fault
-/// model's seabed (top horizon).
+/// Toy horizon stack `(ni, nj, nh)` shared by label generation, the fault
+/// model's seabed (top horizon) and the rock-physics depth model; see
+/// [`crate::toy_geometry`]. `--legacy-toy-depth` always uses the planar
+/// master geometry.
 pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
-    let [ni, nj, nk] = cfg.shape();
-    let seed_f = cfg.seed as f64;
-    let a0 = 0.05 + (seed_f % 7.0) * 0.01;
-    let b0 = 0.03 + ((seed_f / 3.0) % 5.0) * 0.01;
-    let c0 = 0.5;
-    let a1 = a0 * 0.5;
-    let b1 = b0 * 0.5;
-    let c1 = (nk as f64) * 0.55;
-
-    let pts0 = [
-        [0.0, 0.0, c0],
-        [1.0, 0.0, a0 + c0],
-        [0.0, 1.0, b0 + c0],
-    ];
-    let pts1 = [
-        [0.0, 0.0, c1],
-        [1.0, 0.0, a1 + c1],
-        [0.0, 1.0, b1 + c1],
-    ];
-    let [fa, fb, fc] = fit_plane_lsq(&pts0);
-    let [ga, gb, gc] = fit_plane_lsq(&pts1);
-    let z0 = eval_plane(ni, nj, fa, fb, fc);
-    let z1 = eval_plane(ni, nj, ga, gb, gc);
-    let z2 = vec![(nk as f64) - 0.5; ni * nj];
-
-    let nh = 3usize;
-    let mut maps = vec![0.0f64; ni * nj * nh];
-    for n in 0..(ni * nj) {
-        maps[n * nh] = z0[n];
-        maps[n * nh + 1] = z1[n];
-        maps[n * nh + 2] = z2[n];
+    match cfg.effective_geometry() {
+        crate::toy_geometry::ToyGeometry::Planar => {
+            crate::toy_geometry::planar_horizon_maps(cfg.seed, cfg.shape())
+        }
+        crate::toy_geometry::ToyGeometry::Layered => {
+            crate::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape())
+        }
     }
-    enforce_nonnegative_thicknesses(&mut maps, [ni, nj, nh]);
-    (maps, nh)
 }
 
 /// Seed stream for fault parameter draws (independent of geology draws).
