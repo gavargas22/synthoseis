@@ -64,10 +64,20 @@ fn noise(snr_db: f64, seed: u64, legacy: bool) -> NoiseConfig {
         snr_db: Some(snr_db),
         seed: Some(seed),
         legacy_angle_weights: legacy,
+        legacy_seabed: false,
     }
 }
 
-/// Noise configs exercised by the invariance tests.
+/// [`noise`] with the exact legacy `data_std` seabed mask.
+fn noise_legacy_seabed(snr_db: f64, seed: u64, legacy: bool) -> NoiseConfig {
+    NoiseConfig {
+        legacy_seabed: true,
+        ..noise(snr_db, seed, legacy)
+    }
+}
+
+/// Noise configs exercised by the invariance tests: default (true seabed
+/// `data_std` cutoff) and legacy-seabed modes.
 fn configs() -> Vec<FilterConfig> {
     vec![
         // Noise only: the Ricker wavelet is kept (no bandpass).
@@ -91,6 +101,16 @@ fn configs() -> Vec<FilterConfig> {
             noise: noise(7.5, 6, true),
             ..FilterConfig::legacy(4.0, 30.0, 1)
         },
+        // Legacy seabed mask, radian weights, legacy chain.
+        FilterConfig {
+            noise: noise_legacy_seabed(10.0, 4, false),
+            ..FilterConfig::legacy(4.0, 30.0, 3)
+        },
+        // Fully legacy noise: degree weights + legacy seabed mask.
+        FilterConfig {
+            noise: noise_legacy_seabed(12.5, 8, true),
+            ..FilterConfig::default()
+        },
     ]
 }
 
@@ -105,6 +125,7 @@ fn noise_off_by_default_is_bit_identical() {
         snr_db: None,
         seed: Some(99),
         legacy_angle_weights: true,
+        legacy_seabed: true,
     };
     assert!(!off.enabled());
     let base = cfg(10, [24, 20, 64], [8, 5, 64], 3);
@@ -172,6 +193,7 @@ fn noise_seeds_and_angles() {
                 snr_db: Some(12.5),
                 seed: s,
                 legacy_angle_weights: false,
+                legacy_seabed: false,
             },
             ..FilterConfig::default()
         },
@@ -290,8 +312,9 @@ fn avg(v: &[f64]) -> f64 {
     v.iter().sum::<f64>() / v.len() as f64
 }
 
-/// Rust noise vs the real legacy `add_weighted_noise` run on the same raw
-/// reflectivity (64 legacy seeds; 16 Rust seeds, spectra from 4).
+/// Rust noise with the legacy seabed mask (`legacy_seabed = true`) vs the
+/// real legacy `add_weighted_noise` run on the same raw reflectivity (64
+/// legacy seeds; 16 Rust seeds, spectra from 4).
 ///
 /// Tolerances (`SE = sd_legacy * sqrt(1/S_legacy + 1/S_rust)`, `sd_legacy` =
 /// legacy seed-to-seed std of the statistic):
@@ -301,6 +324,21 @@ fn avg(v: &[f64]) -> f64 {
 ///   rescales by the sample std, Rust by the analytic std).
 #[test]
 fn noise_statistics_match_legacy() {
+    check_noise_statistics(true);
+}
+
+/// Default mode (`data_std` cutoff at the actual seabed): `data_std` matches
+/// numpy on the same reflectivity with the legacy masking code applied at the
+/// seabed (fixture `seabed_data_std`, relative 1e-6), and the noise has the
+/// legacy statistics rescaled by `seabed_data_std / legacy_data_std` (std,
+/// mean) or unchanged (scale-free: kurtosis, spectrum, correlation), with the
+/// same tolerances as [`noise_statistics_match_legacy`].
+#[test]
+fn noise_statistics_default_seabed() {
+    check_noise_statistics(false);
+}
+
+fn check_noise_statistics(legacy_seabed: bool) {
     let fix: Value = serde_json::from_str(FIXTURE).unwrap();
     let meta = &fix["meta"];
     let shape: Vec<usize> = meta["shape"]
@@ -312,16 +350,49 @@ fn noise_statistics_match_legacy() {
     let [ni, nj, nk] = [shape[0], shape[1], shape[2]];
     let snr_db = meta["snr_db"].as_f64().unwrap();
     let legacy_seeds = meta["legacy_seeds"].as_f64().unwrap();
-    let base = cfg(meta["seed"].as_u64().unwrap(), [ni, nj, nk], [16, 16, nk], 0);
+    let mode_noise = |s: u64, legacy: bool| {
+        if legacy_seabed {
+            noise_legacy_seabed(snr_db, s, legacy)
+        } else {
+            noise(snr_db, s, legacy)
+        }
+    };
+    let base = E2eConfig {
+        filters: FilterConfig {
+            noise: mode_noise(1, false),
+            ..FilterConfig::default()
+        },
+        ..cfg(meta["seed"].as_u64().unwrap(), [ni, nj, nk], [16, 16, nk], 0)
+    };
     let (labels, lshape) = generate_labels(&base);
 
     let data_std = noise_signal_std(&base, &labels, lshape);
     let legacy_std = fix["legacy_data_std"].as_f64().unwrap();
-    eprintln!("data_std rust {data_std:.9e} legacy {legacy_std:.9e}");
-    assert!(
-        (data_std / legacy_std - 1.0).abs() < 1e-6,
-        "data_std rust {data_std:e} legacy {legacy_std:e}"
+    let seabed_std = fix["seabed_data_std"].as_f64().unwrap();
+    let want_std = if legacy_seabed { legacy_std } else { seabed_std };
+    // Legacy reference statistics scale with data_std.
+    let scale = want_std / legacy_std;
+    eprintln!(
+        "legacy_seabed={legacy_seabed}: data_std rust {data_std:.9e} want {want_std:.9e} \
+         (legacy mask {legacy_std:.9e}, seabed {seabed_std:.9e})"
     );
+    assert!(
+        (data_std / want_std - 1.0).abs() < 1e-6,
+        "data_std rust {data_std:e} want {want_std:e}"
+    );
+    // The two cutoffs select different samples on this cube.
+    assert!((seabed_std / legacy_std - 1.0).abs() > 1e-4);
+    let other = E2eConfig {
+        filters: FilterConfig {
+            noise: NoiseConfig {
+                legacy_seabed: !legacy_seabed,
+                ..base.filters.noise.clone()
+            },
+            ..FilterConfig::default()
+        },
+        ..base.clone()
+    };
+    assert_ne!(noise_signal_std(&other, &labels, lshape), data_std);
 
     let angles = [5.0, 15.0, 25.0];
     let rust_seeds = 16u64;
@@ -338,7 +409,7 @@ fn noise_statistics_match_legacy() {
         for s in 1..=rust_seeds {
             let c = E2eConfig {
                 filters: FilterConfig {
-                    noise: noise(snr_db, s, legacy),
+                    noise: mode_noise(s, legacy),
                     ..FilterConfig::default()
                 },
                 ..base.clone()
@@ -370,10 +441,11 @@ fn noise_statistics_match_legacy() {
             let r = &reference["angles"][format!("{a:.1}")];
             let st = &stats[x];
             let (lm, lsd) = mean_sd(&r["mean"]);
+            let (lm, lsd) = (lm * scale, lsd * scale);
             let rm = avg(&st.iter().map(|s| s.mean).collect::<Vec<_>>());
             assert!((rm - lm).abs() <= 5.0 * se(lsd, rs), "{mode} {a} mean {rm:e} vs {lm:e}");
 
-            let (lstd, _) = mean_sd(&r["std"]);
+            let lstd = mean_sd(&r["std"]).0 * scale;
             let rstd: Vec<f64> = st.iter().map(|s| s.std).collect();
             assert!((avg(&rstd) / lstd - 1.0).abs() <= 0.005, "{mode} {a} std {rstd:?} vs {lstd}");
             for v in &rstd {

@@ -18,6 +18,10 @@
 //! - `chain_noise_bp.f32` / `chain_noise_bp_alt.f32`: noise seed 1 + bandpass
 //!   + lateral filter at 15 deg (Ricker skipped), 16x16 vs 5x7 tiles,
 //! - `chain_noise_keep.f32`: same with `keep_ricker` (noise, Ricker, bandpass).
+//!
+//! All noise is normalised with the legacy seabed mask (`legacy_seabed`) so
+//! it can be compared with legacy; `meta.json` records both `data_std`
+//! (legacy mask) and `data_std_seabed` (the default cutoff at the seabed).
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -80,7 +84,21 @@ fn main() {
         .collect();
     write(out.join("seabed.f64"), &seabed);
     let (labels, shape) = generate_labels(&base);
-    let data_std = noise_signal_std(&base, &labels, shape);
+    // Everything here is compared with legacy, so the noise uses the legacy
+    // seabed mask (`legacy_seabed`); `data_std_seabed` is the default cutoff.
+    let legacy_mask = |c: &E2eConfig| E2eConfig {
+        filters: FilterConfig {
+            noise: NoiseConfig {
+                snr_db: Some(snr_db),
+                legacy_seabed: true,
+                ..NoiseConfig::default()
+            },
+            ..FilterConfig::default()
+        },
+        ..c.clone()
+    };
+    let data_std = noise_signal_std(&legacy_mask(&base), &labels, shape);
+    let data_std_seabed = noise_signal_std(&base, &labels, shape);
 
     let t0 = std::time::Instant::now();
     for (mode, legacy) in [("radians", false), ("legacy", true)] {
@@ -93,6 +111,7 @@ fn main() {
                             snr_db: Some(snr_db),
                             seed: Some(s),
                             legacy_angle_weights: legacy,
+                            legacy_seabed: true,
                         },
                         ..FilterConfig::default()
                     },
@@ -110,6 +129,7 @@ fn main() {
             snr_db: Some(snr_db),
             seed: Some(1),
             legacy_angle_weights: false,
+            legacy_seabed: true,
         },
         ..FilterConfig::legacy(low, high, lateral)
     };
@@ -140,7 +160,8 @@ fn main() {
     let meta = format!(
         "{{\"shape\":[{ni},{nj},{nk}],\"seed\":{seed},\"snr_db\":{snr_db},\"noise_seeds\":{seeds},\
          \"angles\":[5.0,15.0,25.0],\"norm_angle_deg\":15.0,\"digi_ms\":4.0,\
-         \"data_std\":{data_std:e},\"low\":{low},\"high\":{high},\"order\":4,\
+         \"data_std\":{data_std:e},\"data_std_seabed\":{data_std_seabed:e},\
+         \"low\":{low},\"high\":{high},\"order\":4,\
          \"lateral\":{lateral},\"chain_noise_seed\":1,\
          \"tiles_16x16_vs_5x7_bit_identical\":{identical},\"t_noise_fields_s\":{:.3},\
          \"t_chain_s\":{:.3}}}",
