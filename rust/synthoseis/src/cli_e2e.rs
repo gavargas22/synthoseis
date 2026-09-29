@@ -292,8 +292,13 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
             let units = synthoseis_core::lithology::closure_units(&full);
             let multi = units.iter().filter(|(a, b)| b - a > 1).count();
             println!(
-                "closures: per sand unit ({} units with closures, {multi} multi-layer)",
-                units.len()
+                "closures: per sand unit ({} units with closures, {multi} multi-layer), {}",
+                units.len(),
+                if rp.closures_unsegmented {
+                    "unsegmented (--closures-unsegmented, master ef2dc42)"
+                } else {
+                    "3D-segmented across faults"
+                }
             );
         }
     }

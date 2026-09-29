@@ -296,6 +296,7 @@ fn lithology_flags_reach_multiprocess_workers() {
         &["--toy-lithology", "alternating"][..],
         &["--toy-geometry", "planar"][..],
         &["--closures-per-layer"][..],
+        &["--closures-unsegmented"][..],
     ] {
         let single = dir.path().join("single.mdio");
         let out = run(&with(&MP[3..], flags), &single);
@@ -320,6 +321,10 @@ fn invalid_lithology_flags_exit_2() {
         (&["--closures-per-layer", "--legacy-toy-depth"], "--closures-per-layer has no effect with --legacy-toy-depth"),
         (&["--closures-per-layer", "--no-fluids"], "--closures-per-layer has no effect with --legacy-toy-depth or --no-fluids"),
         (&["--closures-per-layer", "--toy-geometry", "planar"], "--closures-per-layer has no effect with the planar geometry"),
+        (&["--closures-unsegmented", "--legacy-toy-depth"], "--closures-unsegmented has no effect with --legacy-toy-depth"),
+        (&["--closures-unsegmented", "--no-fluids"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids"),
+        (&["--closures-unsegmented", "--closures-per-layer"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids or --closures-per-layer"),
+        (&["--closures-unsegmented", "--toy-geometry", "planar"], "--closures-unsegmented has no effect with the planar geometry"),
     ] {
         let out = run(&with(PLAIN, bad), &dir.path().join("bad.mdio"));
         assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
@@ -377,4 +382,67 @@ fn closures_per_layer_flag_reproduces_master_8b5988f() {
     );
     assert_eq!(store_hash(&unit), SAND_UNIT);
     assert_ne!(SAND_UNIT, MASTER8B_SAND);
+}
+
+// Angle-stack hashes of stores written by the master ef2dc42 binary
+// (closures per sand unit, unsegmented) with the same flags. PLAIN, RICH,
+// MP and DEEP have no multi-layer closing unit there, so they equal the
+// 8b5988f hashes; SAND is `SAND_UNIT`.
+const MASTEREF_FAULTED_7: u64 = 0x7d71_8e21_c6a7_aaab;
+const MASTEREF_FAULTED_4: u64 = 0xac94_e179_5801_bd3d;
+/// Sandy, thin sand units, 4 faults: fault juxtaposition joins closures of
+/// different units into one compartment.
+const FAULTED: &[&str] = &[
+    "--shape",
+    "32,32,128",
+    "--chunk-i",
+    "16",
+    "--faults",
+    "4",
+    "--sand-layer-fraction",
+    "0.5",
+    "--sand-layer-thickness",
+    "1",
+];
+/// `FAULTED` with 3D segmentation (the default).
+const SEGMENTED_FAULTED_7: u64 = 0xd928_4752_66cc_e43e;
+const SEGMENTED_FAULTED_4: u64 = 0xf41a_4e80_cb38_7735;
+
+/// `--closures-unsegmented` reproduces master ef2dc42 bit for bit; the
+/// segmented default differs once a fault splits or joins closures, and
+/// equals ef2dc42 when it does not.
+#[test]
+fn closures_unsegmented_flag_reproduces_master_ef2dc42() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (name, base, master, segmented_same) in [
+        ("plain", PLAIN, MASTER8B_PLAIN, true),
+        ("rich", RICH, MASTER8B_RICH, true),
+        ("mp", MP, MASTER8B_MP, true),
+        ("deep", DEEP, MASTER8B_DEEP, true),
+        ("sand", SAND, SAND_UNIT, true),
+        ("faulted7", &with(FAULTED, &["--seed", "7"])[..], MASTEREF_FAULTED_7, false),
+        ("faulted4", &with(FAULTED, &["--seed", "4"])[..], MASTEREF_FAULTED_4, false),
+    ] {
+        let un = dir.path().join(format!("{name}-un.mdio"));
+        let out = run(&with(base, &["--closures-unsegmented"]), &un);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("unsegmented (--closures-unsegmented, master ef2dc42)"), "{name}: {stdout}");
+        assert_eq!(store_hash(&un), master, "{name}: --closures-unsegmented vs master ef2dc42");
+        let seg = dir.path().join(format!("{name}-seg.mdio"));
+        let out = run(base, &seg);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("3D-segmented across faults"));
+        assert_eq!(store_hash(&seg) == master, segmented_same, "{name}: segmented vs ef2dc42");
+    }
+    for (seed, want) in [("7", SEGMENTED_FAULTED_7), ("4", SEGMENTED_FAULTED_4)] {
+        let p = dir.path().join(format!("seg{seed}.mdio"));
+        assert!(run(&with(FAULTED, &["--seed", seed]), &p).status.success());
+        assert_eq!(store_hash(&p), want, "segmented faulted seed {seed}");
+        // Tiling does not change the segmented output.
+        let q = dir.path().join(format!("seg{seed}-tiles.mdio"));
+        let tiled = with(&FAULTED[4..], &["--shape", "32,32,128", "--chunk-i", "3", "--chunk-j", "7", "--chunk-k", "16", "--seed", seed]);
+        assert!(run(&tiled, &q).status.success());
+        assert_eq!(store_hash(&q), want, "segmented faulted seed {seed}, tiles");
+    }
 }

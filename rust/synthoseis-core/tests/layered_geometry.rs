@@ -36,8 +36,13 @@ fn demo(seed: u64, shape: [usize; 3], faults: usize) -> E2eConfig {
         chunk_shape: Some([16, 16, shape[2]]),
         faults: FaultConfig::with_count(faults),
         filters: FilterConfig::default(),
-        // Goldens of the layered geometry before the Markov lithology.
-        rock_physics: RockPhysicsConfig { lithology: ToyLithology::Alternating, ..RockPhysicsConfig::default() },
+        // Goldens of the layered geometry before the Markov lithology (and
+        // before 3D closure segmentation, which changes the faulted cube).
+        rock_physics: RockPhysicsConfig {
+            lithology: ToyLithology::Alternating,
+            closures_unsegmented: true,
+            ..RockPhysicsConfig::default()
+        },
         geometry: ToyGeometry::Layered,
     }
 }

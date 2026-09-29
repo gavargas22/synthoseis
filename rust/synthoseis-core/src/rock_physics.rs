@@ -32,6 +32,11 @@
 //!   docs/closures-per-sand-unit.md). The legacy switch
 //!   [`RockPhysicsConfig::closures_per_layer`] (`--closures-per-layer`)
 //!   uses each sand layer's own top instead (master 8b5988f).
+//!   By default closures are segmented in 3D across faults: each 3D
+//!   connected compartment gets its own fluid ([`crate::closure_segments`],
+//!   docs/closure-segmentation-faults.md).
+//!   [`RockPhysicsConfig::closures_unsegmented`] (`--closures-unsegmented`)
+//!   restores master ef2dc42.
 //! * **Zoeppritz.** Textbook PP expression ([`ZoeppritzForm::Exact`]);
 //!   [`RockPhysicsConfig::legacy_zoeppritz`] (`--legacy-zoeppritz`) restores
 //!   the legacy `det` typo bit for bit (master 33a3a93 default output).
@@ -130,6 +135,11 @@ pub struct RockPhysicsConfig {
     /// 8b5988f), instead of on the top of each sand unit with the deepest
     /// unit skipped, as legacy `Closures` does. CLI `--closures-per-layer`.
     pub closures_per_layer: bool,
+    /// Legacy switch: closures per sand unit without 3D segmentation
+    /// (master ef2dc42): one contact per 2D region, and fluids per 2D
+    /// region rather than per 3D compartment. CLI `--closures-unsegmented`.
+    /// See [`crate::closure_segments`].
+    pub closures_unsegmented: bool,
 }
 
 impl Default for RockPhysicsConfig {
@@ -150,6 +160,7 @@ impl Default for RockPhysicsConfig {
             sand_layer_fraction: None,
             sand_layer_thickness: crate::lithology::SAND_LAYER_THICKNESS,
             closures_per_layer: false,
+            closures_unsegmented: false,
         }
     }
 }
@@ -209,7 +220,7 @@ const ROCK_SALT: u64 = 0x80C4_F151_C500_0001;
 const STREAM_HALF_RANGE: u64 = 1;
 const STREAM_SHIFT: u64 = 2;
 const STREAM_NG: u64 = 3;
-const STREAM_FLUID: u64 = 4;
+pub(crate) const STREAM_FLUID: u64 = 4;
 
 #[inline]
 fn key_step(h: u64, p: u64) -> u64 {
@@ -516,7 +527,7 @@ pub fn sand_unit_fluids(
 }
 
 /// First sample and end of the first run of labels in `unit` in `col`.
-fn first_unit_run(col: &[u8], unit: &[bool; 256]) -> Option<(usize, usize)> {
+pub(crate) fn first_unit_run(col: &[u8], unit: &[bool; 256]) -> Option<(usize, usize)> {
     let a = col.iter().position(|&v| unit[v as usize])?;
     let b = col[a..].iter().position(|&v| !unit[v as usize]).map_or(col.len(), |n| a + n);
     Some((a, b))
@@ -705,8 +716,19 @@ impl RpmModel {
         let max_column = rp.max_column_m / rp.depth_step_m;
         let unit_fluid_maps = if rp.closures_per_layer || !rp.fluids {
             Vec::new()
-        } else {
+        } else if rp.closures_unsegmented {
             sand_unit_fluids(labels, shape, &intervals, sand, seed, max_column, rp.min_closure_voxels)
+        } else {
+            crate::closure_segments::segmented_sand_unit_fluids(
+                labels,
+                shape,
+                &intervals,
+                sand,
+                seed,
+                max_column,
+                rp.min_closure_voxels,
+            )
+            .0
         };
         let layers = intervals
             .iter()

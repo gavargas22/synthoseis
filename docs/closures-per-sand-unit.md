@@ -144,10 +144,9 @@ python rust/synthoseis-core/examples/plot_closures_unit_demo.py /tmp/cu OUT_DIR
 - **Legacy `_flood_fill` specifics.** Legacy zeroes a 3-cell border, adds
   the max column near empty picks and drops the 2 % percentile. Rust ports
   only the core `flood_fill_heap`, as before.
-- **3D closure segmentation across faults.** Legacy merges closure voxels
-  into 3D connected components and removes shale-sealed parts. Rust keeps
-  2D 4-connected closures of the post-fault unit top, so a faulted closure
-  may split differently.
+- **3D closure segmentation across faults.** Done in a follow-up; see
+  [closure-segmentation-faults.md](closure-segmentation-faults.md).
+  `--closures-unsegmented` restores this document's behaviour (ef2dc42).
 - **Onlap tops.** `onlap_list - 1` is not ported; the toy geometry has no
   onlaps. Fan overrides are not ported either.
 - **Variable max column height.** Legacy uses `variable_max_column_height`,
