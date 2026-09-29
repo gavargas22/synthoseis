@@ -162,7 +162,7 @@ pub fn run_worker_partition(
     // Each worker rebuilds the (deterministic) fault model and evaluates only
     // its own tiles.
     let faults = fault_model(cfg);
-    let filters = SeismicFilters::from_config(cfg)?;
+    let filters = SeismicFilters::resolve(cfg, &labels, shape)?;
     let (stats, samples) = write_strip_partition(
         store_path,
         &part,

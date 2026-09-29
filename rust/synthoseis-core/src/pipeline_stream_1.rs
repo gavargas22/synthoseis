@@ -78,7 +78,8 @@ pub fn generate_angle_stack_from_labels(
     let trends = depth_trends(nk);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
     stats.observe(wavelet.len() * 8 + 9 * nk * 8);
-    let filters = seismic_filters(cfg);
+    let filters = SeismicFilters::resolve(cfg, labels, shape)
+        .unwrap_or_else(|e| panic!("invalid FilterConfig: {e}"));
 
     let mut angle_stack = vec![0.0f32; ni * nj * nk];
     let ci = chunk[0];

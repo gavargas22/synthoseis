@@ -114,10 +114,11 @@ pub fn run_e2e_geometry_once_seismic_many(
         return Err("angles list must be non-empty".into());
     }
 
-    let filters = SeismicFilters::from_config(cfg)?;
+    SeismicFilters::from_config(cfg)?;
     // One geology pass by construction (parallel tests share GENERATE_LABELS_CALLS,
     // so we do not delta-check the global here).
     let (labels, shape) = generate_labels(cfg);
+    let filters = SeismicFilters::resolve(cfg, &labels, shape)?;
     let labels_generated = 1usize;
 
     let [ni, nj, nk] = shape;

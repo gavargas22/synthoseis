@@ -186,3 +186,92 @@ fn snr_and_hilterman_match_python_goldens() {
         assert!((near + far - 1.0).abs() < 1e-12);
     }
 }
+
+/// Random123 known-answer vectors for Philox4x32-10 (`kat_vectors`).
+#[test]
+fn philox4x32_10_known_answers() {
+    use crate::philox4x32_10;
+    assert_eq!(
+        philox4x32_10([0, 0, 0, 0], [0, 0]),
+        [0x6627_e8d5, 0xe169_c58d, 0xbc57_ac4c, 0x9b00_dbd8]
+    );
+    assert_eq!(
+        philox4x32_10([u32::MAX; 4], [u32::MAX; 2]),
+        [0x408f_276d, 0x41c8_3b0e, 0xa20b_c7c6, 0x6d54_51fd]
+    );
+    assert_eq!(
+        philox4x32_10(
+            [0x243f_6a88, 0x85a3_08d3, 0x1319_8a2e, 0x0370_7344],
+            [0xa409_3822, 0x299f_31d0]
+        ),
+        [0xd16c_fe09, 0x94fd_cceb, 0x5001_e420, 0x2412_6ea1]
+    );
+}
+
+#[test]
+fn laplace_pair_moments_match_unit_laplace() {
+    use crate::{laplace_pair, noise_key, RunningStats};
+    let key = noise_key(42);
+    let n = 400_000u64;
+    let (mut a, mut b) = (RunningStats::default(), RunningStats::default());
+    let (mut a4, mut ab) = (0.0f64, 0.0f64);
+    for g in 0..n {
+        let (x, y) = laplace_pair(key, g);
+        a.push(x);
+        b.push(y);
+        a4 += x.powi(4);
+        ab += x * y;
+    }
+    // Unit Laplace: mean 0, variance 2, E[x^4] = 24; independent pair.
+    for s in [a, b] {
+        assert!(s.mean.abs() < 0.01, "mean {}", s.mean);
+        assert!((s.std() - 2f64.sqrt()).abs() < 0.01, "std {}", s.std());
+    }
+    let kurt = a4 / n as f64 / 4.0;
+    assert!((kurt - 6.0).abs() < 0.2, "kurtosis {kurt}");
+    assert!((ab / n as f64).abs() < 0.02, "corr {}", ab / n as f64);
+    assert_ne!(laplace_pair(noise_key(1), 7), laplace_pair(noise_key(2), 7));
+}
+
+#[test]
+fn running_stats_merge_matches_sequential() {
+    use crate::RunningStats;
+    let xs: Vec<f64> = (0..1000).map(|i| ((i * 37 % 101) as f64 - 50.0) * 0.3).collect();
+    let mut seq = RunningStats::default();
+    xs.iter().for_each(|&x| seq.push(x));
+    let mut merged = RunningStats::default();
+    for part in xs.chunks(77) {
+        let mut p = RunningStats::default();
+        part.iter().for_each(|&x| p.push(x));
+        merged.merge(&p);
+    }
+    let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+    let var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / xs.len() as f64;
+    assert_eq!(seq.count, 1000);
+    assert!((seq.std() - var.sqrt()).abs() < 1e-12);
+    assert!((merged.std() - var.sqrt()).abs() < 1e-12);
+    assert!((merged.mean - mean).abs() < 1e-12);
+}
+
+#[test]
+fn weighted_noise_is_tiling_invariant() {
+    use crate::{hilterman_noise_weights, WeightedNoise};
+    let (w0, w45) = hilterman_noise_weights(15.0);
+    let n = WeightedNoise::new(9, w0, w45, 0.1, 20.0);
+    let shape = [5, 4, 6];
+    let mut whole = vec![0.0f32; 5 * 4 * 6];
+    n.add_to_tile(&mut whole, (0, 5), (0, 4), shape);
+    let mut tile = vec![0.0f32; 2 * 3 * 6];
+    n.add_to_tile(&mut tile, (1, 3), (1, 4), shape);
+    for (di, i) in (1..3).enumerate() {
+        for (dj, j) in (1..4).enumerate() {
+            for k in 0..6 {
+                let a = tile[(di * 3 + dj) * 6 + k];
+                let b = whole[(i * 4 + j) * 6 + k];
+                assert_eq!(a.to_bits(), b.to_bits());
+            }
+        }
+    }
+    // Zero signal std -> zero noise.
+    assert_eq!(WeightedNoise::new(9, w0, w45, 0.0, 20.0).sample(3), 0.0);
+}
