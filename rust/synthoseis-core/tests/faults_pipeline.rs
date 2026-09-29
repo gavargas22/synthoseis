@@ -1,7 +1,7 @@
 //! Pipeline-level fault tests: disabled-by-default bit identity, determinism,
 //! chunk/tiling/worker invariance of `fault_labels`, and MDIO round-trips.
 
-use synthoseis_core::pipeline::{E2eConfig, FaultConfig};
+use synthoseis_core::pipeline::{E2eConfig, FaultConfig, RockPhysicsConfig};
 use synthoseis_core::{
     fault_model, generate_chunked, generate_fault_labels, generate_labels, run_e2e_multiprocess,
     run_e2e_streaming, run_e2e_strip_stitched,
@@ -28,6 +28,16 @@ fn cfg(seed: u64, shape: [usize; 3], chunks: [usize; 3]) -> E2eConfig {
         chunk_shape: Some(chunks),
         faults: FaultConfig::default(),
         filters: Default::default(),
+        rock_physics: Default::default(),
+    }
+}
+
+/// `c` with the master 10f4dcd elastic model (`--legacy-toy-depth`), under
+/// which every pre-rock-physics golden hash stays pinned.
+fn legacy(c: E2eConfig) -> E2eConfig {
+    E2eConfig {
+        rock_physics: RockPhysicsConfig::legacy_toy(),
+        ..c
     }
 }
 
@@ -62,7 +72,7 @@ fn faults_disabled_by_default_is_bit_identical_to_master() {
         ),
     ];
     for (seed, shape, chunks, hl, ha) in golden {
-        let c = cfg(seed, shape, chunks);
+        let c = legacy(cfg(seed, shape, chunks));
         assert!(fault_model(&c).is_none());
         assert!(generate_fault_labels(&c).is_none());
         let (v, _) = generate_chunked(&c);
