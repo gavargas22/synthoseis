@@ -21,6 +21,7 @@
   "numpy": "2.5.3"
  },
  "legacy_data_std": 0.007849921472370625,
+ "seabed_data_std": 0.00782922562211752,
  "legacy_degrees": {
   "angles": {
    "5.0": {
