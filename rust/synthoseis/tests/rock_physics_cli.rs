@@ -295,6 +295,7 @@ fn lithology_flags_reach_multiprocess_workers() {
         &["--sand-layer-fraction", "0.5", "--sand-layer-thickness", "1"][..],
         &["--toy-lithology", "alternating"][..],
         &["--toy-geometry", "planar"][..],
+        &["--closures-per-layer"][..],
     ] {
         let single = dir.path().join("single.mdio");
         let out = run(&with(&MP[3..], flags), &single);
@@ -316,9 +317,64 @@ fn invalid_lithology_flags_exit_2() {
         (&["--sand-layer-fraction", "0.7"], "unreachable"),
         (&["--sand-layer-thickness", "0.5"], "--sand-layer-thickness must be >= 1"),
         (&["--toy-lithology", "fluvial"], "--toy-lithology expects markov or alternating"),
+        (&["--closures-per-layer", "--legacy-toy-depth"], "--closures-per-layer has no effect with --legacy-toy-depth"),
+        (&["--closures-per-layer", "--no-fluids"], "--closures-per-layer has no effect with --legacy-toy-depth or --no-fluids"),
+        (&["--closures-per-layer", "--toy-geometry", "planar"], "--closures-per-layer has no effect with the planar geometry"),
     ] {
         let out = run(&with(PLAIN, bad), &dir.path().join("bad.mdio"));
         assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
         assert!(String::from_utf8_lossy(&out.stderr).contains(msg), "{bad:?}: {out:?}");
     }
+}
+
+// Angle-stack hashes of stores written by the master 8b5988f binary
+// (closures on every sand layer) with the same flags.
+const MASTER8B_PLAIN: u64 = 0x2205_9836_d641_6f98;
+const MASTER8B_RICH: u64 = 0x204c_83fa_48a4_befb;
+const MASTER8B_MP: u64 = 0x2841_1c79_845b_b9a5;
+const MASTER8B_DEEP: u64 = 0xd1a3_74bf_b795_15e5;
+const MASTER8B_SAND: u64 = 0xcd58_f19d_3cf8_f60a;
+/// Two multi-layer sand units close on the dome at this size.
+const SAND: &[&str] = &[
+    "--shape",
+    "32,32,128",
+    "--chunk-i",
+    "16",
+    "--sand-layer-fraction",
+    "0.5",
+    "--sand-layer-thickness",
+    "3",
+];
+/// `SAND` with closures per sand unit (the default).
+const SAND_UNIT: u64 = 0xee90_356c_257c_d617;
+
+/// `--closures-per-layer` reproduces master 8b5988f bit for bit; the
+/// per-unit default differs once a multi-layer sand unit closes.
+#[test]
+fn closures_per_layer_flag_reproduces_master_8b5988f() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (name, base, master) in [
+        ("plain", PLAIN, MASTER8B_PLAIN),
+        ("rich", RICH, MASTER8B_RICH),
+        ("mp", MP, MASTER8B_MP),
+        ("deep", DEEP, MASTER8B_DEEP),
+        ("sand", SAND, MASTER8B_SAND),
+    ] {
+        let pl = dir.path().join(format!("{name}-pl.mdio"));
+        let out = run(&with(base, &["--closures-per-layer"]), &pl);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("closures: per sand layer (--closures-per-layer"), "{name}: {stdout}");
+        assert_eq!(store_hash(&pl), master, "{name}: --closures-per-layer vs master 8b5988f");
+    }
+    let unit = dir.path().join("sand-unit.mdio");
+    let out = run(SAND, &unit);
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("closures: per sand unit (3 units with closures, 2 multi-layer)"),
+        "{stdout}"
+    );
+    assert_eq!(store_hash(&unit), SAND_UNIT);
+    assert_ne!(SAND_UNIT, MASTER8B_SAND);
 }

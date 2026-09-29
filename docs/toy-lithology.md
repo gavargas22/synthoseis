@@ -120,10 +120,9 @@ The 15° stack changes by 79 % relative RMS.
 
 ## Deferred
 
-- **Closures per lithology unit.** Legacy closure analysis works on
-  lithology-unit tops (`Closures.top_lith_indices`, where consecutive sand
-  layers merge). Rust still finds closures on each sand layer's top, so a
-  sand unit that spans 2 layers gets closures on both.
+- ~~**Closures per lithology unit.**~~ Done: see
+  [closures-per-sand-unit.md](closures-per-sand-unit.md). The demo-cube
+  numbers above are per layer (`--closures-per-layer`).
 - **Onlaps and fans.** The legacy overrides are not ported: the layer below
   an onlap surface is shale, and fans are sand wrapped in shale. The toy
   geometry has neither.

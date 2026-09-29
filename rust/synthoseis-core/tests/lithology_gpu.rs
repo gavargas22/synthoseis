@@ -20,16 +20,35 @@ fn layered(seed: u64, shape: [usize; 3], rp: RockPhysicsConfig) -> E2eConfig {
 
 /// GPU fuse path (WGSL when an adapter exists, else the CPU fallback) vs CPU
 /// on the Markov lithology.
+/// Also with closures per sand unit on a multi-layer unit (seed 6, fraction
+/// 0.4, thickness 3; see tests/closure_units.rs).
 #[test]
 fn markov_gpu_matches_cpu() {
-    let c = layered(
-        3,
-        [24, 20, 160],
-        RockPhysicsConfig {
-            sand_layer_fraction: Some(0.4),
-            ..RockPhysicsConfig::default()
-        },
-    );
+    for c in [
+        layered(
+            3,
+            [24, 20, 160],
+            RockPhysicsConfig {
+                sand_layer_fraction: Some(0.4),
+                ..RockPhysicsConfig::default()
+            },
+        ),
+        layered(
+            6,
+            [24, 20, 128],
+            RockPhysicsConfig {
+                sand_layer_fraction: Some(0.4),
+                sand_layer_thickness: 3.0,
+                ..RockPhysicsConfig::default()
+            },
+        ),
+    ] {
+        gpu_vs_cpu(&c);
+    }
+}
+
+fn gpu_vs_cpu(c: &E2eConfig) {
+    let c = c.clone();
     let cpu = synthoseis_core::generate_reflectivity(&c, 30.0);
     synthoseis_gpu::set_prefer_gpu(true);
     let gpu = synthoseis_core::generate_reflectivity(&c, 30.0);
@@ -40,7 +59,8 @@ fn markov_gpu_matches_cpu() {
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
     eprintln!(
-        "markov rfc30 gpu vs cpu: {gap:e} ({})",
+        "markov rfc30 gpu vs cpu (seed {}): {gap:e} ({})",
+        c.seed,
         synthoseis_gpu::backend_status()
     );
     assert!(gap < 1e-5, "{gap}");

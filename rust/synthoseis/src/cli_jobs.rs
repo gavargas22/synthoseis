@@ -173,6 +173,9 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     if rock.legacy_zoeppritz {
         a.push("--legacy-zoeppritz".into());
     }
+    if rock.closures_per_layer {
+        a.push("--closures-per-layer".into());
+    }
     // Planar workers derive `alternating` from `--toy-geometry planar`.
     if rock.lithology == synthoseis_core::ToyLithology::Markov {
         if let Some(f) = rock.sand_layer_fraction {

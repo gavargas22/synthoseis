@@ -25,7 +25,13 @@
 //!   net-to-gross map (inverse velocity by default, Backus optional).
 //! * **Random depth shifts** per layer (and per property), keyed by seed and
 //!   layer, for layers deeper than [`RockPhysicsConfig::first_random_layer`].
-//! * **Fluids** from spill-point closures of each sand layer's post-fault top.
+//! * **Fluids** from spill-point closures on the post-fault top of each sand
+//!   unit (consecutive sand layers, legacy `Closures.top_lith_indices`; the
+//!   deepest unit is skipped). The hydrocarbon column runs down to the unit
+//!   base, across the unit's internal horizons ([`sand_unit_fluids`],
+//!   docs/closures-per-sand-unit.md). The legacy switch
+//!   [`RockPhysicsConfig::closures_per_layer`] (`--closures-per-layer`)
+//!   uses each sand layer's own top instead (master 8b5988f).
 //! * **Zoeppritz.** Textbook PP expression ([`ZoeppritzForm::Exact`]);
 //!   [`RockPhysicsConfig::legacy_zoeppritz`] (`--legacy-zoeppritz`) restores
 //!   the legacy `det` typo bit for bit (master 33a3a93 default output).
@@ -120,6 +126,10 @@ pub struct RockPhysicsConfig {
     /// Mean sand unit thickness in layers (legacy `sand_layer_thickness`,
     /// 2). CLI `--sand-layer-thickness`.
     pub sand_layer_thickness: f64,
+    /// Legacy switch: closures on every sand layer's own top (master
+    /// 8b5988f), instead of on the top of each sand unit with the deepest
+    /// unit skipped, as legacy `Closures` does. CLI `--closures-per-layer`.
+    pub closures_per_layer: bool,
 }
 
 impl Default for RockPhysicsConfig {
@@ -139,6 +149,7 @@ impl Default for RockPhysicsConfig {
             lithology: ToyLithology::default(),
             sand_layer_fraction: None,
             sand_layer_thickness: crate::lithology::SAND_LAYER_THICKNESS,
+            closures_per_layer: false,
         }
     }
 }
@@ -423,13 +434,6 @@ pub struct LayerFluids {
     pub closures: Vec<(Fluid, f64, f64, usize, usize)>,
 }
 
-/// First sample and end of the first run of `lab` in `col` (`None` if absent).
-fn first_run(col: &[u8], lab: u8) -> Option<(usize, usize)> {
-    let a = col.iter().position(|&v| v == lab)?;
-    let b = col[a..].iter().position(|&v| v != lab).map_or(col.len(), |n| a + n);
-    Some((a, b))
-}
-
 /// Spill-point closures of the top of label `lab` (priority-flood fill of the
 /// post-fault top-of-layer surface), capped at `max_column` samples below the
 /// crest. Each closure draws brine / oil / gas uniformly (legacy
@@ -445,12 +449,99 @@ pub fn layer_fluids(
     max_column: f64,
     min_voxels: usize,
 ) -> LayerFluids {
+    unit_fluids(labels, shape, &[lab], layer, seed, max_column, min_voxels)
+}
+
+impl LayerFluids {
+    /// No closures: all brine.
+    pub fn empty(n: usize) -> Self {
+        Self {
+            contact: vec![f32::NEG_INFINITY; n],
+            fluid: vec![Fluid::Brine; n],
+            closures: Vec::new(),
+        }
+    }
+}
+
+/// Closures per sand unit ([`crate::lithology::closure_units`]) as
+/// `(label, fluids)` for every label of every unit.
+/// - The unit's contact and fluid maps are shared by all of its member
+///   labels.
+/// - The closure list is reported once, on the shallowest member label.
+/// - Labels of the deepest unit (skipped by legacy) get no closures.
+pub fn sand_unit_fluids(
+    labels: &[u8],
+    shape: [usize; 3],
+    intervals: &[usize],
+    sand: &[bool],
+    seed: u64,
+    max_column: f64,
+    min_voxels: usize,
+) -> Vec<(usize, LayerFluids)> {
+    let n = shape[0] * shape[1];
+    let mut out = Vec::new();
+    for (top, end) in crate::lithology::closure_units(sand) {
+        let mut members: Vec<(usize, usize)> = intervals
+            .iter()
+            .enumerate()
+            .filter(|&(lab, &h)| lab < 255 && h >= top && h < end)
+            .map(|(lab, &h)| (h, lab))
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        members.sort_unstable();
+        let ids: Vec<u8> = members.iter().map(|&(_, lab)| lab as u8).collect();
+        let f = unit_fluids(labels, shape, &ids, top, seed, max_column, min_voxels);
+        for (k, &(_, lab)) in members.iter().enumerate() {
+            let mut g = f.clone();
+            if k > 0 {
+                g.closures.clear();
+            }
+            out.push((lab, g));
+        }
+        debug_assert!(out.iter().all(|(_, g)| g.contact.len() == n));
+    }
+    out
+}
+
+/// First sample and end of the first run of labels in `unit` in `col`.
+fn first_unit_run(col: &[u8], unit: &[bool; 256]) -> Option<(usize, usize)> {
+    let a = col.iter().position(|&v| unit[v as usize])?;
+    let b = col[a..].iter().position(|&v| !unit[v as usize]).map_or(col.len(), |n| a + n);
+    Some((a, b))
+}
+
+/// [`layer_fluids`] for a sand unit made of the labels `members` (legacy
+/// closures per lithology unit):
+/// - The top surface is the first sample of any member label in each column.
+/// - The base is the end of that contiguous run of member labels, so the
+///   hydrocarbon column can cross internal horizons down to the unit base.
+/// - Draws are keyed by `layer`, the unit's top interval.
+///
+/// With one member this is exactly [`layer_fluids`].
+#[allow(clippy::too_many_arguments)]
+pub fn unit_fluids(
+    labels: &[u8],
+    shape: [usize; 3],
+    members: &[u8],
+    layer: usize,
+    seed: u64,
+    max_column: f64,
+    min_voxels: usize,
+) -> LayerFluids {
     let [ni, nj, nk] = shape;
     let n = ni * nj;
+    let mut unit = [false; 256];
+    for &m in members {
+        if m != 255 {
+            unit[m as usize] = true;
+        }
+    }
     let mut top = vec![f64::NAN; n];
     let mut base = vec![0usize; n];
     for c in 0..n {
-        if let Some((a, b)) = first_run(&labels[c * nk..(c + 1) * nk], lab) {
+        if let Some((a, b)) = first_unit_run(&labels[c * nk..(c + 1) * nk], &unit) {
             top[c] = a as f64;
             base[c] = b;
         }
@@ -576,7 +667,11 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
         rp.sand_layer_fraction,
         rp.sand_layer_thickness,
     );
-    ElasticModel::Rpm(Box::new(RpmModel::build(cfg.seed, rp, &maps, nh, labels, shape, &sand)))
+    let rp = RockPhysicsConfig {
+        closures_per_layer: cfg.effective_closures_per_layer(),
+        ..rp.clone()
+    };
+    ElasticModel::Rpm(Box::new(RpmModel::build(cfg.seed, &rp, &maps, nh, labels, shape, &sand)))
 }
 
 impl RpmModel {
@@ -599,6 +694,11 @@ impl RpmModel {
         let intervals = label_intervals(maps, ni, nj, nh, nk);
         let step = rp.depth_step_m as f32;
         let max_column = rp.max_column_m / rp.depth_step_m;
+        let unit_fluid_maps = if rp.closures_per_layer || !rp.fluids {
+            Vec::new()
+        } else {
+            sand_unit_fluids(labels, shape, &intervals, sand, seed, max_column, rp.min_closure_voxels)
+        };
         let layers = intervals
             .iter()
             .enumerate()
@@ -614,7 +714,15 @@ impl RpmModel {
                         Vec::new()
                     },
                     fluids: (sand && rp.fluids && lab < 255).then(|| {
-                        layer_fluids(labels, shape, lab as u8, h, seed, max_column, rp.min_closure_voxels)
+                        if rp.closures_per_layer {
+                            layer_fluids(labels, shape, lab as u8, h, seed, max_column, rp.min_closure_voxels)
+                        } else {
+                            unit_fluid_maps
+                                .iter()
+                                .find(|(l, _)| *l == lab)
+                                .map(|(_, f)| f.clone())
+                                .unwrap_or_else(|| LayerFluids::empty(ni * nj))
+                        }
                     }),
                 }
             })

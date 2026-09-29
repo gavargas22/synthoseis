@@ -466,6 +466,23 @@ fn default_model_reflectivity_is_physical() {
     assert_eq!(m.step, 4.0);
 }
 
+/// Layered, rich filters, 4 faults, sand fraction 0.4 / thickness 3: seed 6
+/// has a multi-layer sand unit that closes on the dome.
+fn unit_case(closures_per_layer: bool) -> E2eConfig {
+    let r = rich([8, 5, 128]);
+    E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Layered,
+        rock_physics: RockPhysicsConfig {
+            sand_layer_fraction: Some(0.4),
+            sand_layer_thickness: 3.0,
+            closures_per_layer,
+            ..RockPhysicsConfig::default()
+        },
+        filters: r.filters.clone(),
+        ..cfg(6, [24, 20, 128], [8, 5, 128], 4)
+    }
+}
+
 fn rich(chunks: [usize; 3]) -> E2eConfig {
     E2eConfig {
         filters: FilterConfig {
@@ -522,6 +539,10 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
             },
             ..layered(rich([8, 5, 64]))
         },
+        // Closures per sand unit with a multi-layer unit closing on the dome
+        // (tests/closure_units.rs), then the per-layer switch.
+        unit_case(false),
+        unit_case(true),
     ]
     .into_iter()
         .enumerate()
@@ -539,6 +560,25 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
             let ElasticModel::Rpm(m) = elastic_model(&base, &labels, shape) else { panic!() };
             let n_sand = m.layers.iter().filter(|l| l.sand).count();
             assert!(n_sand > 0 && n_sand < m.layers.len(), "mixed lithology {n_sand}/{}", m.layers.len());
+        }
+        if n == 7 {
+            let (labels, shape) = generate_labels(&base);
+            let ElasticModel::Rpm(m) = elastic_model(&base, &labels, shape) else { panic!() };
+            let sand = synthoseis_core::lithology::interval_sand(
+                synthoseis_core::ToyLithology::Markov, base.seed, m.nh, Some(0.4), 3.0,
+            );
+            let multi = synthoseis_core::lithology::closure_units(&sand).into_iter().any(|(a, b)| {
+                b - a > 1
+                    && m.layers.iter().any(|l| {
+                        l.interval == a && l.fluids.as_ref().is_some_and(|f| !f.closures.is_empty())
+                    })
+            });
+            assert!(multi, "multi-layer sand unit with closures");
+            assert_ne!(
+                bits(&generate_chunked(&base).0.angle_stack),
+                bits(&generate_chunked(&unit_case(true)).0.angle_stack),
+                "per unit vs per layer"
+            );
         }
         if n == 5 {
             let (labels, shape) = generate_labels(&base);

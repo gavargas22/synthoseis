@@ -179,6 +179,12 @@ enum Commands {
         /// (legacy `sand_layer_thickness`, default 2).
         #[arg(long)]
         sand_layer_thickness: Option<f64>,
+        /// Legacy switch: closures on every sand layer's own top (master
+        /// 8b5988f) instead of on the top of each sand unit (consecutive sand
+        /// layers merged, deepest unit skipped, as legacy `Closures`). See
+        /// docs/closures-per-sand-unit.md.
+        #[arg(long, default_value_t = false)]
+        closures_per_layer: bool,
     },
 }
 
@@ -270,6 +276,7 @@ fn parse_rock_physics(
     net_to_gross: Option<f32>,
     first_random_layer: usize,
     no_fluids: bool,
+    closures_per_layer: bool,
 ) -> Result<synthoseis_core::RockPhysicsConfig, String> {
     let mixing = match mixing {
         "inverse-velocity" | "inv-vel" => synthoseis_core::MixingMethod::InverseVelocity,
@@ -291,6 +298,11 @@ fn parse_rock_physics(
                 .into(),
         );
     }
+    if closures_per_layer && (legacy_toy_depth || no_fluids) {
+        return Err(
+            "--closures-per-layer has no effect with --legacy-toy-depth or --no-fluids".into(),
+        );
+    }
     let rp = synthoseis_core::RockPhysicsConfig {
         legacy_toy_depth,
         // `--legacy-toy-depth` implies the legacy Zoeppritz (master guarantee).
@@ -302,6 +314,7 @@ fn parse_rock_physics(
         },
         first_random_layer,
         fluids: !no_fluids,
+        closures_per_layer,
         ..defaults
     };
     rp.validate()?;
@@ -351,6 +364,12 @@ fn apply_lithology(
         if arg == Some("markov") || sand_opts {
             return Err(
                 "--toy-lithology markov / --sand-layer-fraction / --sand-layer-thickness have no effect with the planar geometry (always alternating)"
+                    .into(),
+            );
+        }
+        if rock.closures_per_layer && !rock.legacy_toy_depth {
+            return Err(
+                "--closures-per-layer has no effect with the planar geometry (always per layer)"
                     .into(),
             );
         }
@@ -416,6 +435,7 @@ fn main() {
             toy_lithology,
             sand_layer_fraction,
             sand_layer_thickness,
+            closures_per_layer,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -487,6 +507,7 @@ fn main() {
                 net_to_gross,
                 first_random_layer,
                 no_fluids,
+                closures_per_layer,
             )
             .unwrap_or_else(|e| {
                 eprintln!("{e}");

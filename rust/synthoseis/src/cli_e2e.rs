@@ -274,6 +274,29 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
             sand.len()
         ),
     }
+    if rp.fluids && !rp.legacy_toy_depth {
+        if g == synthoseis_core::ToyGeometry::Planar {
+            println!("closures: per sand layer (planar geometry)");
+        } else if rp.closures_per_layer {
+            println!("closures: per sand layer (--closures-per-layer, master 8b5988f)");
+        } else {
+            // `closure_units` takes all `nh` entries (the last is below the
+            // deepest horizon).
+            let full = synthoseis_core::lithology::interval_sand(
+                lith,
+                cfg.seed,
+                nh,
+                rp.sand_layer_fraction,
+                rp.sand_layer_thickness,
+            );
+            let units = synthoseis_core::lithology::closure_units(&full);
+            let multi = units.iter().filter(|(a, b)| b - a > 1).count();
+            println!(
+                "closures: per sand unit ({} units with closures, {multi} multi-layer)",
+                units.len()
+            );
+        }
+    }
 }
 
 pub fn print_rock_summary(rp: &synthoseis_core::RockPhysicsConfig) {

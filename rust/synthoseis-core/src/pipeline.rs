@@ -290,6 +290,14 @@ impl E2eConfig {
         }
     }
 
+    /// Closures per sand layer (`RockPhysicsConfig::closures_per_layer`):
+    /// forced for the planar geometry (and so `--legacy-toy-depth`), which
+    /// keeps the planar goldens. Its only sand layer is the deepest unit,
+    /// which per-unit closures would skip.
+    pub fn effective_closures_per_layer(&self) -> bool {
+        self.rock_physics.closures_per_layer || self.effective_geometry() == ToyGeometry::Planar
+    }
+
     pub fn tiny(seed: u64) -> Self {
         Self {
             seed,
