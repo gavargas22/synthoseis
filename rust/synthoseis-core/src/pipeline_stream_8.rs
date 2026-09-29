@@ -150,7 +150,7 @@ pub fn seismic_filters(cfg: &E2eConfig) -> Option<SeismicFilters> {
 /// worker / process recomputes the same bits.
 pub fn noise_signal_std(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> f64 {
     let [ni, nj, nk] = shape;
-    let trends = depth_trends(nk);
+    let trends = elastic_model(cfg, labels, shape);
     let seabed = fault_seabed(cfg);
     let noise = &cfg.filters.noise;
     let mut row = vec![0.0f32; nj * nk];
@@ -230,7 +230,7 @@ pub fn effective_wavelet<'a>(cfg: &E2eConfig, wavelet: &'a [f64]) -> &'a [f64] {
 pub fn generate_reflectivity(cfg: &E2eConfig, angle_deg: f64) -> Vec<f32> {
     let (labels, shape) = generate_labels(cfg);
     let [ni, nj, nk] = shape;
-    let trends = depth_trends(nk);
+    let trends = elastic_model(cfg, &labels, shape);
     let mut out = vec![0.0f32; ni * nj * nk];
     let mut stats = WorkingSetStats::default();
     fuse_tile_local(
@@ -289,7 +289,7 @@ pub fn fuse_tile_filtered(
     i1: usize,
     j0: usize,
     j1: usize,
-    trends: &[Vec<f64>; 9],
+    trends: &ElasticModel,
     wavelet: &[f64],
     angle_deg: f64,
     filters: Option<&SeismicFilters>,
