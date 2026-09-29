@@ -5,7 +5,8 @@ Runs the *real* legacy ``SeismicVolume.add_weighted_noise`` (and its
 the Rust pipeline produces (``noise_demo`` example output: ``rfc_{5,15,25}.f32``
 and ``seabed.f64``) for many legacy seeds, and records per-angle noise
 statistics: mean, std, excess kurtosis, a banded amplitude spectrum and the
-inter-angle correlation, plus the legacy ``data_std``. The Rust test
+inter-angle correlation, plus the legacy ``data_std`` and the ``data_std``
+with the Rust default cutoff at the actual seabed. The Rust test
 ``rust/synthoseis-core/tests/noise_pipeline.rs`` regenerates the same
 reflectivity and compares its deterministic noise against these numbers.
 
@@ -105,6 +106,16 @@ def legacy_data_std(rfc, seabed, digi=4.0):
     return float(norm[mute_above_seafloor(thr, np.ones(norm.shape, "float")) != 0.0].std())
 
 
+def seabed_data_std(rfc, seabed):
+    """``data_std`` with the Rust default cutoff: the same legacy masking
+    code (``mute_above_seafloor``) at the actual seabed (``k >= seabed``,
+    i.e. ``wb / digi``) instead of ``wb / (digi + 15) * digi``."""
+    from datagenerator.util import mute_above_seafloor
+
+    norm = rfc[1]
+    return float(norm[mute_above_seafloor(seabed, np.ones(norm.shape, "float")) != 0.0].std())
+
+
 def field_stats(n):
     """Statistics of one noise field ``(ni, nj, nk - 1)``."""
     x = n.astype(np.float64)
@@ -170,11 +181,15 @@ def main():
             "numpy": np.__version__,
         },
         "legacy_data_std": legacy_data_std(rfc, seabed),
+        "seabed_data_std": seabed_data_std(rfc, seabed),
         "legacy_degrees": reference(rfc, seabed, sn_db, seeds, radians=False),
         "radians": reference(rfc, seabed, sn_db, seeds, radians=True),
     }
     a.out.write_text(json.dumps(fixture, indent=1) + "\n")
-    print(f"wrote {a.out}: data_std={fixture['legacy_data_std']:.9e}")
+    print(
+        f"wrote {a.out}: legacy data_std={fixture['legacy_data_std']:.9e}, "
+        f"seabed data_std={fixture['seabed_data_std']:.9e}"
+    )
 
 
 if __name__ == "__main__":
