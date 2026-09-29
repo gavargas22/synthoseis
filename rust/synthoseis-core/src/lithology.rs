@@ -167,3 +167,39 @@ pub fn interval_sand(
         }
     }
 }
+
+/// Sand units that carry closures, as half-open interval ranges `[top, end)`.
+/// This ports legacy `Closures.find_top_lith_horizons` and the unit loop of
+/// `create_closure_labels_from_depth_maps`:
+/// - Legacy keeps the horizons where the facies changes from the layer
+///   above (`top_lith_indices`). Legacy layer 1 always qualifies, because
+///   `facies[0]` is water. The scan is `enumerate(facies[:-1])`, so the
+///   last facies entry never starts a unit.
+/// - Each run between two kept horizons is one unit. Closures are computed
+///   on the top of each sand unit, down to the unit base. The loop is
+///   `range(len(top_lith) - 1)`, so the deepest unit, which runs into the
+///   model base, is skipped.
+///
+/// `sand` holds the facies of intervals `0..n`, where interval `h` is legacy
+/// layer `h + 1`. The last entry is legacy `facies[max_layers]`, the layer
+/// below the deepest horizon. Onlap tops (`onlap_list - 1`) do not occur in
+/// the toy geometry. Bit-exact against the legacy functions in
+/// `tests/fixtures/closure_units_reference.json`.
+pub fn closure_units(sand: &[bool]) -> Vec<(usize, usize)> {
+    // Intervals 0..m can start a unit; the last entry only extends the
+    // deepest unit.
+    let m = sand.len().saturating_sub(1);
+    let mut units = Vec::new();
+    let mut h = 0;
+    while h < m {
+        let start = h;
+        while h < m && sand[h] == sand[start] {
+            h += 1;
+        }
+        // `h == m`: the deepest unit (legacy skips it).
+        if sand[start] && h < m {
+            units.push((start, h));
+        }
+    }
+    units
+}

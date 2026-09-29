@@ -366,15 +366,26 @@ fn model_uses_markov_lithology_end_to_end() {
     let (v, _) = generate_chunked(&alt);
     assert_eq!(fnv(v.labels.iter().copied()), 0x021e_4d94_9085_f056);
     assert_eq!(ah(&v.angle_stack), 0x5d4c_ba89_7f5a_ef44);
-    // Markov default on the same cube: labels unchanged, stack differs.
-    let (mv, _) = generate_chunked(&demo(RockPhysicsConfig::default()));
+    // Markov on the same cube with per-layer closures (master 8b5988f):
+    // labels unchanged, stack differs from alternating.
+    let (mv, _) = generate_chunked(&demo(RockPhysicsConfig {
+        closures_per_layer: true,
+        ..RockPhysicsConfig::default()
+    }));
     eprintln!("markov demo stack15 {:#018x}", ah(&mv.angle_stack));
     assert_eq!(mv.labels, v.labels);
     assert_ne!(ah(&mv.angle_stack), ah(&v.angle_stack));
     assert_eq!(ah(&mv.angle_stack), MARKOV_DEMO_STACK15);
+    // Default: closures per sand unit.
+    let (uv, _) = generate_chunked(&demo(RockPhysicsConfig::default()));
+    assert_eq!(uv.labels, v.labels);
+    assert_eq!(ah(&uv.angle_stack), MARKOV_UNIT_DEMO_STACK15);
 }
 
+/// Markov demo stack of master 8b5988f (closures per layer).
 const MARKOV_DEMO_STACK15: u64 = 0xd952_d8da_8616_c9e3;
+/// Markov demo stack with closures per sand unit.
+const MARKOV_UNIT_DEMO_STACK15: u64 = 0x8270_8d88_0146_cf10;
 
 /// With a richer sand fraction the Markov lithology still yields closures
 /// with oil / gas / brine on the dome.
