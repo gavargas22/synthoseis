@@ -21,9 +21,10 @@ use synthoseis_seismic::ricker;
 use crate::parity;
 use crate::pipeline::{E2eConfig, E2eReport, E2eVolumes, TINY_DIGI};
 use crate::pipeline_stream::{
-    depth_trends, fuse_tile_filtered, generate_labels, resolve_chunk_shape, write_e2e_mdio_chunked,
+    fuse_tile_filtered, generate_labels, resolve_chunk_shape, write_e2e_mdio_chunked,
     SeismicFilters, WorkingSetStats,
 };
+use crate::rock_physics::elastic_model;
 
 /// Default angle list for `--seismic-many` / geometry-once smoke.
 pub const DEFAULT_ANGLE_LIST_DEG: [f64; 3] = [0.0, 15.0, 30.0];
@@ -129,9 +130,9 @@ pub fn run_e2e_geometry_once_seismic_many(
         ..WorkingSetStats::default()
     };
 
-    let trends = depth_trends(nk);
+    let trends = elastic_model(cfg, &labels, shape);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
-    stats.observe(wavelet.len() * 8 + 9 * nk * 8);
+    stats.observe(wavelet.len() * 8 + trends.model_bytes());
 
     let [ci, cj, _ck] = chunks;
     let mut tile_angles = vec![0.0f32; ci * cj * nk];
@@ -295,6 +296,7 @@ mod tests {
             samples: 8,
             store_path: None,
             chunk_shape: Some([4, 4, 8]),
+            rock_physics: Default::default(),
         };
         let angles = [0.0, 15.0, 30.0];
         let (report, stats) = run_e2e_geometry_once_seismic_many(&cfg, &angles).expect("geo-once");
@@ -338,6 +340,7 @@ mod tests {
             samples: 8,
             store_path: Some(base.clone()),
             chunk_shape: Some([4, 4, 8]),
+            rock_physics: Default::default(),
         };
         let angles = [0.0, 15.0, 30.0];
         let (report, _) = run_e2e_geometry_once_seismic_many(&cfg, &angles).expect("geo-once mdio");
@@ -368,6 +371,7 @@ mod tests {
             samples: 8,
             store_path: None,
             chunk_shape: Some([4, 4, 8]),
+            rock_physics: Default::default(),
         };
         let angles = [0.0, 15.0, 30.0];
         let (report, _) = run_e2e_geometry_once_seismic_many(&cfg, &angles).expect("amortized");
@@ -398,6 +402,7 @@ mod tests {
             samples: 32,
             store_path: None,
             chunk_shape: Some([8, 8, 32]),
+            rock_physics: Default::default(),
         };
         let angles = [0.0, 15.0, 30.0];
         let (report, stats) = run_e2e_geometry_once_seismic_many(&cfg, &angles).expect("amortized");

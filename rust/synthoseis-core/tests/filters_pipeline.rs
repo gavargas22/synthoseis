@@ -6,7 +6,7 @@
 //! `keep_ricker` restores the combined Ricker + bandpass output.
 
 use synthoseis_core::pipeline::{
-    generate_tiny_cube, run_e2e, E2eConfig, FaultConfig, FilterConfig,
+    generate_tiny_cube, run_e2e, E2eConfig, FaultConfig, FilterConfig, RockPhysicsConfig,
 };
 use synthoseis_core::{
     generate_chunked, generate_reflectivity, run_e2e_chunked, run_e2e_geometry_once_seismic_many,
@@ -39,6 +39,7 @@ fn cfg(seed: u64, shape: [usize; 3], chunks: [usize; 3], faults: usize) -> E2eCo
         chunk_shape: Some(chunks),
         faults: FaultConfig::with_count(faults),
         filters: FilterConfig::default(),
+        rock_physics: Default::default(),
     }
 }
 
@@ -46,6 +47,15 @@ fn filtered(chunks: [usize; 3], filters: FilterConfig) -> E2eConfig {
     E2eConfig {
         filters,
         ..cfg(10, [24, 20, 64], chunks, 3)
+    }
+}
+
+/// `c` with the master 10f4dcd elastic model (`--legacy-toy-depth`), under
+/// which every pre-rock-physics golden hash stays pinned.
+fn legacy(c: E2eConfig) -> E2eConfig {
+    E2eConfig {
+        rock_physics: RockPhysicsConfig::legacy_toy(),
+        ..c
     }
 }
 
@@ -88,7 +98,7 @@ fn filters_disabled_by_default_is_bit_identical_to_master() {
         ),
     ];
     for (seed, shape, chunks, faults, labels_h, angle_h) in golden {
-        let c = cfg(seed, shape, chunks, faults);
+        let c = legacy(cfg(seed, shape, chunks, faults));
         let (v, _) = generate_chunked(&c);
         assert_eq!(
             fnv(v.labels.iter().copied()),
@@ -163,15 +173,15 @@ fn keep_ricker_is_bit_identical_to_master_filtered_output() {
         ),
     ];
     for (fc, want) in cases {
-        let skip = filtered([8, 5, 64], fc.clone());
+        let skip = legacy(filtered([8, 5, 64], fc.clone()));
         assert!(skip.filters.skips_ricker());
-        let keep = filtered(
+        let keep = legacy(filtered(
             [8, 5, 64],
             FilterConfig {
                 keep_ricker: true,
                 ..fc.clone()
             },
-        );
+        ));
         assert!(!keep.filters.skips_ricker());
         let (k, _) = generate_chunked(&keep);
         assert_eq!(angle_hash(&k.angle_stack), want, "keep_ricker {fc:?}");

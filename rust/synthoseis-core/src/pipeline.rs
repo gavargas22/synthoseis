@@ -17,10 +17,10 @@ use synthoseis_geo::{
     enforce_nonnegative_thicknesses, eval_plane, fill_layer_labels, fit_plane_lsq,
 };
 use synthoseis_io::{CreateConfig, DeliverableWriter, Dimension, MdioStore};
-use synthoseis_rpm::RpmExampleTrends;
 use synthoseis_seismic::{apply_wavelet_traces, compute_rfc_volumes, ricker};
 
 use crate::parity::{self, ParityReport};
+pub use crate::rock_physics::RockPhysicsConfig;
 
 /// Default tiny-cube edge length used by the e2e smoke path.
 pub const TINY_DIM: usize = 8;
@@ -28,7 +28,9 @@ pub const TINY_DIM: usize = 8;
 /// Default digi (ms) for the tiny-cube store.
 pub const TINY_DIGI: f64 = 4.0;
 
-/// Synthetic depth scale (m per sample index) for RPM trends.
+/// Synthetic depth scale (m per sample index) of the master toy trends
+/// ([`RockPhysicsConfig::legacy_toy_depth`] only; the default model uses
+/// [`RockPhysicsConfig::depth_step_m`]).
 pub(crate) const DEPTH_PER_SAMPLE: f64 = 100.0;
 
 /// Configuration for the single-worker e2e pipeline.
@@ -57,6 +59,12 @@ pub struct E2eConfig {
     /// Default is disabled: angle stacks are bit-identical to the unfiltered
     /// pipeline. See `docs/filters-port.md`.
     pub filters: FilterConfig,
+    /// Rock physics (elastic properties from the labels). Default: the
+    /// corrected legacy model (4 m per sample, per-layer depth below the
+    /// seabed, water column, net-to-gross mixing, closures).
+    /// [`RockPhysicsConfig::legacy_toy`] reproduces master 10f4dcd bit for
+    /// bit. See `docs/rock-physics-port.md`.
+    pub rock_physics: RockPhysicsConfig,
 }
 
 /// Post-convolution filters applied to each fused angle-stack tile.
@@ -251,6 +259,7 @@ impl Default for E2eConfig {
             chunk_shape: None,
             faults: FaultConfig::default(),
             filters: FilterConfig::default(),
+            rock_physics: RockPhysicsConfig::default(),
         }
     }
 }
@@ -337,37 +346,12 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     // --- faults (optional; no-op when cfg.faults.count == 0) ---
     crate::pipeline_stream::apply_faults_to_labels(cfg, &maps, nh, &mut labels);
 
-    // --- RPM: elastic props from depth trends by layer class ---
+    // --- RPM: elastic props (master toy trends or the rock-physics model) ---
     let mut vp = vec![0.0f32; ni * nj * nk];
     let mut vs = vec![0.0f32; ni * nj * nk];
     let mut rho = vec![0.0f32; ni * nj * nk];
-    let depths: Vec<f64> = (0..nk).map(|k| k as f64 * DEPTH_PER_SAMPLE).collect();
-    let shale_vp = RpmExampleTrends::shale_vp(&depths);
-    let shale_vs = RpmExampleTrends::shale_vs(&depths);
-    let shale_rho = RpmExampleTrends::shale_rho(&depths);
-    let brine_vp = RpmExampleTrends::brine_sand_vp(&depths);
-    let brine_vs = RpmExampleTrends::brine_sand_vs(&depths);
-    let brine_rho = RpmExampleTrends::brine_sand_rho(&depths);
-    let oil_vp = RpmExampleTrends::oil_sand_vp(&depths);
-    let oil_vs = RpmExampleTrends::oil_sand_vs(&depths);
-    let oil_rho = RpmExampleTrends::oil_sand_rho(&depths);
-
-    for i in 0..ni {
-        for j in 0..nj {
-            for k in 0..nk {
-                let idx = (i * nj + j) * nk + k;
-                let lab = labels[idx];
-                let (v_p, v_s, r) = match lab {
-                    0 => (shale_vp[k], shale_vs[k], shale_rho[k]),
-                    1 => (brine_vp[k], brine_vs[k], brine_rho[k]),
-                    _ => (oil_vp[k], oil_vs[k], oil_rho[k]),
-                };
-                vp[idx] = v_p as f32;
-                vs[idx] = v_s as f32;
-                rho[idx] = r as f32;
-            }
-        }
-    }
+    let model = crate::rock_physics::elastic_model(cfg, &labels, [ni, nj, nk]);
+    model.tile_properties(&labels, [ni, nj, nk], 0, ni, 0, nj, &mut vp, &mut vs, &mut rho);
 
     // --- seismic: single mid-angle RFC + Ricker wavelet → angle stack ---
     let angles = [15.0_f64];

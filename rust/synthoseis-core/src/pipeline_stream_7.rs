@@ -52,6 +52,7 @@ mod tests {
             samples: 64,
             store_path: None,
             chunk_shape: Some([8, 8, 64]),
+            rock_physics: Default::default(),
         };
         let (a, stats) = generate_chunked(&cfg);
         let (b, _) = generate_chunked(&cfg);
@@ -86,6 +87,7 @@ mod tests {
             samples: 32,
             store_path: Some(path.clone()),
             chunk_shape: Some([8, 8, 32]),
+            rock_physics: Default::default(),
         };
         let (report, stats) = run_e2e_streaming(&cfg).expect("stream");
         assert_eq!(report.status, "ok-e2e-chunked");
@@ -114,6 +116,7 @@ mod tests {
             store_path: Some(path.clone()),
             // chunk_i=2 → 4 i-chunks → one per worker
             chunk_shape: Some([2, 4, 8]),
+            rock_physics: Default::default(),
         };
         let (report, stats) = run_e2e_strip_stitched(&cfg, 4).expect("strip-stitch");
         assert_eq!(report.status, "ok-e2e-strip-stitch");
@@ -140,6 +143,7 @@ mod tests {
             samples: 32,
             store_path: Some(path.clone()),
             chunk_shape: Some([4, 4, 32]),
+            rock_physics: Default::default(),
         };
         let (report, _) = run_e2e_strip_stitched(&cfg, 4).expect("strip-stitch 16");
         assert_eq!(report.status, "ok-e2e-strip-stitch");
@@ -162,6 +166,7 @@ mod tests {
             samples: 8,
             store_path: Some(path),
             chunk_shape: Some([4, 4, 8]),
+            rock_physics: Default::default(),
         };
         let (a, _) = run_e2e_strip_stitched(&cfg, 1).expect("w1");
         assert_eq!(a.status, "ok-e2e-chunked");

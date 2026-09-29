@@ -16,7 +16,7 @@ pub fn write_strip_partition(
     labels: &[u8],
     shape: [usize; 3],
     chunks: [usize; 3],
-    trends: &[Vec<f64>; 9],
+    trends: &ElasticModel,
     wavelet: &[f64],
     faults: Option<&FaultModel>,
     filters: Option<&SeismicFilters>,
@@ -28,7 +28,7 @@ pub fn write_strip_partition(
         volume_shape: shape,
         ..WorkingSetStats::default()
     };
-    stats.observe(wavelet.len() * 8 + 9 * nk * 8);
+    stats.observe(wavelet.len() * 8 + trends.model_bytes());
 
     let Some(strip) = part.to_spatial_strip(nj) else {
         return Ok((stats, Vec::new()));

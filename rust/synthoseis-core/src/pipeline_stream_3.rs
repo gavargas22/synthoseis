@@ -40,9 +40,9 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
     }
     let mut chunk_faults = Vec::new();
 
-    let trends = depth_trends(nk);
+    let trends = elastic_model(cfg, &labels, shape);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
-    stats.observe(wavelet.len() * 8 + 9 * nk * 8);
+    stats.observe(wavelet.len() * 8 + trends.model_bytes());
 
     let [ci, cj, ck] = chunks;
     let mut tile_angles = vec![0.0f32; ci * cj * nk];

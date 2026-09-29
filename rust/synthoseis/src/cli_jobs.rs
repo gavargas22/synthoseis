@@ -19,6 +19,7 @@ pub fn maybe_run_worker(
     crossline_count: usize,
     samples: usize,
     chunk_shape: Option<[usize; 3]>,
+    rock: &synthoseis_core::RockPhysicsConfig,
 ) -> bool {
     let Some(wid) = worker_id else {
         return false;
@@ -62,9 +63,11 @@ pub fn maybe_run_worker(
                     samples,
                     store_path: None,
                     chunk_shape: None,
+                    rock_physics: Default::default(),
                 },
             ))
         }),
+        rock_physics: rock.clone(),
     };
     let stats = run_worker_partition(&cfg, &plan, wid, &store_path).unwrap_or_else(|e| {
         eprintln!("worker {wid} failed: {e}");
@@ -110,6 +113,7 @@ pub fn maybe_write_partition_plan(
                     samples,
                     store_path: None,
                     chunk_shape: None,
+                    rock_physics: Default::default(),
                 },
             )[0]
         });
@@ -138,6 +142,33 @@ pub fn maybe_write_partition_plan(
     );
 }
 
+/// CLI flags that rebuild `rock` in a worker process.
+pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<String> {
+    let mut a = Vec::new();
+    if rock.legacy_toy_depth {
+        a.push("--legacy-toy-depth".to_string());
+        return a;
+    }
+    a.push("--mixing".into());
+    a.push(
+        match rock.mixing {
+            synthoseis_core::MixingMethod::InverseVelocity => "inverse-velocity",
+            synthoseis_core::MixingMethod::BackusModuli => "backus",
+        }
+        .into(),
+    );
+    if let synthoseis_core::NetToGross::Constant(v) = rock.net_to_gross {
+        a.push("--net-to-gross".into());
+        a.push(format!("{v:?}"));
+    }
+    a.push("--first-random-layer".into());
+    a.push(rock.first_random_layer.to_string());
+    if !rock.fluids {
+        a.push("--no-fluids".into());
+    }
+    a
+}
+
 /// Returns true if multiprocess ran (caller should return).
 pub fn maybe_run_multiprocess(
     multiprocess: bool,
@@ -151,6 +182,7 @@ pub fn maybe_run_multiprocess(
     crossline_count: usize,
     samples: usize,
     chunk_shape: Option<[usize; 3]>,
+    rock: &synthoseis_core::RockPhysicsConfig,
 ) -> bool {
     if !multiprocess {
         return false;
@@ -177,6 +209,7 @@ pub fn maybe_run_multiprocess(
                 samples,
                 store_path: None,
                 chunk_shape: None,
+                rock_physics: Default::default(),
             },
         ))
     });
@@ -189,6 +222,7 @@ pub fn maybe_run_multiprocess(
         samples,
         store_path: Some(store_path.clone()),
         chunk_shape: resolved,
+        rock_physics: rock.clone(),
     };
     let (store_path, plan, _prep) = prepare_multiprocess_store(&cfg, workers, resolved)
         .unwrap_or_else(|e| {
@@ -225,7 +259,8 @@ pub fn maybe_run_multiprocess(
             .arg("--seed")
             .arg(seed.to_string())
             .arg("--workers")
-            .arg(workers.to_string());
+            .arg(workers.to_string())
+            .args(rock_physics_args(rock));
         if let Some([ci, cj, ck]) = resolved {
             cmd.arg("--chunk-i")
                 .arg(ci.to_string())
@@ -268,6 +303,7 @@ pub fn maybe_run_multiprocess(
         report.parity.angle_mae,
         report.parity.angle_max_abs
     );
+    crate::cli_e2e::print_rock_summary(&cfg.rock_physics);
     if let Some(path) = report.store_path {
         println!(
             "wrote shared MDIO labels+angle-stack at {} (multi-process JobPartitionPlan, parity vs single-worker ok)",

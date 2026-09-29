@@ -14,7 +14,7 @@ const SHADER: &str = include_str!("shaders/fuse_tile.wgsl");
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct FuseParams {
     nj: u32, nk: u32, i0: u32, i1: u32, j0: u32, j1: u32,
-    wavelet_len: u32, wavelet_off: u32, angle_deg: f32, _p1: f32, _p2: f32, _p3: f32,
+    wavelet_len: u32, wavelet_off: u32, angle_deg: f32, mode: u32, sin_t: f32, cos_t: f32,
 }
 
 struct GpuContext {
@@ -154,28 +154,75 @@ pub fn fuse_tile_wgpu(
     for t in trends {
         for &v in t { trends_wavelet.push(v as f32); }
     }
-    let wavelet_off = trends_wavelet.len() as u32;
-    if wavelet.is_empty() { trends_wavelet.push(0.0); }
-    else { for &v in wavelet { trends_wavelet.push(v as f32); } }
+    let wavelet_off = push_wavelet(&mut trends_wavelet, wavelet);
 
     let params = FuseParams {
         nj: nj as u32, nk: nk as u32, i0: i0 as u32, i1: i1 as u32,
         j0: j0 as u32, j1: j1 as u32,
         wavelet_len: wavelet.len() as u32, wavelet_off,
-        angle_deg: angle_deg as f32, _p1: 0.0, _p2: 0.0, _p3: 0.0,
+        angle_deg: angle_deg as f32, mode: 0,
+        sin_t: angle_deg.to_radians().sin() as f32, cos_t: angle_deg.to_radians().cos() as f32,
     };
+    run_fuse(&g, &params, &labels_u32, &trends_wavelet, ti * tj, tile_out)
+}
+
+fn push_wavelet(buf: &mut Vec<f32>, wavelet: &[f64]) -> u32 {
+    let off = buf.len() as u32;
+    if wavelet.is_empty() { buf.push(0.0); }
+    else { for &v in wavelet { buf.push(v as f32); } }
+    off
+}
+
+/// Property-mode dispatch: `vp`, `vs`, `rho` are `(n_traces, nk)` tile buffers.
+pub fn fuse_props_tile_wgpu(
+    vp: &[f32],
+    vs: &[f32],
+    rho: &[f32],
+    nk: usize,
+    wavelet: &[f64],
+    angle_deg: f64,
+    tile_out: &mut [f32],
+) -> Option<FuseBackend> {
+    let gpu = ctx()?;
+    let g = gpu.lock().ok()?;
+    let n = tile_out.len();
+    assert!(nk >= 1 && n % nk == 0);
+    assert!(vp.len() == n && vs.len() == n && rho.len() == n);
+    let n_traces = n / nk;
+    let mut props_wavelet = Vec::with_capacity(3 * n + wavelet.len().max(1));
+    props_wavelet.extend_from_slice(vp);
+    props_wavelet.extend_from_slice(vs);
+    props_wavelet.extend_from_slice(rho);
+    let wavelet_off = push_wavelet(&mut props_wavelet, wavelet);
+    let params = FuseParams {
+        nj: 1, nk: nk as u32, i0: 0, i1: n_traces as u32, j0: 0, j1: 1,
+        wavelet_len: wavelet.len() as u32, wavelet_off,
+        angle_deg: angle_deg as f32, mode: 1,
+        sin_t: angle_deg.to_radians().sin() as f32, cos_t: angle_deg.to_radians().cos() as f32,
+    };
+    run_fuse(&g, &params, &[0u32], &props_wavelet, n_traces, tile_out)
+}
+
+fn run_fuse(
+    g: &GpuContext,
+    params: &FuseParams,
+    labels_u32: &[u32],
+    trends_wavelet: &[f32],
+    n_traces: usize,
+    tile_out: &mut [f32],
+) -> Option<FuseBackend> {
     let device = &g.device;
     let queue = &g.queue;
     let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("fuse_params"), contents: bytemuck::bytes_of(&params),
+        label: Some("fuse_params"), contents: bytemuck::bytes_of(params),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let labels_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("fuse_labels"), contents: bytemuck::cast_slice(&labels_u32),
+        label: Some("fuse_labels"), contents: bytemuck::cast_slice(labels_u32),
         usage: wgpu::BufferUsages::STORAGE,
     });
     let tw_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("fuse_trends_wavelet"), contents: bytemuck::cast_slice(&trends_wavelet),
+        label: Some("fuse_trends_wavelet"), contents: bytemuck::cast_slice(trends_wavelet),
         usage: wgpu::BufferUsages::STORAGE,
     });
     let tile_bytes = (tile_out.len() * 4) as u64;
@@ -201,7 +248,6 @@ pub fn fuse_tile_wgpu(
             wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
         ],
     });
-    let n_traces = ti * tj;
     let wg = ((n_traces as u32) + 63) / 64;
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("fuse_encoder"),

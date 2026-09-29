@@ -1,6 +1,13 @@
 //! Bounded RPM depth-trend kernels.
 
+mod legacy;
 mod trends;
+
+pub use legacy::{
+    arithmetic_mean, example_f32, forward_fill_zeros, harmonic_mean, legacy_column_properties,
+    mix_f32, sand_f32, shale_f32, shifted_index, voxel_properties, Elastic32, Fluid, LayerShifts,
+    MixingMethod, VoxelKind, WATER,
+};
 
 pub use trends::{
     polyval, tagilsk_brine_sand_rho, tagilsk_brine_sand_vp, tagilsk_brine_sand_vs,

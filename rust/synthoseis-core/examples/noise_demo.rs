@@ -70,6 +70,7 @@ fn main() {
         chunk_shape: Some([16, 16, nk]),
         faults: FaultConfig::default(),
         filters: FilterConfig::default(),
+        rock_physics: Default::default(),
     };
     assert!(fault_model(&base).is_none(), "demo runs without faults");
     for a in angles {
