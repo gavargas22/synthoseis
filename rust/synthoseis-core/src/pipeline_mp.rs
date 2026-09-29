@@ -312,6 +312,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("mp.mdio");
         let cfg = E2eConfig {
+            geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
             seed: 42,

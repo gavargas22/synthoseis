@@ -119,14 +119,24 @@ fn legacy_zoeppritz_flag_reproduces_master_33a3a93_stores() {
         ("mp-flags", &mp_flags[..], MASTER33_MP_FLAGS),
     ] {
         let legacy = dir.path().join(format!("{name}-lz.mdio"));
-        let out = run(&with(base, &["--legacy-zoeppritz"]), &legacy);
+        // 33a3a93 had only the planar toy geometry.
+        let out = run(
+            &with(base, &["--legacy-zoeppritz", "--toy-geometry", "planar"]),
+            &legacy,
+        );
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("zoeppritz=legacy (det typo)"), "{stdout}");
         assert_eq!(store_hash(&legacy), master, "{name}: --legacy-zoeppritz vs master 33a3a93");
         let fixed = dir.path().join(format!("{name}-fixed.mdio"));
-        assert!(run(base, &fixed).status.success());
-        assert_ne!(store_hash(&fixed), master, "{name}: default must use the textbook Zoeppritz");
+        assert!(run(&with(base, &["--toy-geometry", "planar"]), &fixed)
+            .status
+            .success());
+        assert_ne!(
+            store_hash(&fixed),
+            master,
+            "{name}: default must use the textbook Zoeppritz"
+        );
     }
     // Redundant with the toy switch (which implies it): still master 10f4dcd.
     let both = dir.path().join("both.mdio");
@@ -183,4 +193,62 @@ fn invalid_rock_physics_flags_exit_2() {
         assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
         assert!(String::from_utf8_lossy(&out.stderr).contains(msg), "{bad:?}: {out:?}");
     }
+}
+
+/// `--toy-geometry`: layered is the default, both geometries reach
+/// multi-process workers (bit-identical to one process), and they differ.
+#[test]
+fn toy_geometry_flag_reaches_workers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut hashes = Vec::new();
+    for geometry in [None, Some("layered"), Some("planar")] {
+        let extra: Vec<&str> = geometry
+            .map(|g| vec!["--toy-geometry", g])
+            .unwrap_or_default();
+        let name = geometry.unwrap_or("default");
+        let single = dir.path().join(format!("{name}-single.mdio"));
+        let out = run(&with(&MP[3..], &extra), &single);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let want = format!("toy geometry: {}", geometry.unwrap_or("layered"));
+        assert!(stdout.contains(&want), "{name}: {stdout}");
+        let mp = dir.path().join(format!("{name}-mp.mdio"));
+        let out = run(&with(MP, &extra), &mp);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert_eq!(
+            store_hash(&single),
+            store_hash(&mp),
+            "{name}: multiprocess vs single"
+        );
+        hashes.push(store_hash(&single));
+    }
+    assert_eq!(hashes[0], hashes[1], "default is layered");
+    assert_ne!(hashes[1], hashes[2], "layered vs planar");
+}
+
+#[test]
+fn invalid_toy_geometry_flags_exit_2() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (bad, msg) in [
+        (
+            ["--legacy-toy-depth", "--toy-geometry", "layered"].as_slice(),
+            "no effect with --legacy-toy-depth",
+        ),
+        (&["--toy-geometry", "salt"], "--toy-geometry"),
+    ] {
+        let out = run(&with(PLAIN, bad), &dir.path().join("bad.mdio"));
+        assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(msg),
+            "{bad:?}: {out:?}"
+        );
+    }
+    // Explicit planar with the toy switch is redundant but accepted.
+    let ok = dir.path().join("ok.mdio");
+    let out = run(
+        &with(PLAIN, &["--legacy-toy-depth", "--toy-geometry", "planar"]),
+        &ok,
+    );
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(store_hash(&ok), MASTER_PLAIN);
 }

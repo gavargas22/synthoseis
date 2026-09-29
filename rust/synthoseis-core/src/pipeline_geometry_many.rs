@@ -288,6 +288,7 @@ mod tests {
     #[test]
     fn geometry_once_labels_identical_and_stacks_match_single_angle() {
         let cfg = E2eConfig {
+            geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
             seed: 42,
@@ -332,6 +333,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let base = dir.path().join("out.mdio");
         let cfg = E2eConfig {
+            geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
             seed: 7,
@@ -363,6 +365,7 @@ mod tests {
     #[test]
     fn geometry_once_does_not_regenerate_geology_n_times() {
         let cfg = E2eConfig {
+            geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
             seed: 3,
@@ -394,6 +397,7 @@ mod tests {
         // Timing ratios are noisy in debug under parallel cargo test load.
         // Prove amortization structurally: one geology pass, N stacks, tile-bounded peak.
         let cfg = E2eConfig {
+            geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
             seed: 11,

@@ -24,6 +24,7 @@ pub fn run_e2e(
     faults: usize,
     filters: synthoseis_core::FilterConfig,
     rock: synthoseis_core::RockPhysicsConfig,
+    geometry: synthoseis_core::ToyGeometry,
 ) {
     if geo_many {
         let angle_list = if let Some(ref csv) = angles {
@@ -57,10 +58,12 @@ pub fn run_e2e(
                         store_path: None,
                         chunk_shape: None,
                         rock_physics: Default::default(),
+                        geometry: Default::default(),
                     },
                 ))
             }),
             rock_physics: rock.clone(),
+            geometry,
         };
         let (report, stats) =
             run_e2e_geometry_once_seismic_many(&cfg, &angle_list).unwrap_or_else(|e| {
@@ -79,6 +82,7 @@ pub fn run_e2e(
         print_fault_summary(&cfg);
         print_filter_summary(&cfg);
         print_rock_summary(&cfg.rock_physics);
+        print_geometry_summary(&cfg);
         for st in &report.stacks {
             println!(
                 "  angle={:.0}° parity(iou={:.4}, mae={:.3e}) store={:?}",
@@ -107,12 +111,13 @@ pub fn run_e2e(
                     store_path: None,
                     chunk_shape: None,
                     rock_physics: Default::default(),
+                    geometry: Default::default(),
                 },
             ))
         });
         let runner = MultiWorkerRunner::new(config.clone());
         let (report, stats) = runner
-            .run_e2e_strip_stitched_with(Some(store_path), resolved, &rock)
+            .run_e2e_strip_stitched_with_geometry(Some(store_path), resolved, &rock, geometry)
             .unwrap_or_else(|e| {
                 eprintln!("strip-stitch e2e failed: {e}");
                 std::process::exit(1);
@@ -160,10 +165,12 @@ pub fn run_e2e(
                         store_path: None,
                         chunk_shape: None,
                         rock_physics: Default::default(),
+                        geometry: Default::default(),
                     },
                 ))
             }),
             rock_physics: rock.clone(),
+            geometry,
         };
         let result = if overlap {
             synthoseis_core::run_e2e_streaming_overlapped(&cfg)
@@ -195,6 +202,7 @@ pub fn run_e2e(
         print_fault_summary(&cfg);
         print_filter_summary(&cfg);
         print_rock_summary(&cfg.rock_physics);
+        print_geometry_summary(&cfg);
         if let Some(path) = report.store_path {
             println!(
                 "wrote MDIO labels+angle-stack at {} (sub-volume chunks, parity round-trip ok)",
@@ -205,10 +213,12 @@ pub fn run_e2e(
     }
 
     let runner = MultiWorkerRunner::new(config.clone());
-    let report = runner.run_e2e_with(store.clone(), &rock).unwrap_or_else(|e| {
-        eprintln!("e2e failed: {e}");
-        std::process::exit(1);
-    });
+    let report = runner
+        .run_e2e_with_geometry(store.clone(), &rock, geometry)
+        .unwrap_or_else(|e| {
+            eprintln!("e2e failed: {e}");
+            std::process::exit(1);
+        });
     println!(
         "e2e complete: seed={}, workers={}, shape={:?}, status={}, parity(iou={:.4}, agr={:.4}, mae={:.3e}, maxabs={:.3e})",
         seed,
@@ -231,6 +241,18 @@ pub fn run_e2e(
             path.display()
         );
     }
+}
+
+/// Toy geometry line (`layered` / `planar`, horizon count).
+pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
+    let g = cfg.effective_geometry();
+    let nh = match g {
+        synthoseis_core::ToyGeometry::Planar => 3,
+        synthoseis_core::ToyGeometry::Layered => {
+            synthoseis_core::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape()).1
+        }
+    };
+    println!("toy geometry: {} ({nh} horizons)", g.as_str());
 }
 
 pub fn print_rock_summary(rp: &synthoseis_core::RockPhysicsConfig) {

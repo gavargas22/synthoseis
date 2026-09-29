@@ -159,6 +159,12 @@ enum Commands {
         /// All sands brine (no oil / gas from closures).
         #[arg(long, default_value_t = false)]
         no_fluids: bool,
+        /// Toy horizon geometry: `layered` (default: legacy-style layer cake
+        /// over a dome, ~nk/6 layers, closures) or `planar` (master geometry:
+        /// 2 dipping planes, 2 layers). `--legacy-toy-depth` implies planar.
+        /// See docs/layered-toy-geometry.md.
+        #[arg(long)]
+        toy_geometry: Option<String>,
     },
 }
 
@@ -288,6 +294,29 @@ fn parse_rock_physics(
     Ok(rp)
 }
 
+/// `--toy-geometry` (default layered). `--legacy-toy-depth` implies planar,
+/// so an explicit `layered` with it is rejected.
+fn parse_geometry(
+    arg: Option<&str>,
+    legacy_toy_depth: bool,
+) -> Result<synthoseis_core::ToyGeometry, String> {
+    let g = match arg {
+        Some(s) => synthoseis_core::ToyGeometry::parse(s)?,
+        None => synthoseis_core::ToyGeometry::default(),
+    };
+    if legacy_toy_depth && arg == Some("layered") {
+        return Err(
+            "--toy-geometry layered has no effect with --legacy-toy-depth (planar master geometry)"
+                .into(),
+        );
+    }
+    Ok(if legacy_toy_depth {
+        synthoseis_core::ToyGeometry::Planar
+    } else {
+        g
+    })
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -328,6 +357,7 @@ fn main() {
             net_to_gross,
             first_random_layer,
             no_fluids,
+            toy_geometry,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -404,6 +434,11 @@ fn main() {
                 eprintln!("{e}");
                 std::process::exit(2);
             });
+            let geometry = parse_geometry(toy_geometry.as_deref(), legacy_toy_depth)
+                .unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                });
             let (inline_count, crossline_count, samples) = if let Some(ref s) = shape {
                 parse_shape(s).unwrap_or_else(|e| {
                     eprintln!("{e}");
@@ -444,6 +479,7 @@ fn main() {
                 samples,
                 chunk_shape,
                 &rock,
+                geometry,
             ) {
                 return;
             }
@@ -475,6 +511,7 @@ fn main() {
                 samples,
                 chunk_shape,
                 &rock,
+                geometry,
             ) {
                 return;
             }
@@ -497,6 +534,7 @@ fn main() {
                     faults,
                     filters,
                     rock,
+                    geometry,
                 );
             } else if workers == 1 {
                 cli_e2e::run_single_worker_placeholder(&config, store, seed);

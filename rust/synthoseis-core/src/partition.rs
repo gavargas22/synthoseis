@@ -249,8 +249,22 @@ impl MultiWorkerRunner {
         store: Option<std::path::PathBuf>,
         rock_physics: &crate::RockPhysicsConfig,
     ) -> Result<crate::pipeline::E2eReport, String> {
+        self.run_e2e_with_geometry(store, rock_physics, crate::ToyGeometry::default())
+    }
+
+    /// [`Self::run_e2e`] with explicit rock physics and toy geometry.
+    pub fn run_e2e_with_geometry(
+        &self,
+        store: Option<std::path::PathBuf>,
+        rock_physics: &crate::RockPhysicsConfig,
+        geometry: crate::ToyGeometry,
+    ) -> Result<crate::pipeline::E2eReport, String> {
         let part = JobPartition::single_worker(&self.config);
-        SingleWorkerRunner::new(self.config.clone(), part).run_e2e_with(store, rock_physics)
+        SingleWorkerRunner::new(self.config.clone(), part).run_e2e_with_geometry(
+            store,
+            rock_physics,
+            geometry,
+        )
     }
 
     /// Strip-stitch multi-worker e2e on the chunked fused path.
@@ -267,17 +281,48 @@ impl MultiWorkerRunner {
         self.run_e2e_strip_stitched_with(store, chunk_shape, &crate::RockPhysicsConfig::default())
     }
 
-    /// [`Self::run_e2e_strip_stitched`] with explicit rock physics settings.
+    /// [`Self::run_e2e_strip_stitched`] with explicit rock physics settings
+    /// (default geometry).
     pub fn run_e2e_strip_stitched_with(
         &self,
         store: Option<std::path::PathBuf>,
         chunk_shape: Option<[usize; 3]>,
         rock_physics: &crate::RockPhysicsConfig,
-    ) -> Result<(crate::pipeline::E2eReport, crate::pipeline_stream::WorkingSetStats), String> {
+    ) -> Result<
+        (
+            crate::pipeline::E2eReport,
+            crate::pipeline_stream::WorkingSetStats,
+        ),
+        String,
+    > {
+        self.run_e2e_strip_stitched_with_geometry(
+            store,
+            chunk_shape,
+            rock_physics,
+            crate::ToyGeometry::default(),
+        )
+    }
+
+    /// [`Self::run_e2e_strip_stitched`] with explicit rock physics and toy
+    /// geometry.
+    pub fn run_e2e_strip_stitched_with_geometry(
+        &self,
+        store: Option<std::path::PathBuf>,
+        chunk_shape: Option<[usize; 3]>,
+        rock_physics: &crate::RockPhysicsConfig,
+        geometry: crate::ToyGeometry,
+    ) -> Result<
+        (
+            crate::pipeline::E2eReport,
+            crate::pipeline_stream::WorkingSetStats,
+        ),
+        String,
+    > {
         let cfg = crate::pipeline::E2eConfig {
             faults: Default::default(),
             filters: Default::default(),
             rock_physics: rock_physics.clone(),
+            geometry,
             seed: self.config.seed,
             inline_count: self.config.inline_count.max(crate::pipeline::TINY_DIM),
             crossline_count: self.config.crossline_count.max(crate::pipeline::TINY_DIM),

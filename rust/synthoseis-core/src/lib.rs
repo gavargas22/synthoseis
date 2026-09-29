@@ -91,17 +91,29 @@ impl SingleWorkerRunner {
         self.run_e2e_with(store, &RockPhysicsConfig::default())
     }
 
-    /// [`Self::run_e2e`] with explicit rock physics settings.
+    /// [`Self::run_e2e`] with explicit rock physics settings (default
+    /// geometry).
     pub fn run_e2e_with(
         &self,
         store: Option<std::path::PathBuf>,
         rock_physics: &RockPhysicsConfig,
+    ) -> Result<pipeline::E2eReport, String> {
+        self.run_e2e_with_geometry(store, rock_physics, ToyGeometry::default())
+    }
+
+    /// [`Self::run_e2e`] with explicit rock physics and toy geometry.
+    pub fn run_e2e_with_geometry(
+        &self,
+        store: Option<std::path::PathBuf>,
+        rock_physics: &RockPhysicsConfig,
+        geometry: ToyGeometry,
     ) -> Result<pipeline::E2eReport, String> {
         // Tiny-cube floor: bump sub-8³ defaults (CLI smoke uses 8³).
         let cfg = pipeline::E2eConfig {
             faults: Default::default(),
             filters: Default::default(),
             rock_physics: rock_physics.clone(),
+            geometry,
             seed: self.config.seed,
             inline_count: self.config.inline_count.max(pipeline::TINY_DIM),
             crossline_count: self.config.crossline_count.max(pipeline::TINY_DIM),
@@ -121,6 +133,7 @@ pub mod pipeline_mp;
 pub mod pipeline_overlap;
 pub mod pipeline_stream;
 pub mod rock_physics;
+pub mod toy_geometry;
 
 pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
@@ -137,10 +150,6 @@ pub use pipeline_mp::{
     run_e2e_multiprocess, run_worker_partition,
 };
 pub use pipeline_overlap::run_e2e_streaming_overlapped;
-pub use rock_physics::{
-    elastic_model, ElasticModel, MixingMethod, NetToGross, RockPhysicsConfig, RpmModel,
-    ZoeppritzForm,
-};
 pub use pipeline_stream::{
     effective_wavelet, fault_model, fault_tile, generate_angle_stack_from_labels, generate_chunked,
     generate_chunked_at_angle, generate_fault_labels, generate_labels, generate_noise,
@@ -148,6 +157,11 @@ pub use pipeline_stream::{
     run_e2e_streaming, run_e2e_strip_stitched, seismic_filters, write_strip_partition,
     SeismicFilters, SeismicNoise, WorkingSetStats, DEFAULT_INCIDENCE_DEG, GENERATE_LABELS_CALLS,
 };
+pub use rock_physics::{
+    elastic_model, ElasticModel, MixingMethod, NetToGross, RockPhysicsConfig, RpmModel,
+    ZoeppritzForm,
+};
+pub use toy_geometry::ToyGeometry;
 
 #[cfg(test)]
 mod tests {
@@ -241,6 +255,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mp-api.mdio");
         let cfg = pipeline::E2eConfig {
+            geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
             seed: 42,

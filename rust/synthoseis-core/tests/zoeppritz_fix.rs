@@ -25,6 +25,7 @@ fn ah(v: &[f32]) -> u64 {
 
 fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
     E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Planar,
         seed: 7,
         inline_count: 64,
         crossline_count: 64,
@@ -39,6 +40,7 @@ fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
 
 fn rich(rock: RockPhysicsConfig) -> E2eConfig {
     E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Planar,
         seed: 10,
         inline_count: 24,
         crossline_count: 20,
@@ -82,10 +84,23 @@ fn legacy_zoeppritz_reproduces_master_33a3a93() {
     assert_eq!(fnv(v.labels.iter().copied()), 0x22fa_1389_4f70_0192);
     assert_eq!(ah(&v.angle_stack), 0x262f_9caa_ac02_c346);
     assert_eq!(ah(&generate_reflectivity(&a, 15.0)), 0x803c_6752_f97f_a3b5);
-    assert_eq!(ah(&generate_chunked_at_angle(&a, 30.0).0.angle_stack), 0x013c_dec9_3d4e_3315);
-    assert_eq!(ah(&generate_chunked(&rich(legacy_z())).0.angle_stack), 0x7e27_0df1_f8c1_f40b);
-    let tiny = E2eConfig { rock_physics: legacy_z(), ..E2eConfig::tiny(42) };
-    assert_eq!(ah(&generate_tiny_cube(&tiny).angle_stack), 0x7e4e_878d_f8b5_3e79);
+    assert_eq!(
+        ah(&generate_chunked_at_angle(&a, 30.0).0.angle_stack),
+        0x013c_dec9_3d4e_3315
+    );
+    assert_eq!(
+        ah(&generate_chunked(&rich(legacy_z())).0.angle_stack),
+        0x7e27_0df1_f8c1_f40b
+    );
+    let tiny = E2eConfig {
+        rock_physics: legacy_z(),
+        geometry: synthoseis_core::ToyGeometry::Planar,
+        ..E2eConfig::tiny(42)
+    };
+    assert_eq!(
+        ah(&generate_tiny_cube(&tiny).angle_stack),
+        0x7e4e_878d_f8b5_3e79
+    );
 
     // The corrected default differs at 15 / 30 degrees.
     let d = demo(RockPhysicsConfig::default());

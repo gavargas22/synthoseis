@@ -41,6 +41,7 @@ fn bits(v: &[f32]) -> Vec<u32> {
 
 fn cfg(seed: u64, shape: [usize; 3], chunks: [usize; 3], faults: usize) -> E2eConfig {
     E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Planar,
         seed,
         inline_count: shape[0],
         crossline_count: shape[1],
