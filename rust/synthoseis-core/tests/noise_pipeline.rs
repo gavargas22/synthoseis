@@ -7,7 +7,7 @@
 
 use serde_json::Value;
 use synthoseis_core::pipeline::{
-    generate_tiny_cube, E2eConfig, FaultConfig, FilterConfig, NoiseConfig,
+    generate_tiny_cube, E2eConfig, FaultConfig, FilterConfig, NoiseConfig, RockPhysicsConfig,
 };
 use synthoseis_core::pipeline_stream::apply_filters_to_volume;
 use synthoseis_core::{
@@ -49,6 +49,16 @@ fn cfg(seed: u64, shape: [usize; 3], chunks: [usize; 3], faults: usize) -> E2eCo
         chunk_shape: Some(chunks),
         faults: FaultConfig::with_count(faults),
         filters: FilterConfig::default(),
+        rock_physics: Default::default(),
+    }
+}
+
+/// `c` with the master 10f4dcd elastic model (`--legacy-toy-depth`), under
+/// which every pre-rock-physics golden hash stays pinned.
+fn legacy(c: E2eConfig) -> E2eConfig {
+    E2eConfig {
+        rock_physics: RockPhysicsConfig::legacy_toy(),
+        ..c
     }
 }
 
@@ -128,7 +138,7 @@ fn noise_off_by_default_is_bit_identical() {
         legacy_seabed: true,
     };
     assert!(!off.enabled());
-    let base = cfg(10, [24, 20, 64], [8, 5, 64], 3);
+    let base = legacy(cfg(10, [24, 20, 64], [8, 5, 64], 3));
     let (a, _) = generate_chunked(&base);
     let (b, _) = generate_chunked(&E2eConfig {
         filters: FilterConfig {
@@ -144,10 +154,10 @@ fn noise_off_by_default_is_bit_identical() {
         noise: off,
         ..FilterConfig::legacy(4.0, 30.0, 3)
     };
-    let (k, _) = generate_chunked(&with([8, 5, 64], keep.clone()));
+    let (k, _) = generate_chunked(&legacy(with([8, 5, 64], keep.clone())));
     assert_eq!(angle_hash(&k.angle_stack), 0x6855_5526_d2bd_464c);
     assert_eq!(
-        angle_hash(&generate_tiny_cube(&with([8, 5, 64], keep)).angle_stack),
+        angle_hash(&generate_tiny_cube(&legacy(with([8, 5, 64], keep))).angle_stack),
         0x6855_5526_d2bd_464c
     );
 }
@@ -362,7 +372,8 @@ fn check_noise_statistics(legacy_seabed: bool) {
             noise: mode_noise(1, false),
             ..FilterConfig::default()
         },
-        ..cfg(meta["seed"].as_u64().unwrap(), [ni, nj, nk], [16, 16, nk], 0)
+        // The fixture's legacy noise ran on the master reflectivity.
+        ..legacy(cfg(meta["seed"].as_u64().unwrap(), [ni, nj, nk], [16, 16, nk], 0))
     };
     let (labels, lshape) = generate_labels(&base);
 
