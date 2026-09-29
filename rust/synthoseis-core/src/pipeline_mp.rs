@@ -12,9 +12,10 @@ use synthoseis_seismic::ricker;
 use crate::parity;
 use crate::pipeline::{E2eConfig, E2eReport, TINY_DIGI};
 use crate::pipeline_stream::{
-    depth_trends, fault_model, generate_chunked, generate_fault_labels, generate_labels,
+    fault_model, generate_chunked, generate_fault_labels, generate_labels,
     resolve_chunk_shape, write_strip_partition, SeismicFilters, WorkingSetStats,
 };
+use crate::rock_physics::elastic_model;
 
 /// Default path for the JobPartitionPlan JSON written next to a multiprocess store.
 pub fn multiprocess_plan_path(store_path: &Path) -> std::path::PathBuf {
@@ -155,8 +156,7 @@ pub fn run_worker_partition(
 
     let (labels, shape) = generate_labels(cfg);
     let chunks = resolve_chunk_shape(cfg);
-    let [_, _, nk] = shape;
-    let trends = depth_trends(nk);
+    let trends = elastic_model(cfg, &labels, shape);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
 
     // Each worker rebuilds the (deterministic) fault model and evaluates only
@@ -320,6 +320,7 @@ mod tests {
             samples: 8,
             store_path: Some(path.clone()),
             chunk_shape: Some([2, 4, 8]),
+            rock_physics: Default::default(),
         };
         let (report, stats) = run_e2e_multiprocess(&cfg, 4).expect("multiprocess");
         assert_eq!(report.status, "ok-e2e-multiprocess");
