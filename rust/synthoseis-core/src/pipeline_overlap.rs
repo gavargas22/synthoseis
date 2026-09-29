@@ -9,9 +9,10 @@ use synthoseis_seismic::ricker;
 use crate::parity;
 use crate::pipeline::{E2eConfig, E2eReport, TINY_DIGI};
 use crate::pipeline_stream::{
-    depth_trends, fuse_tile_filtered, generate_chunked, generate_labels, resolve_chunk_shape,
+    fuse_tile_filtered, generate_chunked, generate_labels, resolve_chunk_shape,
     SeismicFilters, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
 };
+use crate::rock_physics::elastic_model;
 
 type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>);
 
@@ -73,11 +74,16 @@ pub fn run_e2e_streaming_overlapped(
         Ok(())
     });
 
-    let trends = depth_trends(nk);
+    let trends = elastic_model(cfg, &labels, shape);
     let wavelet = ricker(40.0, TINY_DIGI, 1);
     let mut tile_angles = vec![0.0f32; ci * cj * nk];
-    // Trends + trace scratch + wavelet + tile output + exactly one writer-owned chunk.
-    let fixed_bytes = 9 * nk * 8 + 4 * nk * 4 + nk * 8 + wavelet.len() * 8;
+    // Elastic model + trace scratch + wavelet (+ tile Vp/Vs/rho for the
+    // rock-physics model) + tile output + exactly one writer-owned chunk.
+    let fixed_bytes = trends.model_bytes()
+        + 4 * nk * 4
+        + nk * 8
+        + wavelet.len() * 8
+        + props_tile_bytes(&trends, ci * cj * nk);
     let tile_bytes = tile_angles.capacity() * 4;
     let in_flight_bytes = ci * cj * ck * (4 + 1);
     stats.peak_temp_bytes = fixed_bytes + tile_bytes + in_flight_bytes;
@@ -189,6 +195,15 @@ pub fn run_e2e_streaming_overlapped(
     ))
 }
 
+/// Tile-scale Vp / Vs / rho bytes the rock-physics fuse path holds.
+fn props_tile_bytes(model: &crate::rock_physics::ElasticModel, tile_voxels: usize) -> usize {
+    if model.is_legacy_toy() {
+        0
+    } else {
+        3 * tile_voxels * 4
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +220,7 @@ mod tests {
             samples: shape[2],
             store_path: Some(dir.path().join("overlap.mdio")),
             chunk_shape: Some(chunks),
+            rock_physics: Default::default(),
         };
         let (report, stats) = run_e2e_streaming_overlapped(&cfg).expect("overlap e2e");
         let (reference, _) = generate_chunked(&cfg);
@@ -214,7 +230,10 @@ mod tests {
         assert_eq!(report.parity.label_iou, 1.0);
         assert_eq!(report.parity.angle_mae, 0.0);
         assert!(stats.is_bounded_by_chunk(64), "unbounded stats: {stats:?}");
-        let expected_peak = 9 * shape[2] * 8
+        let (labels, _) = generate_labels(&cfg);
+        let model = elastic_model(&cfg, &labels, shape);
+        let expected_peak = model.model_bytes()
+            + props_tile_bytes(&model, chunks[0] * chunks[1] * shape[2])
             + 4 * shape[2] * 4
             + shape[2] * 8
             + ricker(40.0, TINY_DIGI, 1).len() * 8
