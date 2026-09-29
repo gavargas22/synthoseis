@@ -263,6 +263,13 @@ before `postprocess_rfc_cubes`:
    called `wb_plus_15samples`, so `wb / digi + 15` was probably intended. As
    written, for digi = 4 the threshold is `0.84 ×` the seabed sample, i.e.
    slightly *above* the seabed.
+
+   **Rust default: the cutoff is the actual seabed** (`k >= seabed`, only
+   sub-seabed reflectivity feeds `data_std`). `NoiseConfig::legacy_seabed` /
+   `--noise-legacy-seabed` restores the exact legacy expression. On the
+   32×32×96 seed-7 test cube (seabed 0.5–3.7 samples), `data_std` goes from
+   7.849921e-3 (legacy mask) to 7.829226e-3 (seabed), −0.26 %; the noise
+   amplitude scales by the same factor.
 5. `sn_db` is drawn per model from a triangular distribution over
    `signal_to_noise_ratio_db` (example config 7.5 / 12.5 / 17.5 dB).
    `_calculate_snr_after_lateral_filter` is never called.
@@ -274,7 +281,7 @@ before `postprocess_rfc_cubes`:
 | numpy `default_rng` stream, `exponential` × `binomial` sign | **Philox4x32-10** counter-based RNG (Random123 known-answer tests pass), key = SplitMix64(seed ^ salt), counter = global voxel index `(i·nj + j)·nk + k`. One 128-bit block per voxel gives two independent unit Laplace draws `(n0, n45)`: `−ln(u)` with `u = (m + 1)/2^53` from the top 53 bits and the sign from bit 0 |
 | `n0·cos² + n45·sin²` | same, with `(w0, w45)` = `hilterman_noise_weights` (radians, the default) or, with `legacy_angle_weights`, `legacy_degree_noise_weights` (`math.cos(deg)`, exact legacy) |
 | `/ weighted.std()` (sample std of the whole cube) | `/ sqrt(2 (w0² + w45²))`, the analytic population std of the mix. This needs no second pass, and every tile knows its scale up front. It is identical in expectation; the relative gap is `O(1/sqrt(N))` (0.04–0.14 % on 97 k voxels) |
-| `data_std` = `rfc_raw[mid][mask].std()` (float32 numpy) | `noise_signal_std`: one streaming pass that fuses the raw reflectivity at `NOISE_NORM_ANGLE_DEG` (15°) one inline row at a time (memory = one `nj × nk` row). Samples `k >= legacy_noise_mask_threshold(seabed, digi)` of the `nk − 1` Zoeppritz samples are reduced with Welford in fixed global `(i, j, k)` order, in f64. The result does not depend on chunking or workers, and every worker or process recomputes the same bits |
+| `data_std` = `rfc_raw[mid][mask].std()` (float32 numpy) | `noise_signal_std`: one streaming pass that fuses the raw reflectivity at `NOISE_NORM_ANGLE_DEG` (15°) one inline row at a time (memory = one `nj × nk` row). Samples `k >= seabed` (default) or `k >= legacy_noise_mask_threshold(seabed, digi)` (`legacy_seabed`), via `noise_mask_threshold`, of the `nk − 1` Zoeppritz samples are reduced with Welford in fixed global `(i, j, k)` order, in f64. The result does not depend on chunking or workers, and every worker or process recomputes the same bits |
 | `noise.astype(f32) + rfc_raw` | `WeightedNoise::sample(g) = f32(mix · scale)`, added in f32 to the fused raw-reflectivity tile |
 | seabed `faulted_depth_maps[..., 0]` | toy seabed `fault_seabed(cfg)` (top horizon, unfaulted) in samples × digi |
 
@@ -316,8 +323,18 @@ does this twice: legacy as written (`legacy_degrees`), and legacy with the
 radian fix (`radians`).
 
 `noise_pipeline.rs::noise_statistics_match_legacy` compares 16 Rust seeds
-(spectra from 4) against those references. `SE` below is the legacy
-seed-to-seed std × `sqrt(1/64 + 1/S_rust)`.
+(spectra from 4) against those references, with `legacy_seabed = true` (the
+legacy mask). `SE` below is the legacy seed-to-seed std × `sqrt(1/64 +
+1/S_rust)`.
+
+`noise_statistics_default_seabed` runs the same comparison in the default
+mode. Its `data_std` is checked against the fixture's `seabed_data_std`:
+numpy, with the legacy masking code (`mute_above_seafloor`) applied at the
+seabed. Rust gives 7.829225678e-3 against 7.829225622e-3 (7e-9 relative). The
+std and mean references are rescaled by `seabed_data_std / legacy_data_std`.
+Kurtosis, spectrum and correlation do not depend on scale and are compared
+unchanged. The results match the table below, with std −0.14 % … +0.04 %
+against the rescaled 1.856602e-3.
 
 | Statistic | Tolerance | Result (worst case over 2 modes × 3 angles) |
 |---|---|---|
@@ -337,9 +354,11 @@ Rust noise to the real legacy `apply_bandlimits` + `apply_lateral_filter`
 **bit for bit**: 98,304 of 98,304 samples, max error 0. The 16×16 and 5×7
 tilings are also bit-identical.
 
-**Invariance** (`noise_pipeline.rs`, exact `to_bits`, four noise configs:
-noise only with the Ricker kept, legacy chain with bandpass + lateral 3,
-`keep_ricker` + lateral 5, legacy weights + bandpass). Checked across:
+**Invariance** (`noise_pipeline.rs`, exact `to_bits`, six noise configs.
+Four use the default seabed cutoff: noise only with the Ricker kept, legacy
+chain with bandpass + lateral 3, `keep_ricker` + lateral 5, and legacy
+weights + bandpass. Two use `legacy_seabed`: the legacy chain, and fully
+legacy noise with degree weights and the legacy mask). Checked across:
 
 - chunk shapes 24×20, 8×5, 5×7, 1×20, 24×1 (ck 16), 7×3 (ck 32), plus the
   classic path;
@@ -368,8 +387,9 @@ inter-angle correlation, for both weightings).
     that.
   - The seabed is the unfaulted toy top horizon. Legacy uses the faulted
     depth map and infills NaN/0 holes.
-  - The legacy `wb / (digi + 15) · digi` threshold and the degree weights
-    are replicated or selectable, not fixed.
+  - The legacy degree weights and the legacy `wb / (digi + 15) · digi`
+    `data_std` threshold can still be selected (`legacy_angle_weights`,
+    `legacy_seabed`). The defaults are radians and the true seabed.
 - `_scale_seismic` (global std → 100) and the rpm near/mid/far factors both
   need a global std pass.
 - The relative acoustic impedance deliverable (`apply_cumsum`): the kernel is
