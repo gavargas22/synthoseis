@@ -134,11 +134,17 @@ enum Commands {
         noise_legacy_seabed: bool,
         /// Reproduce master 10f4dcd elastic properties bit for bit: toy depth
         /// `k * 100 m` from the cube top and label >= 2 (including 255) as oil
-        /// sand. Default: the corrected legacy rock physics (4 m per sample,
-        /// one depth per layer below the seabed, water column, net-to-gross
-        /// mixing, closure fluids). See docs/rock-physics-port.md.
+        /// sand, legacy Zoeppritz (implies `--legacy-zoeppritz`). Default: the
+        /// corrected legacy rock physics (4 m per sample, one depth per layer
+        /// below the seabed, water column, net-to-gross mixing, closure
+        /// fluids). See docs/rock-physics-port.md.
         #[arg(long, default_value_t = false)]
         legacy_toy_depth: bool,
+        /// Evaluate Zoeppritz with the legacy kernel's `det` typo (bit-exact
+        /// to master 33a3a93) instead of the textbook Aki & Richards / bruges
+        /// expression (default). See docs/zoeppritz-fix.md.
+        #[arg(long, default_value_t = false)]
+        legacy_zoeppritz: bool,
         /// Sand/shale mixing: `inverse-velocity` (legacy default) or `backus`.
         #[arg(long, default_value = "inverse-velocity")]
         mixing: String,
@@ -239,6 +245,7 @@ fn parse_filters(
 
 fn parse_rock_physics(
     legacy_toy_depth: bool,
+    legacy_zoeppritz: bool,
     mixing: &str,
     net_to_gross: Option<f32>,
     first_random_layer: usize,
@@ -266,6 +273,8 @@ fn parse_rock_physics(
     }
     let rp = synthoseis_core::RockPhysicsConfig {
         legacy_toy_depth,
+        // `--legacy-toy-depth` implies the legacy Zoeppritz (master guarantee).
+        legacy_zoeppritz: legacy_zoeppritz || legacy_toy_depth,
         mixing,
         net_to_gross: match net_to_gross {
             Some(v) => synthoseis_core::NetToGross::Constant(v),
@@ -314,6 +323,7 @@ fn main() {
             noise_legacy_weights,
             noise_legacy_seabed,
             legacy_toy_depth,
+            legacy_zoeppritz,
             mixing,
             net_to_gross,
             first_random_layer,
@@ -384,6 +394,7 @@ fn main() {
             }
             let rock = parse_rock_physics(
                 legacy_toy_depth,
+                legacy_zoeppritz,
                 &mixing,
                 net_to_gross,
                 first_random_layer,

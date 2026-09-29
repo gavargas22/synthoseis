@@ -18,6 +18,10 @@ struct FuseParams {
     mode: u32, // 0: labels + 9 trends; 1: per-voxel tile props [vp, vs, rho]
     sin_t: f32, // sin(angle), computed on the host in f64
     cos_t: f32, // cos(angle), computed on the host in f64
+    legacy_det: u32, // 1: legacy `det` typo in the numerator, 0: textbook `d`
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: FuseParams;
@@ -105,7 +109,7 @@ fn asin_sin_cos(x: f32) -> SinCos {
 fn zoeppritz_pp(
     vp1: f32, vs1: f32, rho1: f32,
     vp2: f32, vs2: f32, rho2: f32,
-    sin_t: f32, cos_t: f32,
+    sin_t: f32, cos_t: f32, legacy_det: bool,
 ) -> f32 {
     let p = C(sin_t / vp1, 0.0);
     let t2 = asin_sin_cos(p.re * vp2);
@@ -160,15 +164,17 @@ fn zoeppritz_pp(
             c_scale(c_mul(c, cos_theta2), 1.0 / vp2),
         ),
     );
-    // Mirrors the CPU / legacy kernel term for term, including its use of
-    // `det` (not `d`) here: legacy `zoeppritz_kernel.py` and
-    // `tests/_zoeppritz_reference.py` write `aa + det * ct / vp1 * cp2 / vs2`,
-    // which differs from the textbook (bruges) `a + d * ...` at non-zero
-    // angles. The GPU follows the CPU so the two backends agree; see
-    // docs/rock-physics-port.md.
+    // Textbook (Aki & Richards 5.40, bruges) `a + d * cos(theta1)/vp1 *
+    // cos(phi2)/vs2`; `legacy_det` reproduces legacy `zoeppritz_kernel.py`,
+    // which writes `det` instead of `d` here. Mirrors
+    // synthoseis_seismic::zoeppritz_pp_form (ZoeppritzForm::{Exact, Legacy}).
+    var coef = d;
+    if (legacy_det) {
+        coef = det;
+    }
     let inner = c_add(
         a,
-        c_mul(c_mul(c_scale(c_mul(det, cos_theta), 1.0 / vp1), cos_phi2), C(1.0 / vs2, 0.0)),
+        c_mul(c_mul(c_scale(c_mul(coef, cos_theta), 1.0 / vp1), cos_phi2), C(1.0 / vs2, 0.0)),
     );
     let term2 = c_mul(c_mul(h, c_mul(p, p)), inner);
     let zoep = c_div(c_sub(term1, term2), det);
@@ -227,6 +233,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             scratch[base + k] = zoeppritz_pp(
                 p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, params.sin_t, params.cos_t,
+                params.legacy_det != 0u,
             );
         }
     }

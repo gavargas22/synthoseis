@@ -24,6 +24,9 @@
 //! * **Random depth shifts** per layer (and per property), keyed by seed and
 //!   layer, for layers deeper than [`RockPhysicsConfig::first_random_layer`].
 //! * **Fluids** from spill-point closures of each sand layer's post-fault top.
+//! * **Zoeppritz.** Textbook PP expression ([`ZoeppritzForm::Exact`]);
+//!   [`RockPhysicsConfig::legacy_zoeppritz`] (`--legacy-zoeppritz`) restores
+//!   the legacy `det` typo bit for bit (master 33a3a93 default output).
 //!
 //! Every quantity is either global and deterministic in the config (maps,
 //! draws) or computed per column from that column's labels, so the output does
@@ -32,7 +35,9 @@
 //! # Legacy toy model ([`ElasticModel::LegacyToy`])
 //! [`RockPhysicsConfig::legacy_toy_depth`] reproduces master 10f4dcd bit for
 //! bit: depth `k * 100 m` from the cube top, label 0 shale, 1 brine sand, any
-//! other label (including 255) oil sand.
+//! other label (including 255) oil sand, legacy Zoeppritz (the master
+//! guarantee needs the `det` typo, so `legacy_toy_depth` implies
+//! `legacy_zoeppritz`).
 
 use std::collections::VecDeque;
 
@@ -41,6 +46,7 @@ use synthoseis_rpm::{legacy_column_properties, LayerShifts, VoxelKind};
 use synthoseis_seismic::splitmix64;
 
 pub use synthoseis_rpm::{Elastic32, Fluid, MixingMethod};
+pub use synthoseis_seismic::ZoeppritzForm;
 
 use crate::pipeline::E2eConfig;
 
@@ -97,6 +103,9 @@ pub struct RockPhysicsConfig {
     /// Closures with fewer hydrocarbon voxels stay brine (legacy
     /// `min_closure_voxels_simple`).
     pub min_closure_voxels: usize,
+    /// Evaluate Zoeppritz with the legacy `det` typo instead of the textbook
+    /// expression. CLI `--legacy-zoeppritz`. Implied by `legacy_toy_depth`.
+    pub legacy_zoeppritz: bool,
 }
 
 impl Default for RockPhysicsConfig {
@@ -112,16 +121,29 @@ impl Default for RockPhysicsConfig {
             fluids: true,
             max_column_m: 150.0,
             min_closure_voxels: 500,
+            legacy_zoeppritz: false,
         }
     }
 }
 
 impl RockPhysicsConfig {
-    /// Master 10f4dcd behaviour (`--legacy-toy-depth`).
+    /// Master 10f4dcd behaviour (`--legacy-toy-depth`): toy depth and
+    /// legacy Zoeppritz.
     pub fn legacy_toy() -> Self {
         Self {
             legacy_toy_depth: true,
+            legacy_zoeppritz: true,
             ..Self::default()
+        }
+    }
+
+    /// Zoeppritz expression of this configuration: legacy when
+    /// `legacy_zoeppritz` or `legacy_toy_depth` is set, else textbook.
+    pub fn zoeppritz_form(&self) -> ZoeppritzForm {
+        if self.legacy_zoeppritz || self.legacy_toy_depth {
+            ZoeppritzForm::Legacy
+        } else {
+            ZoeppritzForm::Exact
         }
     }
 
@@ -501,6 +523,8 @@ pub struct RpmModel {
     pub shifts: Vec<LayerShifts>,
     pub step: f32,
     pub mixing: MixingMethod,
+    /// Zoeppritz expression used by every fuse path.
+    pub zoeppritz: ZoeppritzForm,
 }
 
 /// Elastic properties used by every fuse path.
@@ -570,6 +594,7 @@ impl RpmModel {
             shifts,
             step,
             mixing: rp.mixing,
+            zoeppritz: rp.zoeppritz_form(),
         }
     }
 
@@ -645,6 +670,14 @@ impl ElasticModel {
     /// `true` for the master toy model.
     pub fn is_legacy_toy(&self) -> bool {
         matches!(self, ElasticModel::LegacyToy(_))
+    }
+
+    /// Zoeppritz expression: always legacy for the master toy model.
+    pub fn zoeppritz_form(&self) -> ZoeppritzForm {
+        match self {
+            ElasticModel::LegacyToy(_) => ZoeppritzForm::Legacy,
+            ElasticModel::Rpm(m) => m.zoeppritz,
+        }
     }
 
     /// Fixed bytes held by the model (trends or maps).

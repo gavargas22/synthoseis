@@ -47,6 +47,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use cpu::{fuse_props_tile_cpu, fuse_tile_cpu, fuse_tile_scratch_bytes, props_f32};
 pub use device::{backend_status, gpu_device_available, FuseBackend};
+pub use synthoseis_seismic::ZoeppritzForm;
 
 static PREFER_GPU: AtomicBool = AtomicBool::new(false);
 
@@ -167,8 +168,12 @@ pub fn fuse_tile_dispatch(
 /// buffers) on the backend chosen like [`fuse_tile_dispatch`]: WGSL when
 /// [`prefer_gpu`] is set and an adapter exists, else the CPU adapter.
 ///
+/// `form` selects the Zoeppritz expression (textbook or the legacy `det`
+/// typo) on every backend.
+///
 /// This is the path of the default rock-physics model, whose properties
 /// depend on more than `(label, sample)`.
+#[allow(clippy::too_many_arguments)]
 pub fn fuse_props_tile_dispatch(
     vp: &[f32],
     vs: &[f32],
@@ -176,17 +181,19 @@ pub fn fuse_props_tile_dispatch(
     nk: usize,
     wavelet: &[f64],
     angle_deg: f64,
+    form: ZoeppritzForm,
     tile_out: &mut [f32],
 ) -> FuseBackend {
     if prefer_gpu() && gpu_device_available() {
-        return fuse_props_tile_gpu(vp, vs, rho, nk, wavelet, angle_deg, tile_out);
+        return fuse_props_tile_gpu(vp, vs, rho, nk, wavelet, angle_deg, form, tile_out);
     }
-    fuse_props_tile_cpu(vp, vs, rho, nk, wavelet, angle_deg, tile_out);
+    fuse_props_tile_cpu(vp, vs, rho, nk, wavelet, angle_deg, form, tile_out);
     FuseBackend::Cpu
 }
 
 /// Request the GPU for a property tile; CPU fallback without the `wgpu`
 /// feature or an adapter. Returns the backend that ran.
+#[allow(clippy::too_many_arguments)]
 pub fn fuse_props_tile_gpu(
     vp: &[f32],
     vs: &[f32],
@@ -194,17 +201,20 @@ pub fn fuse_props_tile_gpu(
     nk: usize,
     wavelet: &[f64],
     angle_deg: f64,
+    form: ZoeppritzForm,
     tile_out: &mut [f32],
 ) -> FuseBackend {
     #[cfg(feature = "wgpu")]
     {
         if let Some(backend) =
-            crate::wgpu_fuse::fuse_props_tile_wgpu(vp, vs, rho, nk, wavelet, angle_deg, tile_out)
+            crate::wgpu_fuse::fuse_props_tile_wgpu(
+                vp, vs, rho, nk, wavelet, angle_deg, form, tile_out,
+            )
         {
             return backend;
         }
     }
-    fuse_props_tile_cpu(vp, vs, rho, nk, wavelet, angle_deg, tile_out);
+    fuse_props_tile_cpu(vp, vs, rho, nk, wavelet, angle_deg, form, tile_out);
     FuseBackend::Cpu
 }
 

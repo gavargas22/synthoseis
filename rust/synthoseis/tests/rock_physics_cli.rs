@@ -1,7 +1,8 @@
 //! CLI rock-physics flags: `--legacy-toy-depth` reproduces master 10f4dcd
 //! stores bit for bit (single process and multi-process), the corrected
-//! default differs, model flags reach multi-process workers, and invalid
-//! combinations exit 2.
+//! default differs, `--legacy-zoeppritz` reproduces master 33a3a93 stores
+//! (the rock-physics default before the Zoeppritz fix), model flags reach
+//! multi-process workers, and invalid combinations exit 2.
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -86,8 +87,52 @@ fn legacy_toy_depth_flag_reproduces_master_stores() {
             stdout.contains("rock physics: 4 m/sample below seabed, mixing=inverse-velocity"),
             "{stdout}"
         );
+        assert!(stdout.contains("zoeppritz=textbook"), "{stdout}");
         assert_ne!(store_hash(&default), master, "{name}: default must be the corrected model");
     }
+}
+
+// Angle-stack hashes of stores written by the master 33a3a93 binary (the
+// rock-physics default with the legacy Zoeppritz `det` typo).
+const MASTER33_PLAIN: u64 = 0xea04_aee3_0408_fd02;
+const MASTER33_RICH: u64 = 0x1210_0347_2974_e5f8;
+const MASTER33_MP: u64 = 0x7e4e_878d_f8b5_3e79;
+const MASTER33_MP_FLAGS: u64 = 0x6c65_d8f4_c50d_19c3;
+const MODEL_FLAGS: &[&str] = &[
+    "--mixing",
+    "backus",
+    "--net-to-gross",
+    "0.7",
+    "--first-random-layer",
+    "0",
+    "--no-fluids",
+];
+
+#[test]
+fn legacy_zoeppritz_flag_reproduces_master_33a3a93_stores() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mp_flags = with(MP, MODEL_FLAGS);
+    for (name, base, master) in [
+        ("plain", PLAIN, MASTER33_PLAIN),
+        ("rich", RICH, MASTER33_RICH),
+        ("mp", MP, MASTER33_MP),
+        ("mp-flags", &mp_flags[..], MASTER33_MP_FLAGS),
+    ] {
+        let legacy = dir.path().join(format!("{name}-lz.mdio"));
+        let out = run(&with(base, &["--legacy-zoeppritz"]), &legacy);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("zoeppritz=legacy (det typo)"), "{stdout}");
+        assert_eq!(store_hash(&legacy), master, "{name}: --legacy-zoeppritz vs master 33a3a93");
+        let fixed = dir.path().join(format!("{name}-fixed.mdio"));
+        assert!(run(base, &fixed).status.success());
+        assert_ne!(store_hash(&fixed), master, "{name}: default must use the textbook Zoeppritz");
+    }
+    // Redundant with the toy switch (which implies it): still master 10f4dcd.
+    let both = dir.path().join("both.mdio");
+    let out = run(&with(PLAIN, &["--legacy-toy-depth", "--legacy-zoeppritz"]), &both);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(store_hash(&both), MASTER_PLAIN);
 }
 
 #[test]

@@ -166,6 +166,9 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     if !rock.fluids {
         a.push("--no-fluids".into());
     }
+    if rock.legacy_zoeppritz {
+        a.push("--legacy-zoeppritz".into());
+    }
     a
 }
 

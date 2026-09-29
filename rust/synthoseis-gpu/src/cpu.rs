@@ -3,7 +3,7 @@
 //! Bit-identical to the former `synthoseis_core::fuse_tile_local` hot path:
 //! label→elastic props → Zoeppritz PP → `convolve_same_1d` per trace.
 
-use synthoseis_seismic::{convolve_same_1d, zoeppritz_pp};
+use synthoseis_seismic::{convolve_same_1d, zoeppritz_pp, zoeppritz_pp_form, ZoeppritzForm};
 
 /// Resolve (vp, vs, rho) for one label at depth sample `k` from the 9 RPM trends.
 #[inline]
@@ -89,13 +89,14 @@ fn fuse_trace(
     rho: &[f32],
     wavelet: &[f64],
     angle_deg: f64,
+    form: ZoeppritzForm,
     rfc_tr: &mut [f32],
     trace_f64: &mut [f64],
     out: &mut [f32],
 ) {
     let nk = vp.len();
     for k in 0..(nk - 1) {
-        rfc_tr[k] = zoeppritz_pp(
+        rfc_tr[k] = zoeppritz_pp_form(
             vp[k] as f64,
             vs[k] as f64,
             rho[k] as f64,
@@ -103,6 +104,7 @@ fn fuse_trace(
             vs[k + 1] as f64,
             rho[k + 1] as f64,
             angle_deg,
+            form,
         );
     }
     rfc_tr[nk - 1] = 0.0;
@@ -120,7 +122,9 @@ fn fuse_trace(
 /// `vp`, `vs`, `rho` and `tile_out` are `(ti, tj, nk)` row-major tile
 /// buffers (`n_traces = ti * tj`). Same per-trace arithmetic as
 /// [`fuse_tile_cpu`]: f32 properties, f64 Zoeppritz, `rfc[nk-1] = 0`,
-/// `convolve_same_1d`.
+/// `convolve_same_1d`. `form` selects the Zoeppritz expression
+/// ([`ZoeppritzForm::Legacy`] reproduces [`fuse_tile_cpu`]).
+#[allow(clippy::too_many_arguments)]
 pub fn fuse_props_tile_cpu(
     vp: &[f32],
     vs: &[f32],
@@ -128,6 +132,7 @@ pub fn fuse_props_tile_cpu(
     nk: usize,
     wavelet: &[f64],
     angle_deg: f64,
+    form: ZoeppritzForm,
     tile_out: &mut [f32],
 ) {
     assert!(nk >= 1);
@@ -143,6 +148,7 @@ pub fn fuse_props_tile_cpu(
             &rho[r.clone()],
             wavelet,
             angle_deg,
+            form,
             &mut rfc_tr,
             &mut trace_f64,
             &mut tile_out[r],
