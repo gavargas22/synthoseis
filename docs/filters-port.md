@@ -223,8 +223,21 @@ The direct sum is the more accurate of the two.
 
 filtfilt padding follows scipy's `method="pad"`, `padtype="odd"`,
 `padlen = 3·max(len(a), len(b))` exactly, including the float32 odd
-extension, so there is no edge gap. Traces need `nk > padlen`, the same
-constraint scipy raises.
+extension, so filtering the *same trace* has no edge gap. Traces need
+`nk > padlen`, the same constraint scipy raises.
+
+Two caveats, both measured on full legacy models in
+[`angle-stack-e2e-parity.md`](angle-stack-e2e-parity.md):
+
+- **Not the same trace as legacy.** The production pipeline bandpasses the
+  `nk`-sample Rust reflectivity trace, whose trailing sample is 0. Legacy
+  bandpasses its `nk − 1` samples. This moves the odd-extension edge and
+  changes the deepest samples of every trace: up to about 1.8e-2 against
+  stack peaks of 0.06–0.09 in the last 10 samples, and about 1e-3 at 50–100
+  samples above the base. This is a known discrepancy and it is not fixed.
+- **scipy version.** Bit-exactness holds against scipy 1.18.1 (closed-form
+  `lfilter_zi`). The repository's locked scipy 1.17.1 computes `zi` with
+  `linalg.solve`, and the outputs differ by a few f32 ulps.
 
 Figures, produced by `plot_filters_demo.py`:
 `filters_before_after.png` (inline, crossline and time slices: unfiltered,
