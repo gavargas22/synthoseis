@@ -483,6 +483,21 @@ fn unit_case(closures_per_layer: bool) -> E2eConfig {
     }
 }
 
+/// Sandy thin-unit layered cube with 4 faults (seed 7): segmentation joins
+/// closures across faults; `unsegmented` is the ef2dc42 model.
+fn segmented_case(unsegmented: bool) -> E2eConfig {
+    E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Layered,
+        rock_physics: RockPhysicsConfig {
+            sand_layer_fraction: Some(0.5),
+            sand_layer_thickness: 1.0,
+            closures_unsegmented: unsegmented,
+            ..RockPhysicsConfig::default()
+        },
+        ..cfg(7, [24, 20, 128], [8, 5, 128], 4)
+    }
+}
+
 fn rich(chunks: [usize; 3]) -> E2eConfig {
     E2eConfig {
         filters: FilterConfig {
@@ -543,6 +558,9 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
         // (tests/closure_units.rs), then the per-layer switch.
         unit_case(false),
         unit_case(true),
+        // 3D closure segmentation where faults join closures of different
+        // sand units (tests/closure_segments.rs).
+        segmented_case(false),
     ]
     .into_iter()
         .enumerate()
@@ -578,6 +596,13 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
                 bits(&generate_chunked(&base).0.angle_stack),
                 bits(&generate_chunked(&unit_case(true)).0.angle_stack),
                 "per unit vs per layer"
+            );
+        }
+        if n == 9 {
+            assert_ne!(
+                bits(&generate_chunked(&base).0.angle_stack),
+                bits(&generate_chunked(&segmented_case(true)).0.angle_stack),
+                "segmented vs unsegmented"
             );
         }
         if n == 5 {

@@ -133,6 +133,7 @@ pub mod pipeline_mp;
 pub mod pipeline_overlap;
 pub mod pipeline_stream;
 pub mod rock_physics;
+pub mod closure_segments;
 pub mod lithology;
 pub mod toy_geometry;
 

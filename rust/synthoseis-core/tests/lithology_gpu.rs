@@ -21,7 +21,8 @@ fn layered(seed: u64, shape: [usize; 3], rp: RockPhysicsConfig) -> E2eConfig {
 /// GPU fuse path (WGSL when an adapter exists, else the CPU fallback) vs CPU
 /// on the Markov lithology.
 /// Also with closures per sand unit on a multi-layer unit (seed 6, fraction
-/// 0.4, thickness 3; see tests/closure_units.rs).
+/// 0.4, thickness 3; see tests/closure_units.rs), and with 3D closure
+/// segmentation joining closures across faults (tests/closure_segments.rs).
 #[test]
 fn markov_gpu_matches_cpu() {
     for c in [
@@ -39,6 +40,16 @@ fn markov_gpu_matches_cpu() {
             RockPhysicsConfig {
                 sand_layer_fraction: Some(0.4),
                 sand_layer_thickness: 3.0,
+                ..RockPhysicsConfig::default()
+            },
+        ),
+        // 3D closure segmentation joining closures across faults.
+        layered(
+            7,
+            [24, 20, 128],
+            RockPhysicsConfig {
+                sand_layer_fraction: Some(0.5),
+                sand_layer_thickness: 1.0,
                 ..RockPhysicsConfig::default()
             },
         ),

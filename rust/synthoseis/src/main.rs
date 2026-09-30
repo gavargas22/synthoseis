@@ -185,6 +185,11 @@ enum Commands {
         /// docs/closures-per-sand-unit.md.
         #[arg(long, default_value_t = false)]
         closures_per_layer: bool,
+        /// Legacy switch: closures per sand unit without 3D segmentation
+        /// across faults (master ef2dc42). See
+        /// docs/closure-segmentation-faults.md.
+        #[arg(long, default_value_t = false)]
+        closures_unsegmented: bool,
     },
 }
 
@@ -277,6 +282,7 @@ fn parse_rock_physics(
     first_random_layer: usize,
     no_fluids: bool,
     closures_per_layer: bool,
+    closures_unsegmented: bool,
 ) -> Result<synthoseis_core::RockPhysicsConfig, String> {
     let mixing = match mixing {
         "inverse-velocity" | "inv-vel" => synthoseis_core::MixingMethod::InverseVelocity,
@@ -298,6 +304,12 @@ fn parse_rock_physics(
                 .into(),
         );
     }
+    if closures_unsegmented && (legacy_toy_depth || no_fluids || closures_per_layer) {
+        return Err(
+            "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids or --closures-per-layer"
+                .into(),
+        );
+    }
     if closures_per_layer && (legacy_toy_depth || no_fluids) {
         return Err(
             "--closures-per-layer has no effect with --legacy-toy-depth or --no-fluids".into(),
@@ -315,6 +327,7 @@ fn parse_rock_physics(
         first_random_layer,
         fluids: !no_fluids,
         closures_per_layer,
+        closures_unsegmented,
         ..defaults
     };
     rp.validate()?;
@@ -364,6 +377,12 @@ fn apply_lithology(
         if arg == Some("markov") || sand_opts {
             return Err(
                 "--toy-lithology markov / --sand-layer-fraction / --sand-layer-thickness have no effect with the planar geometry (always alternating)"
+                    .into(),
+            );
+        }
+        if rock.closures_unsegmented {
+            return Err(
+                "--closures-unsegmented has no effect with the planar geometry (always per layer)"
                     .into(),
             );
         }
@@ -436,6 +455,7 @@ fn main() {
             sand_layer_fraction,
             sand_layer_thickness,
             closures_per_layer,
+            closures_unsegmented,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -508,6 +528,7 @@ fn main() {
                 first_random_layer,
                 no_fluids,
                 closures_per_layer,
+                closures_unsegmented,
             )
             .unwrap_or_else(|e| {
                 eprintln!("{e}");
