@@ -164,6 +164,16 @@ grid bit for bit.
   the filtfilt edge, and legacy writes them out uncropped. Rust now has the
   *same* edge; changing it (mirrored padding, a taper) is a later realism
   item, not part of this fix.
+- **Dead trailing sample:** for parity the last sample of every bandpassed
+  trace is an exact 0, so the bottom depth slice of every stack is constant
+  0 (noise-free even with noise on). It carries no geology and a network
+  could learn to spot it. Crop or mask it for training; the edge-handling
+  realism item (mirrored padding or a taper) should remove it.
+- **Ricker path:** legacy has no Ricker → bandpass chain (its dormant
+  wavelet path convolves the `nk − 1` trace and applies only the lateral
+  filter), so `--keep-ricker` is unchanged. The Rust Ricker + lateral path
+  matches the forced legacy wavelet path to ≤ 3e-8 down to the base; see
+  [`filters-port.md`](filters-port.md#trailing-sample-legacy-parity-bug-fix).
 - **Test:** `trailing_sample_bandpass_edge_matches_legacy_to_the_base`
   checks, per angle and model, that every depth band down to the last sample
   is within 8 ulp(peak) of legacy on the sampled columns, that the default

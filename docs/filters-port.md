@@ -118,7 +118,7 @@ see [`angle-stack-e2e-parity.md`](angle-stack-e2e-parity.md)). Now:
 |---|---|---|
 | bandpass on, Ricker skipped (default) | first `nk − 1` (the legacy trace) | written as 0, the fuse value; legacy has no sample there |
 | same with `bandpass_trailing_sample: true` / CLI `--bandpass-trailing-sample` | all `nk` | filtered (bit-identical to master before the fix) |
-| `keep_ricker: true` | all `nk` (unchanged, bit-identical to master `9d5d2051`) | filtered: a Ricker-convolved trace has real signal there |
+| `keep_ricker: true` | all `nk` (unchanged, bit-identical to master `9d5d2051`) | filtered: a Ricker-convolved trace has real signal there; legacy has no Ricker + bandpass path to match (see below) |
 | lateral only / filters off | no bandpass | unchanged |
 
 - `FilterConfig::bandpass_excludes_trailing_sample()` (`skips_ricker() &&
@@ -136,6 +136,15 @@ see [`angle-stack-e2e-parity.md`](angle-stack-e2e-parity.md)). Now:
   order-4 run that used to pass is now rejected unless the flag is given.
 - Edge handling itself is unchanged (scipy odd extension, `padlen = 3·max(len(a),
   len(b))`); mirrored padding or a taper is a later realism item.
+- **The zeroed trailing sample is a dead sample.** It exists only for legacy
+  parity: every bandpassed trace now ends in an exact 0 whatever the geology
+  above it, so the bottom depth slice of every angle stack is identically 0
+  (and, with noise on, noise-free). A network trained on these cubes could
+  learn to spot that slice, or use it as a depth / position cue. Crop the
+  last sample (legacy's own grid is `nk − 1`) or mask it in training until
+  the edge-handling realism item (mirrored padding or a taper at the trace
+  ends) lands; that item should remove the dead sample by giving the last
+  sample real, edge-treated signal instead of a hard 0.
 - Tests: `synthoseis-core/tests/bandpass_trailing_sample.rs` pins both modes'
   hashes for five configurations (planar and folded geometry, orders 2 and 4,
   lateral 1/3/5, with and without noise), pins the Ricker-only paths (filters
@@ -145,6 +154,38 @@ see [`angle-stack-e2e-parity.md`](angle-stack-e2e-parity.md)). Now:
   `filters_pipeline.rs` chunk-shape and worker/path invariance tests include
   the flag mode. `angle_stack_legacy_e2e.rs` checks the default against the
   real legacy generator all the way to the base.
+- **Ricker path (`--keep-ricker`): no legacy counterpart, left unchanged.**
+  Traced in legacy `datagenerator/Seismic.py` and checked by running the real
+  legacy `build_seismic_volumes` on the #35 fixture model (seed 3, nk = 510)
+  with every filter call logged:
+  - The default legacy chain never convolves with a wavelet:
+    `apply_bandlimits` (on `(5, 16, 16, 509)`, i.e. `nk − 1`) →
+    `apply_lateral_filter` → `apply_cumsum` (2–100 Hz on 509 samples);
+    `apply_wavelet` is never called.
+  - Legacy's only wavelet path, `bandlimit_volumes_wavelets`, runs only if
+    `cfg.wavelets` exists. `Parameters` never sets it and no config or
+    filter-spec `.npy` ships, so it is dormant. Forcing it (with legacy's own
+    `wavelets.ricker(40, 4 ms, 1)`, the exact taps of the Rust Ricker, max
+    difference 1.1e-16) shows `apply_wavelet` (`oaconvolve`, `mode="same"`)
+    on the `nk − 1` = 509-sample trace, then `apply_lateral_filter`, and
+    **no bandpass** on the stack; only its cumsum is bandpassed (2–100 Hz,
+    509 samples). The regular bandpassed cubes are still written from the
+    unconvolved reflectivity. (`wavelets.ricker` itself only seeds the
+    spectral template inside `generate_wavelet`.)
+  - So legacy never bandpasses a wavelet-convolved trace, and there is no
+    legacy Ricker → bandpass output for `--keep-ricker` to match. The Rust
+    analogue of the legacy wavelet path, Ricker + lateral filter without a
+    bandpass, already matches it to the base: on the fixture models
+    (5 angles × 2 seeds, first `nk − 1` samples) max |Δ| ≤ 1.5e-8 in every
+    depth band except ≤ 3e-8 beyond 200 samples, rel RMS ≤ 1.1e-7 (Ricker-convolved
+    reflectivity peaks 0.36–0.58; FFT `oaconvolve` vs direct convolution
+    rounding). A trailing 0 is a no-op for the first `nk − 1` outputs of a
+    "same" convolution, so that path has no trailing-sample gap.
+  - For scale only: if legacy's primitives were composed into a wavelet →
+    bandpass chain on `nk − 1` samples, `--keep-ricker` would differ from it
+    by 0.85–1.6e-2 in the last 10 samples (peaks 0.06–0.08), decaying like
+    the no-Ricker gap. Nothing in legacy produces that cube, so
+    `keep_ricker` keeps its contract (bit-identical to #25 / `9d5d2051`).
 - Legacy-reproduction goldens recorded before the fix with a bandpass
   (`rock_physics_cli.rs` RICH set, `legacy_toy_depth_switch_reproduces_master_10f4dcd`,
   `legacy_zoeppritz_reproduces_master_33a3a93`) now pass
@@ -469,7 +510,11 @@ inter-angle correlation, for both weightings).
   bandpass needs `nk > 27`.
 - The random draws of `lowfreq`, `highfreq` and `lateral_filter_size` from the
   config.
-- The wavelet path (`bandlimit_volumes_wavelets`) and augmentations / RMO.
+- The wavelet path (`bandlimit_volumes_wavelets`, dormant in legacy: see the
+  Ricker-path note under Trailing sample) and augmentations / RMO.
+- Edge-handling realism (mirrored padding or a taper at the trace ends). It
+  should also remove the dead, zeroed trailing sample that the legacy-parity
+  bandpass leaves in every trace.
 - CLI: `--bandpass` / `--lateral-filter` / `--noise-snr-db` currently require single-worker
   `--e2e --chunked`, like `--faults`. Multi-process children do not receive
   the flags yet. The library API supports every path.
