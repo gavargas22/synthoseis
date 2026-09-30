@@ -13,7 +13,7 @@ The Python tree at the repository root stays intact; this workspace lives under 
 | `synthoseis-py` | **maturin / PyO3** Python extension (`synthoseis_mdio`) over `synthoseis-io` |
 | `synthoseis-geo` | Geology / horizons kernels (plane fit, thickness clip, label fill) |
 | `synthoseis-closures` | Closure / trap kernels (label sizes, flood-fill, fluid masks) |
-| `synthoseis-seismic` | Seismic kernels (Zoeppritz RFC, wavelets, SNR) |
+| `synthoseis-seismic` | Seismic kernels (Zoeppritz RFC, wavelets, SNR, depth-to-time core: `docs/depth-to-time.md`) |
 | `synthoseis-rpm` | RPM depth-trend kernels (example + Tagilsk) |
 | `synthoseis-gpu` | Per-tile Zoeppritz + wavelet fuse (CPU software backend; optional `wgpu` probe) |
 

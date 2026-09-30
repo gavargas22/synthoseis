@@ -251,6 +251,99 @@ impl FaultConfig {
     }
 }
 
+/// Ricker peak frequency of the e2e pipeline (Hz), `ricker(40.0, dt, 1)`.
+pub const RICKER_PEAK_HZ: f64 = 40.0;
+
+/// Depth-to-time conversion settings (spec "depth-to-time conversion", §2).
+///
+/// **PR A: library only.** The conversion core (`synthoseis_seismic::twt_column`,
+/// `insert_spikes`, `point_sample_labels`, ...) and this config land first;
+/// no pipeline path reads it yet, it is not part of [`E2eConfig`] and there
+/// is no CLI. `enabled` defaults to `false`, so every output is unchanged by
+/// construction. PR B wires it into every path, adds `--legacy-depth-as-time`
+/// / `--dt-ms` / `--twt-samples` / `--twt-kernel` and flips the default.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeConfig {
+    /// Convert the seismic chain to two-way time (PR B default: `true`;
+    /// `false` = today's legacy depth-as-time axis).
+    pub enabled: bool,
+    /// Output sample interval (ms), 0.5–8.0. Drives the Ricker, the
+    /// Butterworth design and the MDIO `digi` attribute in time mode.
+    pub dt_ms: f64,
+    /// Output length `nt` (time samples). `None` = `nt₀ =
+    /// round(nz · (2·dz / 2000 m/s) / dt)` ([`synthoseis_seismic::default_twt_samples`]),
+    /// which is `nz` at the defaults. Valid range 16 ≤ nt ≤ 8·nz.
+    pub samples: Option<usize>,
+    /// Resampling kernel (`sinc` default, `linear` fast option).
+    pub kernel: synthoseis_seismic::TwtKernel,
+}
+
+impl Default for TimeConfig {
+    fn default() -> Self {
+        TimeConfig {
+            enabled: false,
+            dt_ms: TINY_DIGI,
+            samples: None,
+            kernel: synthoseis_seismic::TwtKernel::Sinc,
+        }
+    }
+}
+
+impl TimeConfig {
+    /// Output length for a depth model of `nz` cells of `dz` m: the explicit
+    /// [`TimeConfig::samples`] or `nt₀`. A pure function of the config.
+    pub fn output_samples(&self, nz: usize, dz: f64) -> usize {
+        self.samples
+            .unwrap_or_else(|| synthoseis_seismic::default_twt_samples(nz, dz, self.dt_ms))
+    }
+
+    /// Highest signal frequency the output must carry (Hz): the bandpass
+    /// high corner when the bandpass is on, else 2.5 × the Ricker peak
+    /// (100 Hz for 40 Hz).
+    pub fn signal_max_hz(filters: &FilterConfig) -> f64 {
+        match filters.bandpass_hz {
+            Some([_, hi]) => hi,
+            None => 2.5 * RICKER_PEAK_HZ,
+        }
+    }
+
+    /// Validate against the depth model and filters; returns `nt`.
+    ///
+    /// Errors (the CLI will exit 2 in PR B): `dt_ms` outside 0.5–8.0, `nt`
+    /// outside 16 ≤ nt ≤ 8·nz, or the output Nyquist constraint
+    /// `f_hi > 0.4 / dt` (spec §3.3). The depth-staircase constraint is a
+    /// warning ([`TimeConfig::staircase_warning`]).
+    pub fn validate(&self, nz: usize, dz: f64, filters: &FilterConfig) -> Result<usize, String> {
+        if !(0.5..=8.0).contains(&self.dt_ms) {
+            return Err(format!("dt-ms {} outside 0.5-8.0", self.dt_ms));
+        }
+        let nt = self.output_samples(nz, dz);
+        if nt < 16 || nt > 8 * nz {
+            return Err(format!("twt-samples {nt} outside 16..={} (8 x {nz} depth samples)", 8 * nz));
+        }
+        let f_hi = Self::signal_max_hz(filters);
+        if !synthoseis_seismic::output_nyquist_ok(f_hi, self.dt_ms) {
+            return Err(format!(
+                "dt-ms {} too coarse: highest signal frequency {f_hi} Hz exceeds 0.4/dt = {} Hz",
+                self.dt_ms,
+                0.4 / (self.dt_ms / 1000.0)
+            ));
+        }
+        Ok(nt)
+    }
+
+    /// Warning text when the per-cell depth staircase would not fall in the
+    /// kernel stopband (`dz > Vp_min · dt / 1.2`, spec §3.3 constraint 2).
+    pub fn staircase_warning(&self, dz: f64, vp_min_sediment: f64) -> Option<String> {
+        (!synthoseis_seismic::depth_staircase_ok(dz, vp_min_sediment, self.dt_ms)).then(|| {
+            format!(
+                "depth step {dz} m > Vp_min {vp_min_sediment} m/s x dt / 1.2 = {:.2} m: the depth staircase comb may alias into the band",
+                vp_min_sediment * self.dt_ms / 1000.0 / 1.2
+            )
+        })
+    }
+}
+
 impl Default for E2eConfig {
     fn default() -> Self {
         Self {
