@@ -26,9 +26,13 @@
 //!   relative-impedance deliverable is not wired into the Rust pipeline).
 //!
 //! Legacy stores `nk - 1` reflectivity samples per trace; the Rust fuse
-//! stores `nk` with a trailing 0. The parity tests run the Rust filters on
-//! the legacy `nk - 1` grid; `known_gap_trailing_sample_moves_bandpass_edge`
-//! measures what the Rust production `nk` convention does instead.
+//! stores `nk` with a trailing 0. The Rust filters (default mode) bandpass
+//! only the first `nk - 1` samples and leave the trailing sample 0, so the
+//! tests feed the full `nk`-sample fuse output through the production
+//! filters and compare the first `nk - 1` samples with legacy.
+//! `trailing_sample_bandpass_edge_matches_legacy_to_the_base` pins the fix
+//! and the size of the gap `--bandpass-trailing-sample` (the old whole-trace
+//! behaviour) reproduces.
 //!
 //! Results and tolerances are discussed in `docs/angle-stack-e2e-parity.md`.
 
@@ -176,7 +180,8 @@ fn legacy_grid(v: &[f32], nk: usize) -> Vec<f32> {
     v.chunks_exact(nk).flat_map(|t| t[..nk - 1].iter().copied()).collect()
 }
 
-/// Production filter config with the legacy model's own drawn parameters.
+/// Production filter config with the legacy model's own drawn parameters
+/// (default mode: the bandpass skips the trailing sample).
 fn filter_cfg(c: &Case, samples: usize) -> E2eConfig {
     let bp: Vec<f64> =
         c.j["bandpass_hz"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
@@ -200,10 +205,34 @@ fn legacy_form() -> ZoeppritzForm {
     RockPhysicsConfig { legacy_zoeppritz: true, ..RockPhysicsConfig::default() }.zoeppritz_form()
 }
 
-/// Rust filtered stack on the legacy `nk - 1` grid (bandpass + lateral).
-fn stack_on_legacy_grid(c: &Case, rfc_legacy_grid: &[f32]) -> Vec<f32> {
-    let mut v = rfc_legacy_grid.to_vec();
-    apply_filters_to_volume(&filter_cfg(c, c.nk() - 1), &mut v);
+/// Rust production filtered stack (bandpass + lateral) of a full
+/// `(ni, nj, nk)` fuse output, `trailing_sample` selecting
+/// `--bandpass-trailing-sample`. Returns the `(ni, nj, nk)` cube.
+fn production_stack(c: &Case, rfc_full: &[f32], trailing_sample: bool) -> Vec<f32> {
+    let mut cfg = filter_cfg(c, c.nk());
+    cfg.filters.bandpass_trailing_sample = trailing_sample;
+    let mut v = rfc_full.to_vec();
+    apply_filters_to_volume(&cfg, &mut v);
+    v
+}
+
+/// Default production stack on the legacy `nk - 1` grid. Asserts that the
+/// trailing sample the bandpass leaves out is 0 (the fuse's value, and what
+/// the lateral filter keeps for an all-zero depth slice).
+fn stack_on_legacy_grid(c: &Case, rfc_full: &[f32]) -> Vec<f32> {
+    let nk = c.nk();
+    let v = production_stack(c, rfc_full, false);
+    assert!(v.chunks_exact(nk).all(|t| t[nk - 1].to_bits() == 0), "trailing sample not 0");
+    legacy_grid(&v, nk)
+}
+
+/// Independent reference for the fix: the filters with the old whole-trace
+/// bandpass run on the legacy `nk - 1` grid (what #35's parity tests did).
+fn reference_on_legacy_grid(c: &Case, rfc_full: &[f32]) -> Vec<f32> {
+    let mut cfg = filter_cfg(c, c.nk() - 1);
+    cfg.filters.bandpass_trailing_sample = true;
+    let mut v = legacy_grid(rfc_full, c.nk());
+    apply_filters_to_volume(&cfg, &mut v);
     v
 }
 
@@ -367,8 +396,9 @@ fn legacy_reflectivity_matches_rust_legacy_zoeppritz() {
     }
 }
 
-/// Noise-free angle stacks (bandpass + lateral) and the cumsum deliverable on
-/// the legacy `nk - 1` grid vs legacy `postprocess_rfc_cubes`.
+/// Noise-free production angle stacks (bandpass + lateral, default mode, fed
+/// the full `nk`-sample fuse output) and the cumsum deliverable, on the
+/// legacy `nk - 1` grid, vs legacy `postprocess_rfc_cubes`.
 ///
 /// Not bit-exact over the full cube: 99.4–99.7 % of stack samples and
 /// 96.3–98.6 % of cumsum samples are identical, the rest differ at f32
@@ -389,10 +419,8 @@ fn legacy_reflectivity_matches_rust_legacy_zoeppritz() {
 #[test]
 fn legacy_noise_free_stacks_match_on_legacy_grid() {
     for c in load_cases() {
-        let nk = c.nk();
         for (a, &angle) in c.angles.iter().enumerate() {
-            let rfc = legacy_grid(&rust_reflectivity(&c, angle, legacy_form()), nk);
-            let stack = stack_on_legacy_grid(&c, &rfc);
+            let stack = stack_on_legacy_grid(&c, &rust_reflectivity(&c, angle, legacy_form()));
             let cumsum = cumsum_on_legacy_grid(&c, &stack);
             for (kind, rust, legacy) in
                 [("stack", &stack, &c.s_stack), ("cumsum", &cumsum, &c.s_cumsum)]
@@ -420,60 +448,88 @@ fn legacy_noise_free_stacks_match_on_legacy_grid() {
     }
 }
 
-/// KNOWN DISCREPANCY (not fixed here; this PR changes no output).
+/// FIXED: the bandpass trailing-sample edge now matches legacy to the base.
 ///
 /// The Rust fuse writes `nk` reflectivity samples per trace with a trailing
-/// 0; legacy has `nk - 1`. The production filters bandpass the `nk`-sample
-/// trace, and `filtfilt`'s odd extension about the last sample (0 instead of
-/// legacy's last reflectivity) plus the extra sample change the deepest part
-/// of every trace. Relative to legacy, over the first `nk - 1` samples:
-/// ≈ 1.2–1.8e-2 max |Δ| in the last 10 samples (stack peaks 0.06–0.09),
-/// ~1e-3 at 50–100 samples above the base, ≤ 1.4e-5 beyond 200 samples,
-/// relative RMS 5–16 % over the cube. Legacy itself is edge-affected there
-/// too (its 10 pad samples), but differently.
+/// 0; legacy has `nk - 1`. Before the fix the production filters bandpassed
+/// the whole `nk`-sample trace, and `filtfilt`'s odd extension about the last
+/// sample (0 instead of legacy's last reflectivity) plus the extra sample
+/// changed the deepest part of every trace (≈ 1.2–1.8e-2 max |Δ| in the last
+/// 10 samples against stack peaks of 0.06–0.09, relative RMS 5–16 %).
 ///
-/// This test pins the size and depth extent of the gap so that a fix (or a
-/// regression) shows up here; update it and `docs/angle-stack-e2e-parity.md`
-/// together.
+/// Default mode now bandpasses only the first `nk - 1` samples, so:
+/// * the default production stack equals the whole-trace filter run on the
+///   legacy `nk - 1` grid bit for bit (full cube), with the trailing sample 0;
+/// * against legacy, every depth band down to the last sample is within the
+///   fixture tolerance (8 ulp of the peak; the residual is the `lfilter_zi`
+///   and reflectivity-residue rounding of the parity test above);
+/// * `--bandpass-trailing-sample` still reproduces the old gap (pinned by
+///   its size and depth extent, so a regression in either mode shows here).
+///
+/// Update together with `docs/angle-stack-e2e-parity.md`.
 #[test]
-fn known_gap_trailing_sample_moves_bandpass_edge() {
+fn trailing_sample_bandpass_edge_matches_legacy_to_the_base() {
     const BANDS: [(usize, usize); 6] = [(0, 10), (10, 25), (25, 50), (50, 100), (100, 200), (200, usize::MAX)];
+    let band_of = |from_base: usize| BANDS.iter().position(|&(lo, hi)| from_base >= lo && from_base < hi).unwrap();
     for c in load_cases() {
         let nk = c.nk();
         for (a, &angle) in c.angles.iter().enumerate() {
             let full = rust_reflectivity(&c, angle, legacy_form());
-            let parity = stack_on_legacy_grid(&c, &legacy_grid(&full, nk));
-            let mut production = full.clone();
-            apply_filters_to_volume(&filter_cfg(&c, nk), &mut production);
-            let production = legacy_grid(&production, nk);
+            let reference = reference_on_legacy_grid(&c, &full);
+            let fixed = stack_on_legacy_grid(&c, &full);
+            let old = legacy_grid(&production_stack(&c, &full, true), nk);
+            let peak = c.legacy_stat("stack", a, "max_abs");
+            let tol = 8.0 * ulp_at(peak);
 
-            // Full cube, against the parity stack (= legacy to rounding, above).
-            let mut all = Diff::default();
-            let mut band = [0.0f64; 6];
+            // Fixed mode: bit-identical to the reference over the full cube.
+            assert_eq!(fnv_f32(&fixed), fnv_f32(&reference), "seed {} {angle}°", c.seed);
+            assert!(fixed.iter().zip(&reference).all(|(x, y)| x.to_bits() == y.to_bits()));
+
+            // Old mode, full cube vs the reference (= legacy to rounding).
+            let mut old_all = Diff::default();
+            let mut old_band = [0.0f64; 6];
             for t in 0..c.shape[0] * c.shape[1] {
                 for k in 0..nk - 1 {
-                    let (p, q) = (production[t * (nk - 1) + k], parity[t * (nk - 1) + k]);
-                    all.add(p, q);
-                    let from_base = nk - 2 - k;
-                    let b = BANDS.iter().position(|&(lo, hi)| from_base >= lo && from_base < hi).unwrap();
-                    band[b] = band[b].max((p as f64 - q as f64).abs());
+                    let (p, q) = (old[t * (nk - 1) + k], reference[t * (nk - 1) + k]);
+                    old_all.add(p, q);
+                    let b = band_of(nk - 2 - k);
+                    old_band[b] = old_band[b].max((p as f64 - q as f64).abs());
                 }
             }
-            // Sampled columns, directly against legacy.
-            let d_leg = diff_samples(&c, &production, &c.s_stack, a);
-            let peak = c.legacy_stat("stack", a, "max_abs");
+            // Both modes, sampled columns directly against legacy, by depth band.
+            let mut fixed_band = [0.0f64; 6];
+            let mut old_leg_band = [0.0f64; 6];
+            for (ci, &(i, j)) in c.columns.iter().enumerate() {
+                let o = c.trace(i, j);
+                for (k, &l) in c.s_stack[ci][a].iter().enumerate() {
+                    let b = band_of(nk - 2 - k);
+                    fixed_band[b] = fixed_band[b].max((fixed[o + k] as f64 - l as f64).abs());
+                    old_leg_band[b] = old_leg_band[b].max((old[o + k] as f64 - l as f64).abs());
+                }
+            }
+            let d_fixed = diff_samples(&c, &fixed, &c.s_stack, a);
+            let d_old = diff_samples(&c, &old, &c.s_stack, a);
+            let f = |v: &[f64; 6]| v.iter().map(|x| format!("{x:.1e}")).collect::<Vec<_>>().join(" ");
             println!(
-                "seed {} {angle:>2}°: production vs legacy columns max {:.3e} rel RMS {:.3e} | full cube max {:.3e} rel RMS {:.3e} (peak {:.3e}) | max |Δ| by samples above base [0,10) {:.1e} [10,25) {:.1e} [25,50) {:.1e} [50,100) {:.1e} [100,200) {:.1e} [200,) {:.1e}",
-                c.seed, d_leg.max_abs, d_leg.rel_rms(), all.max_abs, all.rel_rms(), peak,
-                band[0], band[1], band[2], band[3], band[4], band[5],
+                "seed {} {angle:>2}° (peak {peak:.3e}, 8 ulp {tol:.1e}) columns vs legacy: fixed max {:.2e} rel RMS {:.2e} | old max {:.2e} rel RMS {:.2e} | max |Δ| by samples above base [0,10) [10,25) [25,50) [50,100) [100,200) [200,): fixed {} | old {} | old full cube {} (rel RMS {:.3e})",
+                c.seed, d_fixed.max_abs, d_fixed.rel_rms(), d_old.max_abs, d_old.rel_rms(),
+                f(&fixed_band), f(&old_leg_band), f(&old_band), old_all.rel_rms(),
             );
-            // The gap exists and is concentrated at the base ...
-            assert!(band[0] > 5e-3 && band[0] < 5e-2, "basal gap {}", band[0]);
-            assert!(all.rel_rms() > 1e-2 && all.rel_rms() < 0.3, "rel RMS {}", all.rel_rms());
+            // Fixed: rounding-level parity in every band, base included.
+            for (b, &m) in fixed_band.iter().enumerate() {
+                assert!(m <= tol, "fixed band {:?}: max |Δ| {m:e} > {tol:e}", BANDS[b]);
+            }
+            assert!(d_fixed.rel_rms() <= 1e-7, "fixed rel RMS {}", d_fixed.rel_rms());
+
+            // Old (--bandpass-trailing-sample): the gap exists and is
+            // concentrated at the base ...
+            assert!(old_band[0] > 5e-3 && old_band[0] < 5e-2, "basal gap {}", old_band[0]);
+            assert!(old_all.rel_rms() > 1e-2 && old_all.rel_rms() < 0.3, "rel RMS {}", old_all.rel_rms());
+            assert!(old_leg_band[0] > 1e3 * tol, "old basal gap vs legacy {}", old_leg_band[0]);
             // ... and decays with distance from it.
-            assert!(band[3] < 2e-3, "50-100 samples above base {}", band[3]);
-            assert!(band[4] < 5e-4, "100-200 samples above base {}", band[4]);
-            assert!(band[5] < 5e-5, ">= 200 samples above base {}", band[5]);
+            assert!(old_band[3] < 2e-3, "50-100 samples above base {}", old_band[3]);
+            assert!(old_band[4] < 5e-4, "100-200 samples above base {}", old_band[4]);
+            assert!(old_band[5] < 5e-5, ">= 200 samples above base {}", old_band[5]);
         }
     }
 }

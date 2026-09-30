@@ -137,6 +137,7 @@ fn configs() -> Vec<FilterConfig> {
             bandpass_order: 2,
             lateral_size: 1,
             keep_ricker: false,
+            bandpass_trailing_sample: false,
             noise: Default::default(),
         },
         FilterConfig {
@@ -144,11 +145,17 @@ fn configs() -> Vec<FilterConfig> {
             bandpass_order: 4,
             lateral_size: 4,
             keep_ricker: false,
+            bandpass_trailing_sample: false,
             noise: Default::default(),
         },
         // Old combined behaviour (Ricker kept under the bandpass).
         FilterConfig {
             keep_ricker: true,
+            ..FilterConfig::legacy(4.0, 30.0, 3)
+        },
+        // Old whole-trace bandpass (--bandpass-trailing-sample).
+        FilterConfig {
+            bandpass_trailing_sample: true,
             ..FilterConfig::legacy(4.0, 30.0, 3)
         },
     ]
@@ -168,6 +175,7 @@ fn keep_ricker_is_bit_identical_to_master_filtered_output() {
                 bandpass_order: 2,
                 lateral_size: 1,
                 keep_ricker: false,
+                bandpass_trailing_sample: false,
                 noise: Default::default(),
             },
             0xc6ca285bba8f6a7b,
@@ -279,8 +287,9 @@ fn filtered_stack_invariant_to_chunk_shape() {
 fn filtered_stack_invariant_to_workers_and_paths() {
     let dir = tempdir().unwrap();
     let all = configs();
-    // Ricker skipped (legacy 4-30 Hz, lateral 3) and the keep_ricker variant.
-    let picked = [all[0].clone(), all[1].clone(), all[4].clone()];
+    // Ricker skipped (legacy 4-30 Hz, lateral 3), the keep_ricker variant and
+    // the --bandpass-trailing-sample variant.
+    let picked = [all[0].clone(), all[1].clone(), all[4].clone(), all[5].clone()];
     for (n, fc) in picked.into_iter().enumerate() {
         let (reference, _) = generate_chunked(&filtered([24, 20, 64], fc.clone()));
         let want = bits(&reference.angle_stack);
@@ -363,10 +372,35 @@ fn invalid_filter_config_is_an_error() {
         ..cfg(1, [8, 8, 64], [4, 4, 64], 0)
     };
     assert!(run_e2e_chunked(&nyquist).unwrap_err().contains("Nyquist"));
-    // 28 samples (> padlen 27) is accepted.
+    // The legacy-parity bandpass sees nk - 1 samples (the trailing
+    // reflectivity sample is excluded), so it needs nk - 1 > padlen 27:
+    // 29 samples is accepted, 28 is not ...
     let ok = E2eConfig {
+        filters: FilterConfig::legacy(4.0, 30.0, 3),
+        ..cfg(1, [8, 8, 29], [4, 4, 29], 0)
+    };
+    assert!(run_e2e_chunked(&ok).is_ok());
+    let short28 = E2eConfig {
         filters: FilterConfig::legacy(4.0, 30.0, 3),
         ..cfg(1, [8, 8, 28], [4, 4, 28], 0)
     };
-    assert!(run_e2e_chunked(&ok).is_ok());
+    assert!(run_e2e_chunked(&short28).unwrap_err().contains("got 27 of 28 samples"));
+    // ... unless the whole trace is filtered (--bandpass-trailing-sample,
+    // or keep_ricker): then 28 samples (> padlen 27) is accepted, as before.
+    for fc in [
+        FilterConfig {
+            bandpass_trailing_sample: true,
+            ..FilterConfig::legacy(4.0, 30.0, 3)
+        },
+        FilterConfig {
+            keep_ricker: true,
+            ..FilterConfig::legacy(4.0, 30.0, 3)
+        },
+    ] {
+        let ok = E2eConfig {
+            filters: fc,
+            ..cfg(1, [8, 8, 28], [4, 4, 28], 0)
+        };
+        assert!(run_e2e_chunked(&ok).is_ok());
+    }
 }

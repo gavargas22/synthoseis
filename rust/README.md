@@ -101,7 +101,8 @@ Those angle stacks are a synthetic formula, not legacy output. The end-to-end
 legacy comparison is `synthoseis-core/tests/angle_stack_legacy_e2e.rs`: the
 legacy elastic cubes of two full legacy Python models go through the Rust
 reflectivity → bandpass → lateral chain and are compared with legacy's own
-angle stacks. It also records a known gap at the base of the filtered traces.
+angle stacks, all the way to the base of the filtered traces (the old
+whole-trace bandpass edge gap is fixed; `--bandpass-trailing-sample` keeps it).
 See [`docs/angle-stack-e2e-parity.md`](../docs/angle-stack-e2e-parity.md).
 
 ## Single-worker e2e path

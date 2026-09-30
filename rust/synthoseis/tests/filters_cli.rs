@@ -1,5 +1,5 @@
-//! CLI filter flags: `--keep-ricker` requires `--bandpass`, and the summary
-//! reports whether the Ricker wavelet is skipped.
+//! CLI filter flags: `--keep-ricker` and `--bandpass-trailing-sample`
+//! require `--bandpass`, and the summary reports the wavelet / bandpass trace.
 use std::process::Command;
 
 fn run(extra: &[&str], store: &std::path::Path) -> std::process::Output {
@@ -90,4 +90,37 @@ fn noise_flags() {
         assert_eq!(out.status.code(), Some(2));
         assert!(String::from_utf8_lossy(&out.stderr).contains("require --noise-snr-db"));
     }
+}
+
+/// `--bandpass-trailing-sample` requires `--bandpass`, restores the old
+/// whole-trace bandpass (a different store) and is reported in the summary;
+/// the default leaves the trailing sample of every trace 0.
+#[test]
+fn bandpass_trailing_sample_flag() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let read = |p: &std::path::Path| synthoseis_io::MdioStore::open(p).unwrap().read_volume().unwrap();
+    let fixed = dir.path().join("fixed.mdio");
+    let out = run(&["--bandpass", "4,30"], &fixed);
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("bandpass trace: first nk-1 samples, trailing sample 0"), "{stdout}");
+
+    let old = dir.path().join("old.mdio");
+    let out = run(&["--bandpass", "4,30", "--bandpass-trailing-sample"], &old);
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("bandpass trace: all nk samples"), "{stdout}");
+
+    let (f, o) = (read(&fixed), read(&old));
+    assert_eq!(f.len(), o.len());
+    assert!(f.chunks_exact(64).all(|t| t[63].to_bits() == 0));
+    assert!(o.chunks_exact(64).any(|t| t[63] != 0.0));
+    assert_ne!(
+        f.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        o.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+    );
+
+    let out = run(&["--bandpass-trailing-sample"], &dir.path().join("bad.mdio"));
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--bandpass-trailing-sample requires --bandpass"));
 }

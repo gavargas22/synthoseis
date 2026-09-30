@@ -100,6 +100,56 @@ in legacy.
 - `generate_reflectivity(cfg, angle)` returns the raw pre-wavelet angle stack
   (legacy `rfc_raw` for one angle), for parity and QC.
 
+### Trailing sample (legacy parity bug fix)
+
+Legacy `create_rfc_volumes` produces `nk − 1` reflectivity samples per trace
+(one per interface; `rfc_raw` is one sample shorter than the elastic cube), and
+`apply_bandlimits` filters exactly those `nk − 1` samples. Legacy never has an
+`nk`-th reflectivity sample: augmentation crops the seismic and the labels to
+`cube_shape[2] + pad − 1`. The Rust fuse keeps the output grid at `nk` samples
+and writes the trailing sample as 0 ("no interface").
+
+Up to #35 the Rust bandpass filtered the whole `nk`-sample trace. The extra 0
+moved filtfilt's odd-extension edge and changed the deepest part of every trace
+(up to about 1.8e-2 against stack peaks of 0.06–0.09 in the last 10 samples;
+see [`angle-stack-e2e-parity.md`](angle-stack-e2e-parity.md)). Now:
+
+| `FilterConfig` | Bandpassed samples | Trailing sample |
+|---|---|---|
+| bandpass on, Ricker skipped (default) | first `nk − 1` (the legacy trace) | written as 0, the fuse value; legacy has no sample there |
+| same with `bandpass_trailing_sample: true` / CLI `--bandpass-trailing-sample` | all `nk` | filtered (bit-identical to master before the fix) |
+| `keep_ricker: true` | all `nk` (unchanged, bit-identical to master `9d5d2051`) | filtered: a Ricker-convolved trace has real signal there |
+| lateral only / filters off | no bandpass | unchanged |
+
+- `FilterConfig::bandpass_excludes_trailing_sample()` (`skips_ricker() &&
+  !bandpass_trailing_sample`) is the switch, applied in the shared
+  `bandpass_traces` used by `fuse_tile_filtered` (every tiled, streaming,
+  strip, multi-process and geometry-once path) and `apply_filters_to_volume`
+  (classic path). Tiles always hold whole traces, so tiling and worker
+  invariance are unaffected.
+- With noise on, the fuse adds noise to all `nk` samples; the trailing sample
+  is still written as 0, because legacy has neither signal nor noise there.
+  The lateral filter then sees an all-zero depth slice and keeps it 0.
+- The padlen check counts the filtered samples: default mode needs
+  `nk − 1 > padlen` (order 4: `nk ≥ 29`); `--bandpass-trailing-sample` and
+  `keep_ricker` still need `nk > padlen` (`nk ≥ 28`). A 28-sample
+  order-4 run that used to pass is now rejected unless the flag is given.
+- Edge handling itself is unchanged (scipy odd extension, `padlen = 3·max(len(a),
+  len(b))`); mirrored padding or a taper is a later realism item.
+- Tests: `synthoseis-core/tests/bandpass_trailing_sample.rs` pins both modes'
+  hashes for five configurations (planar and folded geometry, orders 2 and 4,
+  lateral 1/3/5, with and without noise), pins the Ricker-only paths (filters
+  off, lateral only, `keep_ricker`, noise without a bandpass) under both flag
+  values, checks that fixed mode equals the whole-trace filter on the first
+  `nk − 1` samples with a 0 trailing sample, and checks the padlen rule. The
+  `filters_pipeline.rs` chunk-shape and worker/path invariance tests include
+  the flag mode. `angle_stack_legacy_e2e.rs` checks the default against the
+  real legacy generator all the way to the base.
+- Legacy-reproduction goldens recorded before the fix with a bandpass
+  (`rock_physics_cli.rs` RICH set, `legacy_toy_depth_switch_reproduces_master_10f4dcd`,
+  `legacy_zoeppritz_reproduces_master_33a3a93`) now pass
+  `--bandpass-trailing-sample` / `bandpass_trailing_sample: true`.
+
 ## Tiling invariance: halos
 
 - **Bandpass.** `filtfilt` works along the trace. Every generation path already
@@ -163,8 +213,10 @@ path test runs the two skip configs and the `keep_ricker` config. The cube is fa
 - `filters_disabled_by_default_is_bit_identical_to_master`: FNV hashes of labels
   and angle stacks recorded on master `ca11a457` for three configurations,
   faulted and unfaulted.
-- `invalid_filter_config_is_an_error`: `nk ≤ padlen` (27 for order 4) or a
-  corner at or above Nyquist returns `Err` from every `run_*` entry point.
+- `invalid_filter_config_is_an_error`: too few filtered samples (`nk − 1 ≤
+  padlen` by default, `nk ≤ padlen` with `--bandpass-trailing-sample` or
+  `keep_ricker`; padlen is 27 for order 4) or a corner at or above Nyquist
+  returns `Err` from every `run_*` entry point.
 
 ## Parity against legacy Python
 
@@ -207,6 +259,11 @@ Rust filtered stack (Ricker skipped):
 | 64×64×128, seed 7, 4 faults | 4–30 Hz o4, lateral 3 | skip vs legacy on Rust reflectivity | 0 (peak 3.18) | 100 % of 524,288 | 0 |
 | same | same | `keep_ricker` vs legacy on Rust Ricker stack | 0 (peak 3.64) | 100 % | — |
 
+(Measured before the trailing-sample fix, filtering the whole `nk`-sample
+trace on both sides; the skip rows are reproduced by
+`--bandpass-trailing-sample`. The default now filters `nk − 1` samples, see
+[Trailing sample](#trailing-sample-legacy-parity-bug-fix).)
+
 Mean-spectrum peak moves from 25.4 Hz (Ricker + bandpass) to 7.8 Hz
 (reflectivity + bandpass, as in legacy; the toy reflectivity is red). Figure:
 `ricker_skip_spectra.png` (inputs with |W(f)| and |H(f)|², before/after
@@ -223,18 +280,20 @@ The direct sum is the more accurate of the two.
 
 filtfilt padding follows scipy's `method="pad"`, `padtype="odd"`,
 `padlen = 3·max(len(a), len(b))` exactly, including the float32 odd
-extension, so filtering the *same trace* has no edge gap. Traces need
-`nk > padlen`, the same constraint scipy raises.
+extension, so filtering the *same trace* has no edge gap. The filtered trace
+needs more than `padlen` samples, the same constraint scipy raises.
 
-Two caveats, both measured on full legacy models in
+Two notes, both measured on full legacy models in
 [`angle-stack-e2e-parity.md`](angle-stack-e2e-parity.md):
 
-- **Not the same trace as legacy.** The production pipeline bandpasses the
-  `nk`-sample Rust reflectivity trace, whose trailing sample is 0. Legacy
-  bandpasses its `nk − 1` samples. This moves the odd-extension edge and
-  changes the deepest samples of every trace: up to about 1.8e-2 against
-  stack peaks of 0.06–0.09 in the last 10 samples, and about 1e-3 at 50–100
-  samples above the base. This is a known discrepancy and it is not fixed.
+- **Same trace as legacy (fixed).** Up to #35 the production pipeline
+  bandpassed the `nk`-sample Rust reflectivity trace, trailing 0 included,
+  while legacy bandpasses its `nk − 1` samples. That moved the
+  odd-extension edge (up to about 1.8e-2 against stack peaks of 0.06–0.09 in
+  the last 10 samples). The default now bandpasses the first `nk − 1`
+  samples and matches legacy to rounding all the way to the base (max
+  |Δ| ≤ 9.3e-10 on the sampled columns); `--bandpass-trailing-sample` keeps
+  the old behaviour. See [Trailing sample](#trailing-sample-legacy-parity-bug-fix).
 - **scipy version.** Bit-exactness holds against scipy 1.18.1 (closed-form
   `lfilter_zi`). The repository's locked scipy 1.17.1 computes `zi` with
   `linalg.solve`, and the outputs differ by a few f32 ulps.
@@ -419,7 +478,8 @@ inter-angle correlation, for both weightings).
 
 ```bash
 cd rust
-# CLI (single worker, chunked); traces need > 27 samples for an order-4 bandpass
+# CLI (single worker, chunked); an order-4 bandpass needs >= 29 samples (>= 28 with
+# --bandpass-trailing-sample or --keep-ricker)
 cargo run -p synthoseis -- run --e2e --chunked --shape 48,48,64 --faults 3 \
     --bandpass 4,30 --lateral-filter 3 --store /tmp/filtered.mdio
 # kernel parity vs the legacy fixtures, then the pipeline invariance tests
@@ -431,6 +491,9 @@ python synthoseis-core/examples/plot_filters_demo.py /tmp/fd /tmp/filters
 python synthoseis-core/examples/plot_ricker_skip.py /tmp/fd /tmp/ricker_skip_spectra.png
 # old combined behaviour (Ricker, then bandpass)
 cargo run -p synthoseis -- run --e2e --chunked --bandpass 4,30 --keep-ricker --store /tmp/keep.mdio
+# old whole-trace bandpass (trailing sample included; master before the fix)
+cargo run -p synthoseis -- run --e2e --chunked --bandpass 4,30 --bandpass-trailing-sample --store /tmp/old.mdio
+cargo test -p synthoseis-core --test bandpass_trailing_sample
 # regenerate the fixture
 python ../tests/fixtures/generate_seismic_filters.py
 # noise (legacy add_weighted_noise, opt-in): CLI, tests, legacy stats + figures
