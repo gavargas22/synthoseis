@@ -38,8 +38,10 @@ samples: None, kernel: Sinc }` provides:
 
 - `output_samples(nz, dz)`;
 - `validate(nz, dz, filters)`: `dt` must be in 0.5–8.0, `16 ≤ nt ≤ 8·nz`, and
-  the output Nyquist rule applies, with `f_hi` = the bandpass high corner, or
-  2.5 × the 40 Hz Ricker peak;
+  the output Nyquist rule applies. `f_hi` is the bandpass high corner when
+  the bandpass replaces the Ricker (`skips_ricker()`), otherwise 2.5 × the
+  40 Hz Ricker peak = 100 Hz. That includes `--bandpass --keep-ricker`, so
+  dt = 8 ms fails there;
 - `staircase_warning`.
 
 It is **not** a field of `E2eConfig`, and there is no CLI yet (§8: "library
@@ -56,9 +58,10 @@ In `rust/synthoseis-seismic/tests/depth_to_time.rs`:
 | 5.1 | `constant_3000_times` | `T_k = 8k/3` to 2.3e-11 ms over 1000 cells (gate 1e-9). |
 | 5.1 | `constant_4500_short_column_half_space` | nz = nt = 256: `T_nz` = 455.11 ms, so the column is short from sample 114. Every label below forward-fills the last cell, and there is no reflectivity below the last interface's band-limited tail. |
 | 5.2 | `linear_gradient_closed_form` | V0 = 1600 m/s, k = 0.6 1/s, dz = 4 m, nz = 250, f32 midpoint Vp: `T(1000 m)` = 1061.5123 ms (closed form 1061.5124). Max \|T_k − t(k·dz)\| = **1.47e-4 ms** (gate 1e-3 ms). |
-| 5.3 (synthetic part) | `salt_pull_up_synthetic_columns` | Base reflection at **640.000 ms** (column A) and **568.884 ms** (column B, salt), against 640.000 / 568.889 predicted. Pull-up is **71.116 ms** against 71.111 ms (gates ±0.1 ms). |
-| 5.6 | `thin_bed_wedge_tuning` | 400 cases, 0–20 ms, random sub-sample offsets. `sinc` max error **0.136 %** of the wavelet peak (mean 0.068 %, worst tuning-peak error 0.088 %; gate 0.5 %). `linear` max 21.5 %, mean 12.8 % (reported only). |
-| §3.3 | `kaiser_sinc_table_properties`, `long_column_truncation`, `nyquist_and_staircase_constraints` | The kernel interpolates exactly and is deterministic, with DC gain within 2.0e-4 over all phases. Long-column skipping keeps the tails. The constraint helpers behave as specified. |
+| 5.3 (synthetic part) | `salt_pull_up_synthetic_columns` | Base reflection at **640.000 ms** (column A) and **568.884 ms** (column B, salt), against 640.000 / 568.889 predicted. Pull-up is **71.116 ms** against 71.111 ms (gates ±0.02 ms, on a 16× FFT pick). The `linear` kernel fails the gate by design: column B 568.712 ms (−0.177 ms), pull-up 71.288 ms. |
+| 5.6 | `thin_bed_wedge_tuning` | 400 cases, 0–20 ms, random sub-sample offsets. `sinc` max error **0.136 %** of the single-wavelet peak (mean 0.068 %, worst tuning-peak error 0.088 %; gate 0.5 %). `linear` max 21.5 %, mean 12.8 % (reported only). |
+| §3.3 | `kaiser_sinc_table_properties`, `long_column_truncation`, `nyquist_and_staircase_constraints` | The kernel interpolates exactly and is deterministic, with DC gain within 2.0e-4 over all phases (gate 5e-4). Long-column skipping keeps the tails. The constraint helpers behave as specified. |
+| §3.3 | `kaiser_sinc_frequency_response` | Continuous Fourier transform of the tabulated kernel (table rows plus phase interpolation): **−0.14 dB at 0.8 f_N** (gate ≥ −0.2 dB), −6.02 dB at f_N, **−35.61 dB at 1.2 f_N** (gate ≤ −30 dB), −78.1 dB at 1.4 f_N, ≤ −77.3 dB beyond. The closed form gives the same values to 0.01 dB. (The spec table lists −0.1 dB at 0.8 f_N; the measurement is −0.14 dB.) |
 
 `rust/synthoseis-core/tests/time_config.rs` checks the defaults (disabled,
 `nt₀ = nz`; dt = 2 ms gives 2·nz), the validation matrix and the staircase
@@ -66,19 +69,23 @@ warning.
 
 **Salt pick.** The spec asks for a "parabolic sub-sample pick". A three-point
 parabola on the 4 ms samples of a 40 Hz Ricker is biased by up to about
-0.17 ms, depending on the sub-sample phase. For column B it gives 568.736 ms
-(−0.153 ms), which would fail the 0.1 ms gate for a reason unrelated to the
-conversion. The test therefore picks on a **16× FFT-upsampled** trace
-(spectrum zero padding, a direct DFT in test code), then fits a parabola
-through the three best fine samples. It deliberately does not use the
-conversion's windowed-sinc kernel, so the test does not grade the kernel with
-itself (Strata's review condition). The test prints the FFT, three-point and
-predicted picks.
+0.17 ms, depending on the sub-sample phase: for column B it gives 568.736 ms
+(−0.153 ms). The gate is instead applied to a pick on a **16× FFT-upsampled**
+trace (spectrum zero padding, a direct DFT in test code), followed by a
+parabola through the three best fine samples. That gives 568.884 ms
+(−0.005 ms) and a pull-up of 71.116 ms. The reconstruction deliberately does
+not use the conversion's windowed-sinc kernel, so the test doesn't grade the
+kernel with itself (Strata's review condition). Strata's independent picks
+agree: FFT 568.884 ms, pull-up 71.116 ms, and an analytic-Ricker
+least-squares fit of 568.889 ms. The gate is ±0.02 ms, which the 2-tap
+`linear` kernel fails (−0.177 ms); the test asserts that failure. The test
+prints the FFT, three-point and predicted picks.
 
-**Linear wedge number.** The spec's numpy check quoted up to 54 % for
-`linear`. This test measures 21.5 % against the untapered analytic Ricker. The
-number is reported, not gated; the setup (reference normalisation and
-wavelet length) probably differs.
+**Linear wedge number.** The metric divides the max error by the peak of a
+single wavelet (the analytic Ricker peak). The spec's 54 % divided by the
+peak of the two-spike trace, which shrinks as the spikes merge, so that
+figure tends toward about 63 %. Under our metric, 21.5 % is correct. It is
+reported, not gated.
 
 **Tests owned by PR B** (spec §8): tiling invariance (5.4, including dt = 2 ms
 and nt = nz + 37), the label round trip (5.5), the demo end-to-end checks

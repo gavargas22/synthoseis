@@ -41,6 +41,13 @@ fn validation_matrix() {
     assert_eq!(TimeConfig::signal_max_hz(&bp), 30.0);
     assert_eq!(ok(&TimeConfig { dt_ms: 8.0, ..Default::default() }, &bp), Ok(128));
     assert!(ok(&TimeConfig { dt_ms: 8.5, ..Default::default() }, &bp).unwrap_err().contains("0.5-8.0"));
+    // --bandpass --keep-ricker: the 40 Hz Ricker is convolved first, so it
+    // counts (100 Hz) and dt = 8 ms must fail; dt = 4 ms passes.
+    let keep = FilterConfig { keep_ricker: true, ..FilterConfig::legacy(4.0, 30.0, 3) };
+    assert!(!keep.skips_ricker());
+    assert_eq!(TimeConfig::signal_max_hz(&keep), 100.0);
+    assert!(ok(&TimeConfig { dt_ms: 8.0, ..Default::default() }, &keep).unwrap_err().contains("too coarse"));
+    assert_eq!(ok(&TimeConfig::default(), &keep), Ok(256));
     assert!(ok(&TimeConfig { dt_ms: 0.4, ..Default::default() }, &off).is_err());
     // 16 ≤ nt ≤ 8·nz.
     assert!(ok(&TimeConfig { samples: Some(15), ..Default::default() }, &off).is_err());

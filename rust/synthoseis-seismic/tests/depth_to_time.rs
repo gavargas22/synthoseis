@@ -231,7 +231,11 @@ fn salt_pull_up_synthetic_columns() {
     let dt_pred = 2000.0 * h * (1.0 / v_sed - 1.0 / 4500.0);
     let pred = [640.0, 640.0 - dt_pred];
     assert!((dt_pred - 71.111).abs() < 1e-3);
+    // Gate on the 16x FFT pick (Strata's independent picks: FFT 568.884 ms,
+    // pull-up 71.116 ms; analytic-Ricker least-squares fit 568.889 ms).
+    const GATE_MS: f64 = 0.02;
     let mut picks = [0.0f64; 2];
+    let mut linear_picks = [0.0f64; 2];
     for (c, salt) in [false, true].into_iter().enumerate() {
         let (vp, vs, rho) = build(salt);
         for kernel in [TwtKernel::Sinc, TwtKernel::Linear] {
@@ -247,15 +251,28 @@ fn salt_pull_up_synthetic_columns() {
                 if salt { "B, salt" } else { "A" },
                 pred[c]
             );
-            if kernel == TwtKernel::Sinc {
-                assert!((tr - pred[c]).abs() <= 0.1, "column {c}: {tr} vs {}", pred[c]);
-                picks[c] = tr;
+            match kernel {
+                TwtKernel::Sinc => {
+                    assert!((tr - pred[c]).abs() <= GATE_MS, "column {c}: {tr} vs {}", pred[c]);
+                    picks[c] = tr;
+                }
+                TwtKernel::Linear => linear_picks[c] = tr,
             }
         }
     }
     let dt_meas = picks[0] - picks[1];
-    println!("pull-up: measured {dt_meas:.3} ms, predicted {dt_pred:.3} ms");
-    assert!((dt_meas - dt_pred).abs() <= 0.1, "{dt_meas}");
+    let dt_lin = linear_picks[0] - linear_picks[1];
+    println!(
+        "pull-up: sinc {dt_meas:.3} ms, linear {dt_lin:.3} ms, predicted {dt_pred:.3} ms (gate +/-{GATE_MS} ms)"
+    );
+    assert!((dt_meas - dt_pred).abs() <= GATE_MS, "{dt_meas}");
+    // The gate is tight enough to tell the kernels apart: the 2-tap linear
+    // split misplaces the sub-salt reflection (column A sits on a sample, so
+    // only column B moves).
+    let lin_err = linear_picks[1] - pred[1];
+    println!("linear kernel: column B pick error {lin_err:.3} ms, pull-up error {:.3} ms", dt_lin - dt_pred);
+    assert!(lin_err.abs() > GATE_MS, "linear should fail the gate: {lin_err}");
+    assert!((dt_lin - dt_pred).abs() > GATE_MS, "linear pull-up should fail the gate");
 }
 
 // ---------------------------------------------------------------- §5.6 ----
@@ -268,8 +285,11 @@ fn ricker_c(f: f64, t_ms: f64) -> f64 {
 /// Thin-bed wedge: two opposite-sign spikes, time thickness 0–20 ms, random
 /// sub-sample offsets (400 cases), inserted then convolved with the sampled
 /// 40 Hz Ricker, against the analytically sampled continuous synthetic
-/// (Widess 1973; Kallweit & Wood 1982). Error in % of the single-wavelet
-/// peak (1.0). `sinc` ≤ 0.5 %; `linear` reported.
+/// (Widess 1973; Kallweit & Wood 1982). Metric: max |error| over the trace
+/// divided by the peak of a SINGLE wavelet (the analytic Ricker peak, 1.0),
+/// not by the two-spike trace's own peak (that one shrinks towards 0 as the
+/// spikes merge, which inflates relative errors). `sinc` ≤ 0.5 %; `linear`
+/// reported.
 #[test]
 fn thin_bed_wedge_tuning() {
     let (f, nt, half) = (40.0, 256usize, 40i64);
@@ -331,7 +351,7 @@ fn kaiser_sinc_table_properties() {
     k.taps(0.0, &mut a);
     assert!(a.iter().enumerate().all(|(j, &w)| w == if j == 7 { 1.0 } else { 0.0 }));
     println!("sinc DC gain deviation over phases: {worst_dc:.2e}");
-    assert!(worst_dc < 5e-3, "{worst_dc}");
+    assert!(worst_dc < 5e-4, "{worst_dc}");
     assert_eq!(k.value(0.0), 1.0);
     assert_eq!(k.value(3.0), 0.0);
     assert_eq!(k.value(8.5), 0.0);
@@ -368,4 +388,57 @@ fn nyquist_and_staircase_constraints() {
     assert!(output_nyquist_ok(31.0, 12.9));
     assert!(depth_staircase_ok(4.0, 1580.0, 4.0)); // limit 5.27 m
     assert!(!depth_staircase_ok(5.3, 1580.0, 4.0));
+}
+
+/// Frequency response of the tabulated kernel as the conversion uses it
+/// (continuous Fourier transform of the effective kernel: table rows plus
+/// linear interpolation between phases), against the untabulated closed
+/// form. Gates: ≥ −0.2 dB at 0.8 f_N and ≤ −30 dB at 1.2 f_N (spec §3.3:
+/// −0.1 dB and −35.6 dB).
+#[test]
+fn kaiser_sinc_frequency_response() {
+    let k = KaiserSinc::standard();
+    let m = SINC_HALF_WIDTH as f64;
+    // Effective kernel h_tab(x): x = off − f with off = j − (M − 1), f ∈ [0, 1).
+    let h_tab = |x: f64| -> f64 {
+        if x <= -m || x >= m {
+            return 0.0;
+        }
+        let f = (-x).rem_euclid(1.0);
+        let off = x + f; // integer offset
+        let j = (off + m - 1.0).round() as usize;
+        let mut taps = [0.0f64; 2 * SINC_HALF_WIDTH];
+        k.taps(f, &mut taps);
+        taps[j]
+    };
+    // |H(f)| = |∫ h(x) cos(2π f x) dx| (h is even up to tabulation), f in
+    // cycles/sample; f_N = 0.5. Midpoint rule at 1/2048 sample.
+    let step = 1.0 / 2048.0;
+    let resp = |h: &dyn Fn(f64) -> f64, f: f64| -> f64 {
+        let n = (2.0 * m / step) as usize;
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for i in 0..n {
+            let x = -m + (i as f64 + 0.5) * step;
+            let v = h(x);
+            let w = 2.0 * std::f64::consts::PI * f * x;
+            re += v * w.cos();
+            im += v * w.sin();
+        }
+        (re * re + im * im).sqrt() * step
+    };
+    let db = |a: f64| 20.0 * a.log10();
+    let closed = |x: f64| k.value(x);
+    let dc_tab = resp(&h_tab, 0.0);
+    let mut rows = Vec::new();
+    for frac in [0.0, 0.5, 0.8, 1.0, 1.2, 1.4, 1.6, 2.0] {
+        let f = 0.5 * frac;
+        rows.push((frac, db(resp(&h_tab, f) / dc_tab), db(resp(&closed, f) / resp(&closed, 0.0))));
+    }
+    for (frac, t, c) in &rows {
+        println!("sinc response at {frac:.1} f_N: tabulated {t:7.2} dB, closed form {c:7.2} dB");
+    }
+    let at = |fr: f64| rows.iter().find(|r| r.0 == fr).unwrap().1;
+    assert!(at(0.8) >= -0.2, "0.8 f_N: {} dB", at(0.8));
+    assert!(at(1.2) <= -30.0, "1.2 f_N: {} dB", at(1.2));
+    assert!((dc_tab - 1.0).abs() < 5e-4, "DC {dc_tab}");
 }

@@ -298,12 +298,14 @@ impl TimeConfig {
     }
 
     /// Highest signal frequency the output must carry (Hz): the bandpass
-    /// high corner when the bandpass is on, else 2.5 × the Ricker peak
-    /// (100 Hz for 40 Hz).
+    /// high corner when the bandpass replaces the Ricker
+    /// ([`FilterConfig::skips_ricker`]), else 2.5 × the Ricker peak (100 Hz
+    /// for 40 Hz). With `keep_ricker` the 40 Hz Ricker is convolved before the
+    /// bandpass, so it counts even though a bandpass is on.
     pub fn signal_max_hz(filters: &FilterConfig) -> f64 {
         match filters.bandpass_hz {
-            Some([_, hi]) => hi,
-            None => 2.5 * RICKER_PEAK_HZ,
+            Some([_, hi]) if filters.skips_ricker() => hi,
+            _ => 2.5 * RICKER_PEAK_HZ,
         }
     }
 
