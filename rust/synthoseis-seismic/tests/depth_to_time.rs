@@ -143,30 +143,62 @@ fn linear_gradient_closed_form() {
 
 // ---------------------------------------------------------------- §5.3 ----
 
-/// Sub-sample peak pick: the positive maximum near `guess` (samples), refined
-/// on the band-limited (Kaiser-sinc) reconstruction of the trace at 1/200
-/// sample, then a parabola through the three best fine samples. Also returns
-/// the plain three-point parabolic pick on the coarse samples.
+/// 16× band-limited upsampling by zero-padding the spectrum (FFT
+/// interpolation), done with a direct DFT in test code: forward DFT of the
+/// N-sample trace, the Nyquist bin split between ±N/2, zero padding to 16·N,
+/// inverse DFT. Independent of the conversion's windowed-sinc kernel, so the
+/// pick does not grade the kernel with itself. Returns 16·N samples at
+/// dt/16 (sample s ↔ position s/16).
+fn fft_upsample_16(y: &[f64]) -> Vec<f64> {
+    use std::f64::consts::PI;
+    const UP: usize = 16;
+    let n = y.len();
+    assert!(n % 2 == 0);
+    // Forward DFT, bins 0..=N/2 (real input: the rest are conjugates).
+    let spec: Vec<(f64, f64)> = (0..=n / 2)
+        .map(|k| {
+            y.iter().enumerate().fold((0.0, 0.0), |(re, im), (t, &v)| {
+                let w = -2.0 * PI * (k * t) as f64 / n as f64;
+                (re + v * w.cos(), im + v * w.sin())
+            })
+        })
+        .collect();
+    let m = UP * n;
+    (0..m)
+        .map(|s| {
+            let u = s as f64 / UP as f64; // position in input samples
+            let mut acc = spec[0].0;
+            for (k, &(re, im)) in spec.iter().enumerate().skip(1) {
+                let w = 2.0 * PI * k as f64 * u / n as f64;
+                // Bins k and N−k (conjugate pair): 2·Re(Y_k e^{iw}); the
+                // Nyquist bin is split in half between ±N/2.
+                let scale = if k == n / 2 { 1.0 } else { 2.0 };
+                acc += scale * (re * w.cos() - im * w.sin());
+            }
+            acc / n as f64
+        })
+        .collect()
+}
+
+/// Sub-sample peak pick: the positive maximum near `guess` (samples) on the
+/// 16× FFT-upsampled trace, then a parabola through the three best fine
+/// samples. Also returns the plain three-point parabolic pick on the coarse
+/// samples.
 fn pick_peak(y: &[f64], guess: f64) -> (f64, f64) {
     let lo = (guess - 6.0).max(1.0) as usize;
     let hi = ((guess + 6.0) as usize).min(y.len() - 2);
     let n = (lo..=hi).max_by(|&a, &b| y[a].partial_cmp(&y[b]).unwrap()).unwrap();
     let (a, b, c) = (y[n - 1], y[n], y[n + 1]);
     let parabolic = n as f64 + 0.5 * (a - c) / (a - 2.0 * b + c);
-    let ks = KaiserSinc::standard();
-    let recon = |u: f64| -> f64 {
-        let m = SINC_HALF_WIDTH as i64;
-        let n0 = u.floor() as i64;
-        ((n0 - m + 1)..=(n0 + m))
-            .filter(|&k| k >= 0 && (k as usize) < y.len())
-            .map(|k| y[k as usize] * ks.value(u - k as f64))
-            .sum()
-    };
-    let steps = 400;
-    let fine: Vec<f64> = (0..=steps).map(|s| recon(n as f64 - 1.0 + 2.0 * s as f64 / steps as f64)).collect();
-    let s = (1..steps).max_by(|&a, &b| fine[a].partial_cmp(&fine[b]).unwrap()).unwrap();
+    let fine = fft_upsample_16(y);
+    // Sanity: FFT interpolation reproduces the input at integer positions.
+    for (k, &v) in y.iter().enumerate() {
+        assert!((fine[16 * k] - v).abs() < 1e-12, "upsample at {k}");
+    }
+    let (s_lo, s_hi) = (16 * (n - 1), 16 * (n + 1));
+    let s = (s_lo + 1..s_hi).max_by(|&p, &q| fine[p].partial_cmp(&fine[q]).unwrap()).unwrap();
     let (a, b, c) = (fine[s - 1], fine[s], fine[s + 1]);
-    let refined = n as f64 - 1.0 + 2.0 * (s as f64 + 0.5 * (a - c) / (a - 2.0 * b + c)) / steps as f64;
+    let refined = (s as f64 + 0.5 * (a - c) / (a - 2.0 * b + c)) / 16.0;
     (refined, parabolic)
 }
 
@@ -211,7 +243,7 @@ fn salt_pull_up_synthetic_columns() {
             let (refined, parabolic) = pick_peak(&y, pred[c] / DT);
             let (tr, tp) = (refined * DT, parabolic * DT);
             println!(
-                "column {} ({kernel:?}): base reflection pick {tr:.3} ms (3-point parabolic {tp:.3} ms), predicted {:.3} ms",
+                "column {} ({kernel:?}): base reflection pick: 16x FFT {tr:.3} ms, 3-point parabolic {tp:.3} ms, predicted {:.3} ms",
                 if salt { "B, salt" } else { "A" },
                 pred[c]
             );

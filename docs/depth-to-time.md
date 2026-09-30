@@ -56,7 +56,7 @@ In `rust/synthoseis-seismic/tests/depth_to_time.rs`:
 | 5.1 | `constant_3000_times` | `T_k = 8k/3` to 2.3e-11 ms over 1000 cells (gate 1e-9). |
 | 5.1 | `constant_4500_short_column_half_space` | nz = nt = 256: `T_nz` = 455.11 ms, so the column is short from sample 114. Every label below forward-fills the last cell, and there is no reflectivity below the last interface's band-limited tail. |
 | 5.2 | `linear_gradient_closed_form` | V0 = 1600 m/s, k = 0.6 1/s, dz = 4 m, nz = 250, f32 midpoint Vp: `T(1000 m)` = 1061.5123 ms (closed form 1061.5124). Max \|T_k − t(k·dz)\| = **1.47e-4 ms** (gate 1e-3 ms). |
-| 5.3 (synthetic part) | `salt_pull_up_synthetic_columns` | Base reflection at **640.000 ms** (column A) and **568.881 ms** (column B, salt), against 640.000 / 568.889 predicted. Pull-up is **71.119 ms** against 71.111 ms (gates ±0.1 ms). |
+| 5.3 (synthetic part) | `salt_pull_up_synthetic_columns` | Base reflection at **640.000 ms** (column A) and **568.884 ms** (column B, salt), against 640.000 / 568.889 predicted. Pull-up is **71.116 ms** against 71.111 ms (gates ±0.1 ms). |
 | 5.6 | `thin_bed_wedge_tuning` | 400 cases, 0–20 ms, random sub-sample offsets. `sinc` max error **0.136 %** of the wavelet peak (mean 0.068 %, worst tuning-peak error 0.088 %; gate 0.5 %). `linear` max 21.5 %, mean 12.8 % (reported only). |
 | §3.3 | `kaiser_sinc_table_properties`, `long_column_truncation`, `nyquist_and_staircase_constraints` | The kernel interpolates exactly and is deterministic, with DC gain within 2.0e-4 over all phases. Long-column skipping keeps the tails. The constraint helpers behave as specified. |
 
@@ -68,9 +68,12 @@ warning.
 parabola on the 4 ms samples of a 40 Hz Ricker is biased by up to about
 0.17 ms, depending on the sub-sample phase. For column B it gives 568.736 ms
 (−0.153 ms), which would fail the 0.1 ms gate for a reason unrelated to the
-conversion. The test therefore picks on the band-limited (Kaiser-sinc)
-reconstruction at 1/200 sample, then fits a parabola. It prints the
-three-point pick next to it.
+conversion. The test therefore picks on a **16× FFT-upsampled** trace
+(spectrum zero padding, a direct DFT in test code), then fits a parabola
+through the three best fine samples. It deliberately does not use the
+conversion's windowed-sinc kernel, so the test does not grade the kernel with
+itself (Strata's review condition). The test prints the FFT, three-point and
+predicted picks.
 
 **Linear wedge number.** The spec's numpy check quoted up to 54 % for
 `linear`. This test measures 21.5 % against the untapered analytic Ricker. The
