@@ -197,7 +197,7 @@ enum Commands {
         no_salt: bool,
         /// Legacy switch: absolute U(150, 300)-sample salt top offset below
         /// horizon 1 (legacy 1250-sample cubes) instead of the default
-        /// scaled by samples / 1250.
+        /// scaled by min(samples / 1250, 1).
         #[arg(long, default_value_t = false)]
         salt_legacy_top_offset: bool,
     },

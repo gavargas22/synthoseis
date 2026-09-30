@@ -45,7 +45,10 @@ After faulting, `Faults.py` calls, when `include_salt` is set:
      by one. `r` is cumulative over horizons.
    - The horizon is lifted by `2 r` samples in its salt columns.
    - Every horizon is smoothed with `gaussian_filter(sigma = 3)`.
-   - Then `push_down_remove_negative_thickness` runs.
+   - Then `push_down_remove_negative_thickness` runs. Despite the name,
+     this is **geometry only**: it moves horizon depths down so that no
+     layer has negative thickness after the drag. It is not the seismic
+     velocity "push-down" or "pull-up" under salt.
    - Near salt the result is horizons that bend up against the flanks
      (drag).
    - The horizon gaps are the columns where a dragged horizon lies inside
@@ -71,7 +74,7 @@ After faulting, `Faults.py` calls, when `include_salt` is set:
 | draws | one keyed unit draw per legacy draw (`salt::keyed_draws(seed)`), in legacy order. numpy `uniform` and `triangular` are replayed with numpy's exact operation order | bit-exact given the same unit draws. The distribution is validated by KS |
 | top | numpy linear `percentile(horizon 1, 99)` + offset | bit-exact |
 | shape | incremental 3D convex hull of the 218 points. Per column, the salt is the sample run `[k0, k1)` inside every hull facet | bit-exact mask (a hull meets each vertical line in one segment) |
-| drag | shift, scipy `gaussian_filter(sigma=3)` replayed exactly (scipy's kernel weights stored as IEEE bits, `reflect` edges, axis 0 then 1, scipy's symmetric summation order), push-down | bit-exact |
+| drag | shift, scipy `gaussian_filter(sigma=3)` replayed exactly (scipy's kernel weights stored as IEEE bits, `reflect` edges, axis 0 then 1, scipy's symmetric summation order), push-down (geometry only: no negative thicknesses) | bit-exact |
 | geometry | the dragged maps are rounded to whole samples, as the layered geometry already does, and fed to label fill, faults and the depth model | Rust has whole-sample horizons |
 | properties | `VoxelKind::Salt` → `SALT` (2.17, 4500, 2250 as f32) before the forward-fill. It overrides water, layers and closures | as legacy |
 | closures | salt-aware fills in all three closure modes (segmented default, `--closures-unsegmented`, `--closures-per-layer`). A column is a gap when the unit's top sample is salt. Gap cells get `-1 + max_column`, ring cells `top + max_column`, and both stay open | bit-exact vs `_flood_fill` |
@@ -87,13 +90,21 @@ The CLI prints e.g. `salt: top 65.9 samples, radius 12.2 columns, 18535
 voxels in 597 columns`. With `--no-salt` it prints
 `salt: off (--no-salt, master b4f4259)`.
 
+**No velocity pull-up yet.** The Rust port builds the model in depth and
+writes the angle stacks on the depth-sample axis. The fast salt
+(4500 m/s) therefore does not yet pull up the reflections beneath it, as it
+would in two-way time. That effect comes with the depth-to-time conversion
+work, not with this PR. The "push-down" above only adjusts horizon depths.
+
 ## Deviations (documented, not bugs)
 
-- **Top offset scaled by `nk / 1250`.** Legacy adds 150–300 samples below
-  horizon 1, sized for its 1250-sample example cube. In a 256-sample toy
-  cube that would put the salt entirely below the data. The default scales
-  the offset by `samples / 1250`, which is exactly legacy at 1250 samples.
-  `--salt-legacy-top-offset` keeps the absolute legacy offset. The radius
+- **Top offset scaled by `min(nk / 1250, 1)`.** Legacy adds 150–300
+  samples below horizon 1, sized for its 1250-sample example cube. In a
+  256-sample toy cube that would put the salt entirely below the data. The
+  default scales the offset by `min(samples / 1250, 1)`. That is exactly
+  legacy at 1250 samples or more, so the salt is never deeper than legacy on
+  large cubes (`salt_top_offset_scale_capped_at_one`, on a 1600-sample
+  cube). `--salt-legacy-top-offset` keeps the absolute legacy offset. The radius
   already scales with `ni`, as in legacy.
 - **The drag acts on the unfaulted toy horizons, before faulting.** In Rust
   the faults displace labels, and there are no faulted depth maps. So:
@@ -268,11 +279,23 @@ python rust/synthoseis-core/examples/plot_salt_demo.py /tmp/saltd /tmp/salts OUT
     `lithology.rs`, `closure_units.rs` and `closure_segments.rs`.
   - Without the switch those hashes now differ, as expected.
 - **Invariance matrix** (`tests/rock_physics.rs`): a new salt case (seed
-  30, 24×20×128, 4 faults, sand fraction 0.4, with a closure beside the
-  salt). It is bit-identical across 4 chunk shapes, the classic path,
-  streaming ×2, overlap ×2, strip-stitch 2/3/4, multi-process 1/2/3 and
-  geometry-once. It differs from `salt: false`. Every MDIO path also
-  checks `salt_labels` against the salt body.
+  102, 24×20×128, 4 faults, sand fraction 0.4).
+  - The salt sits mid-cube (inlines 7–20, crosslines 5–15, samples
+    59–116), so it crosses the inline, crossline and sample chunk
+    boundaries of the tilings. The test asserts this.
+  - The case keeps closures of 100 voxels or more (default 500), so the
+    closures beside the salt reach the model.
+  - The test asserts that the salt walls trigger: 70 closure columns
+    outside the salt gaps differ from an unwalled fill of the same labels
+    (at least 20 required; 508 walled closure columns). The 4 closures kept
+    in the model also differ from those of an unwalled model.
+  - It is bit-identical across 4 chunk shapes, the classic path,
+    streaming ×2, overlap ×2, strip-stitch 2/3/4, multi-process 1/2/3 and
+    geometry-once. It differs from `salt: false`. Every MDIO path also
+    checks `salt_labels` against the salt body. The streaming, overlap,
+    strip-stitch and multi-process paths do this chunk by chunk, with one
+    chunk in memory (`salt::verify_salt_labels`); a test corrupts one voxel
+    and checks that it is caught.
 - **Multi-process:** `--no-salt` and `--salt-legacy-top-offset` are
   forwarded to workers; multi-process equals a single process for both and
   for the default.

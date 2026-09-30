@@ -17,7 +17,8 @@ use serde::Deserialize;
 use synthoseis_core::closure_segments::unit_closure_runs_salt;
 use synthoseis_core::pipeline::{E2eConfig, FaultConfig, RockPhysicsConfig};
 use synthoseis_core::salt::{
-    drag_horizon_maps, hull_runs, keyed_draws, salt_body, salt_geometry, SaltBody, SALT_PAD,
+    drag_horizon_maps, hull_runs, keyed_draws, salt_body, salt_geometry, top_offset_scale,
+    SaltBody, SALT_PAD,
 };
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
@@ -402,4 +403,74 @@ fn salt_legacy_top_offset_is_absolute() {
     assert_eq!(scaled.radius, legacy.radius);
     assert!(legacy.top - scaled.top > 100.0);
     assert_eq!(legacy.voxels(cfg.samples), 0);
+}
+
+/// The default top-offset scale is capped at 1 (`min(nk / 1250, 1)`): on a
+/// cube over 1250 samples the default salt equals the legacy absolute offset
+/// bit for bit, and is shallower than an uncapped `nk / 1250` scale would
+/// put it. Below 1250 samples the scale is `nk / 1250` (unchanged goldens).
+#[test]
+fn salt_top_offset_scale_capped_at_one() {
+    assert_eq!(top_offset_scale(128, false), 128.0 / 1250.0);
+    assert_eq!(top_offset_scale(1250, false), 1.0);
+    assert_eq!(top_offset_scale(1600, false), 1.0);
+    assert_eq!(top_offset_scale(128, true), 1.0);
+    assert_eq!(top_offset_scale(1600, true), 1.0);
+
+    let mut cfg = demo(true);
+    cfg.inline_count = 16;
+    cfg.crossline_count = 16;
+    cfg.samples = 1600;
+    let default = salt_body(&cfg).unwrap();
+    cfg.rock_physics.salt_legacy_top_offset = true;
+    let legacy = salt_body(&cfg).unwrap();
+    assert_eq!(default.top.to_bits(), legacy.top.to_bits());
+    assert_eq!(default.runs, legacy.runs);
+    assert!(default.voxels(cfg.samples) > 0);
+
+    let (maps, nh) = synthoseis_core::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape());
+    let h1: Vec<f64> = (0..16 * 16).map(|c| maps[c * nh + 1]).collect();
+    let grid = [16, 16, 1600 + SALT_PAD];
+    let (_, uncapped, _) = salt_geometry(&h1, grid, 1600.0 / 1250.0, &mut keyed_draws(cfg.seed));
+    assert!(
+        uncapped > default.top + 1.0,
+        "uncapped {uncapped} vs capped {}",
+        default.top
+    );
+}
+
+/// The bounded-memory read-back check (`verify_salt_labels`, one chunk at a
+/// time) accepts a streamed store and catches a corrupted salt chunk.
+#[test]
+fn salt_labels_chunked_verify_catches_corruption() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("s.mdio");
+    let cfg = E2eConfig {
+        chunk_shape: Some([8, 8, 32]),
+        store_path: Some(p.clone()),
+        ..demo(true)
+    };
+    synthoseis_core::run_e2e_streaming(&cfg).unwrap();
+    let store = synthoseis_io::MdioStore::open(&p).unwrap();
+    synthoseis_core::salt::verify_salt_labels(&store, &cfg).unwrap();
+    let full = store.read_salt_labels_u8().unwrap();
+    assert_eq!(
+        Some(full),
+        synthoseis_core::salt::generate_salt_labels(&cfg)
+    );
+    // Flip one voxel in a chunk that holds salt.
+    let body = salt_body(&cfg).unwrap();
+    let c = (0..32 * 32)
+        .find(|&c| body.runs[c].1 > body.runs[c].0 && (body.runs[c].0 as usize) < 128)
+        .unwrap();
+    let (i, j, k) = (c / 32, c % 32, body.runs[c].0 as usize);
+    let idx = [i / 8, j / 8, k / 32];
+    let mut chunk = store.read_salt_labels_chunk(idx).unwrap();
+    assert!(chunk.iter().any(|&v| v == 1));
+    let off = ((i % 8) * 8 + j % 8) * 32 + k % 32;
+    assert_eq!(chunk[off], 1);
+    chunk[off] = 0;
+    store.write_salt_labels_chunk(idx, &chunk).unwrap();
+    let e = synthoseis_core::salt::verify_salt_labels(&store, &cfg).unwrap_err();
+    assert!(e.contains(&format!("{idx:?}")), "{e}");
 }

@@ -143,12 +143,8 @@ pub fn run_e2e_strip_stitched(
             return Err("strip-stitch fault_labels diverged from single-pass reference".into());
         }
     }
-    if let Some(reference) = crate::salt::generate_salt_labels(cfg) {
-        let back = opened.read_salt_labels_u8().map_err(|e| e.to_string())?;
-        if back != reference {
-            return Err("strip-stitch salt_labels diverged from the salt body".into());
-        }
-    }
+    crate::salt::verify_salt_labels(&opened, cfg)
+        .map_err(|e| format!("strip-stitch salt_labels diverged from the salt body: {e}"))?;
 
     // Bit-identical labels vs reference (same generate_labels).
     if *labels != reference.labels {

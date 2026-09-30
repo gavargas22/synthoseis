@@ -156,12 +156,8 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
             return Err("streaming fault_labels diverged from tile-wise reference".into());
         }
     }
-    if let Some(reference) = crate::salt::generate_salt_labels(cfg) {
-        let back = opened.read_salt_labels_u8().map_err(|e| e.to_string())?;
-        if back != reference {
-            return Err("streaming salt_labels diverged from the salt body".into());
-        }
-    }
+    crate::salt::verify_salt_labels(&opened, cfg)
+        .map_err(|e| format!("streaming salt_labels diverged from the salt body: {e}"))?;
     if !parity.passes_defaults() {
         return Err(format!(
             "streaming MDIO parity failed: iou={:.6} agr={:.6} mae={:.6e} maxabs={:.6e}",

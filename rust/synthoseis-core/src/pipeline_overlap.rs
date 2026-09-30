@@ -192,11 +192,8 @@ pub fn run_e2e_streaming_overlapped(
         &reference.angle_stack,
         &back_angles,
     );
-    if let Some(reference) = crate::salt::generate_salt_labels(cfg) {
-        if store.read_salt_labels_u8().map_err(|e| e.to_string())? != reference {
-            return Err("overlapped salt_labels diverged from the salt body".into());
-        }
-    }
+    crate::salt::verify_salt_labels(&store, cfg)
+        .map_err(|e| format!("overlapped salt_labels diverged from the salt body: {e}"))?;
     if reference.labels != back_labels || reference.angle_stack != back_angles {
         return Err(format!(
             "overlapped MDIO exact parity failed: iou={:.6} agr={:.6} mae={:.6e} maxabs={:.6e}",

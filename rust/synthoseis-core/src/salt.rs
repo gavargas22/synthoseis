@@ -28,8 +28,9 @@
 //! run per column (8 bytes per column).
 //!
 //! Deviations from legacy (see `docs/salt-bodies.md`):
-//! * The top offset `U(150, 300)` samples is scaled by `nk / 1250` (legacy
-//!   `example.json` has 1250 samples), so the salt sits inside small cubes;
+//! * The top offset `U(150, 300)` samples is scaled by `min(nk / 1250, 1)`
+//!   (legacy `example.json` has 1250 samples), so the salt sits inside small
+//!   cubes and is never deeper than legacy in large ones;
 //!   [`crate::rock_physics::RockPhysicsConfig::salt_legacy_top_offset`] keeps
 //!   the absolute offset.
 //! * The drag is applied to the unfaulted toy horizons before faulting (the
@@ -539,6 +540,18 @@ pub fn drag_horizon_maps(maps: &[f64], shape: [usize; 3], salt: &SaltBody) -> Ve
     out
 }
 
+/// Scale of the legacy `U(150, 300)` sample top offset for a cube of `nk`
+/// samples: `min(nk / 1250, 1)` by default, so small cubes keep the salt
+/// inside and cubes over 1250 samples never put it deeper than legacy; `1`
+/// with `legacy_top_offset` (`--salt-legacy-top-offset`).
+pub fn top_offset_scale(nk: usize, legacy_top_offset: bool) -> f64 {
+    if legacy_top_offset {
+        1.0
+    } else {
+        (nk as f64 / LEGACY_SAMPLES).min(1.0)
+    }
+}
+
 /// Keyed draws of the salt geometry of `seed` (one unit per legacy draw).
 pub fn keyed_draws(seed: u64) -> impl FnMut() -> f64 {
     let mut n = 0u64;
@@ -560,11 +573,7 @@ pub fn salt_body_from_maps(cfg: &E2eConfig, maps: &[f64], nh: usize) -> Option<S
     let grid = [ni, nj, nk + SALT_PAD];
     let hsel = 1.min(nh - 1);
     let h1: Vec<f64> = (0..ni * nj).map(|c| maps[c * nh + hsel]).collect();
-    let scale = if cfg.rock_physics.salt_legacy_top_offset {
-        1.0
-    } else {
-        nk as f64 / LEGACY_SAMPLES
-    };
+    let scale = top_offset_scale(nk, cfg.rock_physics.salt_legacy_top_offset);
     let mut draw = keyed_draws(cfg.seed);
     let (radius, top, points) = salt_geometry(&h1, grid, scale, &mut draw);
     let runs = hull_runs(&points, grid);
@@ -682,4 +691,32 @@ pub fn generate_salt_labels(cfg: &E2eConfig) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+/// Check `data/salt_labels` in `store` against the salt body of `cfg`,
+/// chunk by chunk (memory: one chunk). `Ok` without salt.
+pub fn verify_salt_labels(store: &synthoseis_io::MdioStore, cfg: &E2eConfig) -> Result<(), String> {
+    let Some(body) = salt_body(cfg) else {
+        return Ok(());
+    };
+    let shape = store.shape();
+    let chunks = store.config().chunks_or_shape();
+    let n = |d: usize| shape[d].div_ceil(chunks[d]);
+    let mut want = Vec::new();
+    for ci in 0..n(0) {
+        for cj in 0..n(1) {
+            for ck in 0..n(2) {
+                let lo = [ci * chunks[0], cj * chunks[1], ck * chunks[2]];
+                let hi = [0, 1, 2].map(|d| (lo[d] + chunks[d]).min(shape[d]));
+                salt_chunk(&body, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], &mut want);
+                let got = store
+                    .read_salt_labels_chunk([ci, cj, ck])
+                    .map_err(|e| e.to_string())?;
+                if got != want {
+                    return Err(format!("salt_labels chunk {:?}", [ci, cj, ck]));
+                }
+            }
+        }
+    }
+    Ok(())
 }

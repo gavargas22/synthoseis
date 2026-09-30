@@ -147,7 +147,8 @@ pub struct RockPhysicsConfig {
     /// `--no-salt` (`false`) reproduces master b4f4259. See [`crate::salt`].
     pub salt: bool,
     /// Legacy switch: absolute `U(150, 300)` sample top offset of the salt
-    /// below horizon 1, instead of the default scaled by `nk / 1250`. CLI
+    /// below horizon 1, instead of the default scaled by
+    /// `min(nk / 1250, 1)`. CLI
     /// `--salt-legacy-top-offset`.
     pub salt_legacy_top_offset: bool,
 }
