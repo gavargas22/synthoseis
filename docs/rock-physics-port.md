@@ -258,7 +258,10 @@ Figures come from `examples/rock_physics_demo.rs` and
 
 ## 8. Deferred / not replicated
 
-- Salt, the `rpm_scaling_factors` multipliers, `partial_voxels`
+- ~~Salt.~~ Done: salt bodies with legacy properties, on by default in
+  the layered geometry (`--no-salt` = master b4f4259); see
+  [salt-bodies.md](salt-bodies.md).
+- The `rpm_scaling_factors` multipliers, `partial_voxels`
   (fraction-weighted depth), `variable_shale_ng`, and the Poisson-ratio
   clips.
 - 3-D closures with fault seals. Closures here are 2-D spill analysis on the

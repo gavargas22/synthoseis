@@ -68,6 +68,14 @@ pub struct Elastic32 {
 }
 
 /// Legacy `Seismic.water_properties`: rho 1.028, Vp 1500, Vs 1000.
+/// Legacy salt properties (`Seismic.py`: `rho = 2.17`, `vp = 4500`,
+/// `vs = 2250` for `lith == 2`, stored as float32).
+pub const SALT: Elastic32 = Elastic32 {
+    rho: 2.17,
+    vp: 4500.0,
+    vs: 2250.0,
+};
+
 pub const WATER: Elastic32 = Elastic32 {
     rho: 1.028,
     vp: 1500.0,
@@ -227,6 +235,10 @@ pub enum VoxelKind {
     /// Sediment of `layer` (index into the shift table) with net-to-gross
     /// `ng` (sand fraction; `ng > 0` mixes in `fluid` sand).
     Layer { layer: usize, ng: f32, fluid: Fluid },
+    /// Legacy `lith == 2` (salt body): constant [`SALT`] properties, set
+    /// before the base forward-fill (legacy `Seismic.py`, after the layer
+    /// loop).
+    Salt,
 }
 
 /// Legacy `np.clip(k + dz, 0, nk - 10)` followed by numpy indexing (a
@@ -267,6 +279,7 @@ pub fn voxel_properties(
 ) -> Elastic32 {
     match kind {
         VoxelKind::Water => WATER,
+        VoxelKind::Salt => SALT,
         VoxelKind::Unfilled => Elastic32::default(),
         VoxelKind::Layer { layer, ng, fluid } => {
             let nk = depth.len();
@@ -288,8 +301,9 @@ pub fn voxel_properties(
 /// Legacy property builder for one trace: water, shale for every sediment
 /// voxel, sand of the voxel's fluid mixed in with its net-to-gross, then the
 /// base forward-fill. `depth` is the legacy `faulted_depth` column (metres
-/// below the mudline, float32). Salt and the final scaling factors (all 1.0
-/// by default) are not ported.
+/// below the mudline, float32). Salt voxels ([`VoxelKind::Salt`]) take the
+/// legacy constants before the forward-fill, as legacy does. The final
+/// scaling factors (all 1.0 by default, and skipping salt) are not ported.
 pub fn legacy_column_properties(
     depth: &[f32],
     kinds: &[VoxelKind],

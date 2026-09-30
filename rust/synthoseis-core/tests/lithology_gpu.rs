@@ -22,7 +22,8 @@ fn layered(seed: u64, shape: [usize; 3], rp: RockPhysicsConfig) -> E2eConfig {
 /// on the Markov lithology.
 /// Also with closures per sand unit on a multi-layer unit (seed 6, fraction
 /// 0.4, thickness 3; see tests/closure_units.rs), and with 3D closure
-/// segmentation joining closures across faults (tests/closure_segments.rs).
+/// segmentation joining closures across faults (tests/closure_segments.rs),
+/// and with salt bodies (on by default; the first and last cases).
 #[test]
 fn markov_gpu_matches_cpu() {
     for c in [
@@ -40,6 +41,7 @@ fn markov_gpu_matches_cpu() {
             RockPhysicsConfig {
                 sand_layer_fraction: Some(0.4),
                 sand_layer_thickness: 3.0,
+                salt: false,
                 ..RockPhysicsConfig::default()
             },
         ),
@@ -50,6 +52,16 @@ fn markov_gpu_matches_cpu() {
             RockPhysicsConfig {
                 sand_layer_fraction: Some(0.5),
                 sand_layer_thickness: 1.0,
+                salt: false,
+                ..RockPhysicsConfig::default()
+            },
+        ),
+        // Salt body beside a closure (tests/rock_physics.rs `salt_case`).
+        layered(
+            30,
+            [24, 20, 128],
+            RockPhysicsConfig {
+                sand_layer_fraction: Some(0.4),
                 ..RockPhysicsConfig::default()
             },
         ),

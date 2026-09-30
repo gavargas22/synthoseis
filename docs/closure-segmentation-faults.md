@@ -191,7 +191,9 @@ python rust/synthoseis-core/examples/plot_closure_segments_demo.py /tmp/csf /tmp
 
 - **Fault-gap walls** in `_flood_fill`. They are dead in current legacy
   (`Faults.partial_faulting` is never called). Port them together with
-  fault gaps if legacy's partial faulting is revived.
+  fault gaps if legacy's partial faulting is revived. The same walls are
+  live around salt gaps, and are ported for salt
+  (see [salt-bodies.md](salt-bodies.md)).
 - **The `3x3x1` opening** in `segment_closures`. It trims closure edges
   narrower than 3 columns. Porting it would change fault-free cubes versus
   ef2dc42 and legacy placement parity from #32, so it stays out.

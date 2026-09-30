@@ -109,6 +109,11 @@ pub fn prepare_multiprocess_store(
             .ensure_fault_labels_array()
             .map_err(|e| e.to_string())?;
     }
+    if cfg.effective_salt() {
+        store
+            .ensure_salt_labels_array()
+            .map_err(|e| e.to_string())?;
+    }
 
     let plan_path = multiprocess_plan_path(&path);
     if let Some(parent) = plan_path.parent() {
@@ -266,6 +271,12 @@ pub fn finalize_multiprocess_e2e(
         let back = opened.read_fault_labels_u8().map_err(|e| e.to_string())?;
         if back != reference {
             return Err("multiprocess fault_labels diverged from single-pass reference".into());
+        }
+    }
+    if let Some(reference) = crate::salt::generate_salt_labels(cfg) {
+        let back = opened.read_salt_labels_u8().map_err(|e| e.to_string())?;
+        if back != reference {
+            return Err("multiprocess salt_labels diverged from the salt body".into());
         }
     }
     if !parity.passes_defaults() {

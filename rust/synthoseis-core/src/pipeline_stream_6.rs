@@ -43,6 +43,7 @@ pub fn write_strip_partition(
     let mut chunk_labels = Vec::new();
     let mut samples: Vec<f32> = Vec::new();
     let mut chunk_faults = Vec::new();
+    let mut chunk_salt = Vec::new();
     stats.observe(tile_angles.capacity() * 4);
 
     let i_chunk_start = strip.i0 / ci.max(1);
@@ -107,6 +108,12 @@ pub fn write_strip_partition(
                     fault_tile_chunk(t, k0, k1, &mut chunk_faults);
                     store
                         .write_fault_labels_chunk(key, &chunk_faults)
+                        .map_err(|e| e.to_string())?;
+                }
+                if let Some(s) = trends.salt() {
+                    crate::salt::salt_chunk(s, i0, i1, j0, j1, k0, k1, &mut chunk_salt);
+                    store
+                        .write_salt_labels_chunk(key, &chunk_salt)
                         .map_err(|e| e.to_string())?;
                 }
                 samples.extend_from_slice(&chunk_angles);

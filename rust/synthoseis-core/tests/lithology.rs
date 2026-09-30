@@ -304,7 +304,9 @@ fn layered(seed: u64, shape: [usize; 3], rp: RockPhysicsConfig) -> E2eConfig {
         chunk_shape: Some([16, 16, shape[2]]),
         faults: FaultConfig::with_count(4),
         filters: FilterConfig::default(),
-        rock_physics: rp,
+        // Pinned master b4f4259 scenarios and goldens: no salt
+        // (tests/salt.rs covers salt).
+        rock_physics: RockPhysicsConfig { salt: false, ..rp },
         geometry: ToyGeometry::Layered,
     }
 }

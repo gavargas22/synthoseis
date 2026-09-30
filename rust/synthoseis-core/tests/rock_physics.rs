@@ -476,6 +476,8 @@ fn unit_case(closures_per_layer: bool) -> E2eConfig {
             sand_layer_fraction: Some(0.4),
             sand_layer_thickness: 3.0,
             closures_per_layer,
+            // Pinned master b4f4259 scenario (tests/closure_units.rs).
+            salt: false,
             ..RockPhysicsConfig::default()
         },
         filters: r.filters.clone(),
@@ -492,9 +494,25 @@ fn segmented_case(unsegmented: bool) -> E2eConfig {
             sand_layer_fraction: Some(0.5),
             sand_layer_thickness: 1.0,
             closures_unsegmented: unsegmented,
+            // Pinned master b4f4259 scenario (tests/closure_segments.rs).
+            salt: false,
             ..RockPhysicsConfig::default()
         },
         ..cfg(7, [24, 20, 128], [8, 5, 128], 4)
+    }
+}
+
+/// Salt body (default on) with 4 faults and a closure beside the salt
+/// (seed 30); salt labels are checked by every MDIO path.
+fn salt_case(salt: bool) -> E2eConfig {
+    E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Layered,
+        rock_physics: RockPhysicsConfig {
+            sand_layer_fraction: Some(0.4),
+            salt,
+            ..RockPhysicsConfig::default()
+        },
+        ..cfg(30, [24, 20, 128], [8, 5, 128], 4)
     }
 }
 
@@ -561,6 +579,8 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
         // 3D closure segmentation where faults join closures of different
         // sand units (tests/closure_segments.rs).
         segmented_case(false),
+        // Salt body (tests/salt.rs).
+        salt_case(true),
     ]
     .into_iter()
         .enumerate()
@@ -603,6 +623,19 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
                 bits(&generate_chunked(&base).0.angle_stack),
                 bits(&generate_chunked(&segmented_case(true)).0.angle_stack),
                 "segmented vs unsegmented"
+            );
+        }
+        if n == 10 {
+            let body = synthoseis_core::salt::salt_body(&base).expect("salt");
+            assert!(body.voxels(base.samples) > 500);
+            let (labels, shape) = generate_labels(&base);
+            let ElasticModel::Rpm(m) = elastic_model(&base, &labels, shape) else { panic!() };
+            assert!(m.salt.is_some());
+            assert!(m.layers.iter().any(|l| l.fluids.as_ref().is_some_and(|f| !f.closures.is_empty())));
+            assert_ne!(
+                bits(&generate_chunked(&base).0.angle_stack),
+                bits(&generate_chunked(&salt_case(false)).0.angle_stack),
+                "salt vs no salt"
             );
         }
         if n == 5 {

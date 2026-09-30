@@ -64,6 +64,9 @@ pub fn run_e2e_strip_stitched(
 
     let labels = std::sync::Arc::new(labels);
     let trends = elastic_model(cfg, &labels, shape);
+    if trends.salt().is_some() {
+        store.ensure_salt_labels_array().map_err(|e| e.to_string())?;
+    }
     let wavelet = ricker(40.0, TINY_DIGI, 1);
 
     // FS ownership is the lock: partitions from from_config_chunk_aligned never
@@ -138,6 +141,12 @@ pub fn run_e2e_strip_stitched(
         let back = opened.read_fault_labels_u8().map_err(|e| e.to_string())?;
         if back != reference {
             return Err("strip-stitch fault_labels diverged from single-pass reference".into());
+        }
+    }
+    if let Some(reference) = crate::salt::generate_salt_labels(cfg) {
+        let back = opened.read_salt_labels_u8().map_err(|e| e.to_string())?;
+        if back != reference {
+            return Err("strip-stitch salt_labels diverged from the salt body".into());
         }
     }
 

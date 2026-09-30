@@ -190,6 +190,16 @@ enum Commands {
         /// docs/closure-segmentation-faults.md.
         #[arg(long, default_value_t = false)]
         closures_unsegmented: bool,
+        /// Legacy switch: no salt body (master b4f4259). Salt is on by
+        /// default for the layered geometry (legacy `include_salt: true`).
+        /// See docs/salt-bodies.md.
+        #[arg(long, default_value_t = false)]
+        no_salt: bool,
+        /// Legacy switch: absolute U(150, 300)-sample salt top offset below
+        /// horizon 1 (legacy 1250-sample cubes) instead of the default
+        /// scaled by samples / 1250.
+        #[arg(long, default_value_t = false)]
+        salt_legacy_top_offset: bool,
     },
 }
 
@@ -410,6 +420,29 @@ fn apply_lithology(
     Ok(rock)
 }
 
+/// `--no-salt` / `--salt-legacy-top-offset`: salt exists only in the layered
+/// geometry, so both are rejected with the planar geometry (and
+/// `--legacy-toy-depth`), and the offset switch is rejected with `--no-salt`.
+fn apply_salt(
+    mut rock: synthoseis_core::RockPhysicsConfig,
+    geometry: synthoseis_core::ToyGeometry,
+    no_salt: bool,
+    legacy_top_offset: bool,
+) -> Result<synthoseis_core::RockPhysicsConfig, String> {
+    if geometry == synthoseis_core::ToyGeometry::Planar && (no_salt || legacy_top_offset) {
+        return Err(
+            "--no-salt / --salt-legacy-top-offset have no effect with the planar geometry or --legacy-toy-depth (no salt)"
+                .into(),
+        );
+    }
+    if no_salt && legacy_top_offset {
+        return Err("--salt-legacy-top-offset has no effect with --no-salt".into());
+    }
+    rock.salt = !no_salt;
+    rock.salt_legacy_top_offset = legacy_top_offset;
+    Ok(rock)
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -456,6 +489,8 @@ fn main() {
             sand_layer_thickness,
             closures_per_layer,
             closures_unsegmented,
+            no_salt,
+            salt_legacy_top_offset,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -546,6 +581,7 @@ fn main() {
                 sand_layer_fraction,
                 sand_layer_thickness,
             )
+            .and_then(|r| apply_salt(r, geometry, no_salt, salt_legacy_top_offset))
             .unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);

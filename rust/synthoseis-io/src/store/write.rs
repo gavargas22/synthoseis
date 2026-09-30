@@ -3,6 +3,7 @@ use super::MdioStore;
 use crate::zarr::*;
 use crate::{
     err, CreateConfig, Dimension, Result, FAULT_LABELS_VARIABLE, LABELS_VARIABLE, PRIMARY_VARIABLE,
+    SALT_LABELS_VARIABLE,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -169,6 +170,21 @@ impl MdioStore {
         self.write_u8_variable_chunk(&FAULT_LABELS, chunk_indices, labels)
     }
 
+    /// Write the binary salt-body volume under `data/salt_labels`.
+    pub fn write_salt_labels_u8(&self, labels: &[u8]) -> Result<()> {
+        self.write_u8_variable(&SALT_LABELS, labels)
+    }
+
+    /// Ensure `data/salt_labels` exists with the store's chunk shape.
+    pub fn ensure_salt_labels_array(&self) -> Result<()> {
+        self.ensure_u8_variable(&SALT_LABELS)
+    }
+
+    /// Write one `data/salt_labels` chunk (same indexing as [`Self::write_chunk`]).
+    pub fn write_salt_labels_chunk(&self, chunk_indices: [usize; 3], labels: &[u8]) -> Result<()> {
+        self.write_u8_variable_chunk(&SALT_LABELS, chunk_indices, labels)
+    }
+
     fn ensure_u8_variable(&self, var: &U8Variable) -> Result<()> {
         let shape = self.shape();
         let chunks = self.config.chunks_or_shape();
@@ -314,6 +330,13 @@ const LABELS: U8Variable = U8Variable {
     long_name: "layer_labels",
     deliverable: "labels",
     fill: 255,
+};
+
+const SALT_LABELS: U8Variable = U8Variable {
+    name: SALT_LABELS_VARIABLE,
+    long_name: "salt_labels",
+    deliverable: "salt_labels",
+    fill: 0,
 };
 
 const FAULT_LABELS: U8Variable = U8Variable {

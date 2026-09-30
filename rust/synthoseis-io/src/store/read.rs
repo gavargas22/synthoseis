@@ -1,7 +1,9 @@
 //! read_volume / read_live_mask
 use super::MdioStore;
 use crate::zarr::*;
-use crate::{err, Result, FAULT_LABELS_VARIABLE, LABELS_VARIABLE, PRIMARY_VARIABLE};
+use crate::{
+    err, Result, FAULT_LABELS_VARIABLE, LABELS_VARIABLE, PRIMARY_VARIABLE, SALT_LABELS_VARIABLE,
+};
 use std::fs;
 
 impl MdioStore {
@@ -81,6 +83,11 @@ impl MdioStore {
     /// Read the binary fault-label volume from `data/fault_labels`.
     pub fn read_fault_labels_u8(&self) -> Result<Vec<u8>> {
         self.read_u8_variable(FAULT_LABELS_VARIABLE, 0)
+    }
+
+    /// Read the binary salt-body volume from `data/salt_labels`.
+    pub fn read_salt_labels_u8(&self) -> Result<Vec<u8>> {
+        self.read_u8_variable(SALT_LABELS_VARIABLE, 0)
     }
 
     fn read_u8_variable(&self, name: &str, fill: u8) -> Result<Vec<u8>> {
