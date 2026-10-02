@@ -6,6 +6,8 @@
 //!
 //! * `<tag>_depth_labels.u8`, `<tag>_depth_salt.u8`, `<tag>_depth_faults.u8`
 //!   (`ni·nj·nz`), `<tag>_twt.f32` (`ni·nj·(nz+1)` cell-boundary times, ms);
+//! * `<tag>_time_rfc.f32`: the production time-mode fuse with no wavelet
+//!   (raw two-way-time reflectivity, `ni·nj·nt`);
 //! * `<tag>_{legacy,time}_{stack,labels,salt,faults}` (output shape);
 //! * `<tag>.json` with the shapes and the time axis.
 //!
@@ -56,6 +58,23 @@ fn main() {
     let axis = base.time_axis().expect("time mode");
     let twt = synthoseis_core::time_mode::tile_twt(&model, &labels, shape, 0, ni, 0, nj, &axis);
     write(&dir, format!("{tag}_twt.f32"), f32s(&twt.iter().map(|&x| x as f32).collect::<Vec<_>>()));
+    // Production time-mode fuse without a wavelet: the raw two-way-time
+    // reflectivity at the default incidence (sub-sample pull-up picks).
+    let mut rfc = vec![0.0f32; ni * nj * axis.nt];
+    synthoseis_core::pipeline_stream::fuse_tile_local(
+        &labels,
+        shape,
+        0,
+        ni,
+        0,
+        nj,
+        &model,
+        synthoseis_gpu::NO_WAVELET,
+        synthoseis_core::pipeline_stream::DEFAULT_INCIDENCE_DEG,
+        &mut rfc,
+        &mut synthoseis_core::pipeline_stream::WorkingSetStats::default(),
+    );
+    write(&dir, format!("{tag}_time_rfc.f32"), f32s(&rfc));
     write(&dir, format!("{tag}_depth_labels.u8"), labels);
     if let Some(m) = synthoseis_core::salt::generate_salt_labels(&base) {
         write(&dir, format!("{tag}_depth_salt.u8"), m);

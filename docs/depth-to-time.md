@@ -253,11 +253,8 @@ config.
 
 - Salt seeds 1, 2, 3 and 30: stack and label sections, depth vs time, on the
   inline through the thickest salt.
-- `pullup_measured_vs_predicted.png`, salt pull-up per salt column for seeds 1,
-  2, 3, 7 and 30:
-  - Predicted: `T_nosalt − T_salt` at a sub-salt horizon, from each run's Vp.
-  - Measured: the same horizon's first sample in the `--no-salt` and salt
-    output label cubes.
+- `pullup_measured_vs_predicted.png`, salt pull-up per column for seeds 1, 2,
+  3, 7 and 30 at sub-sample resolution (see below).
 - `seed7_faults_labels_depth_vs_time.png`: seed 7, 3 faults, `--no-salt`. The
   time `fault_labels` equal an independent numpy resample of the depth fault
   labels through T(Vp), with 0 mismatching voxels (33 812 depth fault voxels
@@ -265,19 +262,64 @@ config.
 - `uniform2000_time_vs_pr35_baseline.png`: #35's legacy Python stack against
   the time output at uniform 2000 m/s.
 
-| Seed | Salt cols used / total | Max salt | Predicted median / max | Time output median / max | Legacy axis median / max | Max \|time − predicted\| |
-|---|---|---|---|---|---|---|
-| 1 | 761 / 761 | 312 m | 76.0 / 146.3 ms | 76 / 144 ms | 0 / 4 ms | 3.8 ms |
-| 2 | 499 / 516 | 552 m | 109.3 / 273.2 ms | 108 / 272 ms | 0 / 24 ms | 3.7 ms |
-| 3 | 744 / 787 | 560 m | 113.4 / 282.3 ms | 112 / 280 ms | 0 / 44 ms | 3.9 ms |
-| 7 | 597 / 597 | 260 m | 66.8 / 135.4 ms | 68 / 136 ms | 0 / 4 ms | 3.9 ms |
-| 30 | 438 / 438 | 572 m | 101.9 / 256.7 ms | 102 / 256 ms | 0 / 4 ms | 3.8 ms |
+**Salt pull-up, sub-sample.** Script:
+`scripts/depth_to_time_evidence/d2t_b_pullup_subsample.py`. The pick is the
+16× FFT one from #37's salt test. Labels can only be picked on whole samples,
+so the measurement uses the seismic event instead.
 
-The residual of the time output is within one sample (dt = 4 ms), with a mean
-of −0.07 to +0.06 ms. The legacy axis's non-zero values are horizon drag by
-the salt (a depth change), not a velocity pull-up. The columns used are those
-where the chosen horizon lies below the salt base. Seeds 2 and 3 have salt
-reaching the model base in some columns.
+- **Horizon.** One sub-salt layer top L per seed. Its top lies below the salt
+  base in both runs, and it is the horizon with the most salt-footprint columns
+  whose event *dominates* the raw time reflectivity in both runs. "Dominates"
+  means: at n = the first output sample of layer L in the time label cube, the
+  larger |x| of samples n−1 and n is at least 2× every other |x| within
+  ±6 samples. This is an amplitude QC only and uses no timing. It excludes weak
+  contrasts next to strong ones, which a peak pick would lock onto: with
+  coverage-only horizon choice, seeds 2 and 3 had picks off by 10–17 ms.
+- **Trace.** The production time-mode fuse without a wavelet (raw two-way-time
+  reflectivity at the default incidence), from both the salt run and the
+  `--no-salt` run.
+- **Pick.**
+  1. Polarity from samples n−1 and n.
+  2. Coarse extremum in n−2 … n+1.
+  3. Extremum of the 16× FFT-upsampled trace within ±1 sample.
+  4. Parabola through the three best fine samples.
+
+  Columns whose polarity differs between the runs are dropped: 3, 0, 0, 4 and
+  2 columns for seeds 1, 2, 3, 7 and 30.
+- **Measured** = `t_nosalt − t_salt`. **Predicted** = `T_nosalt(z_L) −
+  T_salt(z_L)`, the cell-boundary TWT from each run's Vp (it includes the salt
+  drag of the horizon).
+
+| Seed | Horizon | Columns (QC / salt) | Predicted median / max | **Measured** median / max | Residual mean / std / max \|·\| | Legacy axis median / max |
+|---|---|---|---|---|---|---|
+| 1 | L36 | 329 / 761 | 112.41 / 145.31 ms | **112.85 / 144.87 ms** | +0.04 / 0.54 / 2.05 ms | 0 / 20 ms |
+| 2 | L44 | 278 / 516 | 97.36 / 239.61 ms | **97.61 / 240.16 ms** | +0.03 / 0.25 / 0.67 ms | −4 / 0 ms |
+| 3 | L28 | 401 / 787 | 99.18 / 227.04 ms | **99.27 / 226.85 ms** | +0.11 / 0.54 / 3.33 ms | 4 / 52 ms |
+| 7 | L26 | 444 / 597 | 67.69 / 130.35 ms | **67.61 / 129.79 ms** | −0.01 / 0.35 / 1.04 ms | 0 / 24 ms |
+| 30 | L37 | 358 / 438 | 83.65 / 214.86 ms | **83.78 / 214.45 ms** | −0.07 / 0.33 / 1.34 ms | 0 / 40 ms |
+
+- **Bias.** Residual means are within ±0.11 ms: there is no bias at the
+  sub-sample level.
+- **Spread.** The 0.25–0.54 ms spread is interference: the tails of
+  neighbouring interfaces shift the peak. The absolute pick against `T(z_L)` in
+  a single run has std 0.18–0.40 ms.
+- **Stack cross-check.** The same picks on the deliverable stack (40 Hz Ricker)
+  give residual std 0.15–0.41 ms, max 0.47–3.42 ms.
+- **Pooled.** Every sub-salt horizon × column that passes the QC
+  (479 / 573 / 1442 / 1070 / 878 picks) gives residual means of −0.01 to
+  +0.09 ms, std 0.35–0.63 ms, and 90–99 % of picks within 1 ms.
+- **Before.** The legacy axis (4 ms label picks) shows essentially no pull-up.
+  Its non-zero values are horizon drag by the salt (a depth change), not
+  velocity.
+- **Columns.** The QC keeps 43–82 % of the salt columns, so the maximum
+  predicted pull-up among the measured columns (130–240 ms) is below the
+  thickest-salt values (135–282 ms over all salt columns). The thickest
+  columns' sub-salt horizons are often weak or missing; in seeds 2 and 3 the
+  salt reaches the model base.
+- **CI gate.** `rust/synthoseis-core/tests/depth_to_time_pullup.rs` runs the
+  same measurement on seed 1 at 32×32×128 (125 columns, max predicted pull-up
+  66 ms). It asserts ≥ 100 columns, |mean| ≤ 0.25 ms, std ≤ 0.6 ms and
+  max |residual| ≤ 1.5 ms. Measured: +0.045 / 0.345 / 0.923 ms.
 
 ### Spec deviations
 
