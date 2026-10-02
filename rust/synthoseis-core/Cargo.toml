@@ -21,3 +21,5 @@ synthoseis-gpu.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# angle_stack_legacy_e2e.rs: the legacy elastic cubes are stored zlib-compressed.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
