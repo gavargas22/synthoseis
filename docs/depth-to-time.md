@@ -140,6 +140,10 @@ dominates both sides (about 85 % of the tile). The prefix sum plus the
   them write the output shape `(ni, nj, nt)`, the output-domain label cubes and
   the time attributes. Their parity read-backs compare against the
   output-domain references.
+- **Overlapped streaming `fault_labels`**: this path never wrote
+  `fault_labels` on master. In time mode it now writes the output-domain cube
+  and verifies it. On the legacy axis it still omits it, exactly as master
+  0eb937b5, so legacy stores stay byte-identical.
 - **`RICKER_PEAK_HZ`** (40 Hz) feeds every Ricker call site through
   `E2eConfig::ricker()`, sampled at `E2eConfig::digi_ms()`: `dt` in time mode,
   4 ms (`TINY_DIGI`) on the legacy axis.
@@ -201,9 +205,10 @@ at `nt − 1`.
 
 | Spec | Test | What it checks |
 |---|---|---|
-| 5.4 | `time_mode_tiling_invariance_rich` | RICH flags (3 faults, 4–30 Hz bandpass, 12.5 dB noise, salt), seeds 30 and 11, nt = nz and nz + 37. Chunk shapes `[1,1,nt]`, `[5,7,nt]`, `[3,20,16]`, `[8,5,16]`. The classic, chunked, streaming, strip 2/3/4, multiprocess 1/2/3 and geometry-once paths produce bit-identical angle stacks, labels, fault labels and salt labels. At nt = nz the columns are both short and long. |
+| 5.4 | `time_mode_tiling_invariance_rich` | RICH flags (3 faults, 4–30 Hz bandpass, 12.5 dB noise, salt), seeds 30 and 11, nt = nz and nz + 37. Chunk shapes `[1,1,nt]`, `[5,7,nt]`, `[3,20,16]`, `[8,5,16]`. The classic, chunked, streaming, overlapped streaming, strip 2/3/4, multiprocess 1/2/3 and geometry-once (its store) paths produce bit-identical angle stacks, labels, fault labels and salt labels. At nt = nz the columns are both short and long. |
+| 5.4 | `time_mode_tiling_invariance_faults_and_salt_across_chunk_edges` | Faults and salt at 24×24×128 (seed 4, RICH flags). The 150 fault ∩ salt output voxels span 6, 8 and 4 chunks of `[5,7,nt]`, `[8,5,16]` and `[3,20,32]`. Same path matrix, bit-identical. |
 | 5.4, §3.3 | `dt_2ms_invariance_and_staircase_warning` | dt = 2 ms at dz = 2 m is tiling invariant with no warning. dt = 2 ms at dz = 4 m fires the staircase warning. |
-| 5.5 | `label_round_trip` | Every output sample carries the class of the depth cell whose time interval contains it, for labels, fault labels and salt labels alike. No class is invented. Every cell at least `dt` thick is sampled. fault ∧ salt appears only where the depth cell has it. 255 stays above the seabed. |
+| 5.5 | `label_round_trip` | Depth → time → depth: each cell reads the output sample nearest its centre time. Every cell with half-thickness ≥ dt/2 is recovered exactly, for labels, fault and salt labels and fault ∧ salt. The recovered fraction of all cells is 99.73 % (seed 30) and 99.47 % (seed 11, nt = nz + 37); the misses are thin, fast salt cells. No class is invented. Seabed is exact: an output sample is 255 if and only if `t_n < T_sb`. |
 | §3.7, 5.8 | `dead_last_sample` | `nt − 1` is exactly 0 and is the only sample the zeroing touches (sinc and linear, nt = nz and nz + 37, plus the chunked path). |
 | §4, 5.2 | `uniform_2000_time_reflectivity_is_the_depth_fuse_one_sample_down` | At a uniform 2000 m/s, the production time fuse equals the production depth fuse one sample down, bit for bit. |
 | §6 | `time_mode_fuse_tile_cost_within_1_3x` | Time fuse tile ≤ 1.3× the depth fuse tile. Measured **1.06–1.07×** (release, 32×32×256). |
@@ -218,11 +223,18 @@ Other PR B tests:
   - The time-mode stack, read one sample down, meets #35's tolerance
     (≤ 8 ulp, relative RMS ≤ 1e-7) on every column whose lateral footprint has
     no reflection in the first `padlen` = 27 samples.
-  - On seed 25's two top-edge columns (seabed at sample 21), the legacy
-    `filtfilt` odd extension about t = 0 differs from the time trace's correct
-    zero top. That leaves a decaying transient of 2.2–2.8e-3 (≤ 4 % of the
-    peak) in the first 50 samples, which is within tolerance below sample 400
-    and is pinned by band.
+  - Top-edge columns, where the first reflection lies within `padlen`: the
+    legacy `filtfilt` odd extension about t = 0 differs from the time trace's
+    correct zero top, which leaves a decaying top-edge transient.
+    - Its size is **seed-specific**: it depends on where the first reflection
+      sits inside `padlen`, and the 4 % figure is not a general bound.
+    - On seed 25's two top-edge columns (seabed at sample 21) it is 2.2–2.8e-3,
+      ≤ 4 % of that seed's peak, in the first 50 samples. Below sample 400 it
+      is within tolerance. The test pins this seed's values by band.
+    - Strata's synthetic reaches **30 %** with the seabed at sample 26–27, just
+      inside `padlen` = 27.
+    - With the first reflection at or below `padlen` the transient is zero:
+      only rounding-level differences remain, as on the clean columns.
 - `synthoseis/tests/depth_to_time_cli.rs`:
   - the legacy store hashes;
   - time-mode attributes and summary;
@@ -290,14 +302,28 @@ so the measurement uses the seismic event instead.
   T_salt(z_L)`, the cell-boundary TWT from each run's Vp (it includes the salt
   drag of the horizon).
 
-| Seed | Horizon | Columns (QC / salt) | Predicted median / max | **Measured** median / max | Residual mean / std / max \|·\| | Legacy axis median / max |
-|---|---|---|---|---|---|---|
-| 1 | L36 | 329 / 761 | 112.41 / 145.31 ms | **112.85 / 144.87 ms** | +0.04 / 0.54 / 2.05 ms | 0 / 20 ms |
-| 2 | L44 | 278 / 516 | 97.36 / 239.61 ms | **97.61 / 240.16 ms** | +0.03 / 0.25 / 0.67 ms | −4 / 0 ms |
-| 3 | L28 | 401 / 787 | 99.18 / 227.04 ms | **99.27 / 226.85 ms** | +0.11 / 0.54 / 3.33 ms | 4 / 52 ms |
-| 7 | L26 | 444 / 597 | 67.69 / 130.35 ms | **67.61 / 129.79 ms** | −0.01 / 0.35 / 1.04 ms | 0 / 24 ms |
-| 30 | L37 | 358 / 438 | 83.65 / 214.86 ms | **83.78 / 214.45 ms** | −0.07 / 0.33 / 1.34 ms | 0 / 40 ms |
+| Seed | Horizon | Columns (QC / salt) | Event \|rc\| (median) | Predicted median / max | **Measured** median / max | Residual mean / std / max \|·\| | Legacy axis median / max |
+|---|---|---|---|---|---|---|---|
+| **7** (showcase) | L26 | 444 / 597 | 0.059 | 67.69 / 130.35 ms | **67.61 / 129.79 ms** | −0.01 / 0.35 / 1.04 ms | 0 / 24 ms |
+| **30** (showcase) | L37 | 358 / 438 | 0.040 | 83.65 / 214.86 ms | **83.78 / 214.45 ms** | −0.07 / 0.33 / 1.34 ms | 0 / 40 ms |
+| 1 | L36 | 329 / 761 | 0.026 | 112.41 / 145.31 ms | **112.85 / 144.87 ms** | +0.04 / 0.54 / 2.05 ms | 0 / 20 ms |
+| 2 (caveat) | L44 | 278 / 516 | 0.038 | 97.36 / 239.61 ms | **97.61 / 240.16 ms** | +0.03 / 0.25 / 0.67 ms | −4 / 0 ms |
+| 3 (caveat) | L28 | 401 / 787 | 0.024 | 99.18 / 227.04 ms | **99.27 / 226.85 ms** | +0.11 / 0.54 / 3.33 ms | 4 / 52 ms |
 
+- **Showcase: seeds 7 and 30.** These have the strongest sub-salt events and
+  the cleanest residuals.
+- **Independent check.** Strata's own 16× DFT picks on the time stack at clean
+  columns give residuals of −0.24 ms (seed 7), −0.008 ms (seed 30) and
+  −0.16 ms (seed 1, top pick; the base is distorted by a nearby reflector). The
+  mean residuals here agree to within 0.25 ms: −0.01 / −0.07 / +0.04 ms on the
+  reflectivity, and −0.02 / −0.18 / +0.02 ms on the stack.
+- **Caveat, seeds 2 and 3.** Under their thick salt the only sub-salt
+  reflectors are very weak (|rc| 0.009 and 0.006), and interference dominates
+  there. Strata's picks at clean columns give −3.1 and −2.2 ms, while their
+  salt top and base agree within 0.03 ms. The amplitude QC here keeps only the
+  columns with a stronger sub-salt event (median |rc| 0.038 and 0.024). The
+  seed 2 and 3 rows therefore describe those columns, not the thickest salt,
+  and are drawn faded and dashed in the figure.
 - **Bias.** Residual means are within ±0.11 ms: there is no bias at the
   sub-sample level.
 - **Spread.** The 0.25–0.54 ms spread is interference: the tails of
@@ -327,9 +353,11 @@ so the measurement uses the seismic event instead.
   (nz < 16) keep their default axis.
 - The `TimeAxis` reaches the fuse through `RpmModel` / `E2eConfig::time_axis()`
   rather than a separate argument on every writer.
-- The #35 time-mode test meets #35's tolerance on clean columns only. Seed 25's
-  two top-edge columns carry the filtfilt top-padding transient described
-  above.
+- The #35 time-mode test meets #35's tolerance on clean columns only. Columns
+  with the first reflection inside `padlen` = 27 carry a filtfilt top-padding
+  transient whose size is seed-specific: ≤ 4 % on seed 25's two edge columns,
+  and up to 30 % in Strata's synthetic with the seabed at sample 26–27. It is
+  zero (rounding level) once the first reflection is at or below `padlen`.
 - #35's `filter_cfg` gains `time: TimeConfig::legacy()`, its one-line legacy
   pin.
 - The time summary lines print in time mode only, so legacy stdout stays

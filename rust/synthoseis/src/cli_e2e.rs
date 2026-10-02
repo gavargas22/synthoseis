@@ -420,19 +420,23 @@ fn print_filter_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         None => "off".into(),
     };
     let wavelet = if fc.skips_ricker() {
-        "none (bandpass replaces Ricker, legacy chain)"
+        "none (bandpass replaces Ricker, legacy chain)".to_string()
     } else {
-        "ricker 40 Hz"
+        format!("ricker {} Hz", synthoseis_core::RICKER_PEAK_HZ)
     };
     println!(
         "filters: bandpass={bandpass}, lateral_size={}, wavelet={wavelet} (applied to data/angle_stack)",
         fc.lateral_size
     );
     if fc.skips_ricker() {
-        let trace = if fc.bandpass_excludes_trailing_sample() {
-            "first nk-1 samples, trailing sample 0 (legacy parity)"
+        // Legacy axis: master's wording (NK depth samples = output samples).
+        // Time mode: the dead last sample is nt - 1 (spec §3.7).
+        let trace = if cfg.time_enabled() {
+            format!("first nt-1 = {} time samples, dead last sample nt-1 = 0 (spec §3.7)", cfg.output_samples() - 1)
+        } else if fc.bandpass_excludes_trailing_sample() {
+            "first nk-1 samples, trailing sample 0 (legacy parity)".to_string()
         } else {
-            "all nk samples (--bandpass-trailing-sample, master before the fix)"
+            "all nk samples (--bandpass-trailing-sample, master before the fix)".to_string()
         };
         println!("bandpass trace: {trace}");
     }

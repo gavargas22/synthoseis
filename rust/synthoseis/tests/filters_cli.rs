@@ -99,8 +99,9 @@ fn noise_flags() {
 fn bandpass_trailing_sample_flag() {
     let dir = tempfile::tempdir().expect("tempdir");
     let read = |p: &std::path::Path| synthoseis_io::MdioStore::open(p).unwrap().read_volume().unwrap();
-    // The switch is a legacy-axis option (time mode always zeroes the dead
-    // last sample): compare on `--legacy-depth-as-time`.
+    // The switch is a legacy-axis option (in time mode the dead last sample
+    // nt-1 is zeroed whenever the bandpass replaces the Ricker): compare on
+    // `--legacy-depth-as-time`.
     let fixed = dir.path().join("fixed.mdio");
     let out = run(&["--bandpass", "4,30", "--legacy-depth-as-time"], &fixed);
     assert!(out.status.success(), "{out:?}");

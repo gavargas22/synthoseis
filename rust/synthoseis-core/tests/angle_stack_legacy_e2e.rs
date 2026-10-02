@@ -563,7 +563,11 @@ fn trailing_sample_bandpass_edge_matches_legacy_to_the_base() {
 ///   reflection at sample 21 < 27, so they carry a decaying top-edge
 ///   transient (2.2–2.8e-3, ≤ 4 % of the peak, in the first 50 samples;
 ///   2–3e-9 below sample 400), pinned here by depth band; they meet the
-///   tolerance from sample 400 down.
+///   tolerance from sample 400 down. The 4 % is specific to these columns,
+///   not a general bound: the transient's size depends on where the first
+///   reflection sits inside `padlen` (Strata's synthetic reaches 30 % with
+///   the seabed at sample 26–27), and it vanishes once the first reflection
+///   is at or below `padlen`.
 #[test]
 fn legacy_fixture_time_mode_uniform_2000() {
     const BANDS: [usize; 9] = [50, 100, 150, 200, 250, 300, 350, 400, usize::MAX];
@@ -673,7 +677,7 @@ fn legacy_fixture_time_mode_uniform_2000() {
             assert!(clean.max_abs <= tol, "seed {} {angle}°: clean max |Δ| {}", c.seed, clean.max_abs);
             assert!(clean.rel_rms() <= 1e-7, "seed {} {angle}°: clean rel RMS {}", c.seed, clean.rel_rms());
             if n_edge > 0 {
-                assert!(band[0] <= 0.04 * peak, "seed {} {angle}°: top-edge transient {}", c.seed, band[0]);
+                assert!(band[0] <= 0.04 * peak, "seed {} {angle}°: top-edge transient {} (seed-specific pin)", c.seed, band[0]);
                 assert!(band.windows(2).all(|w| w[1] <= w[0]), "transient must decay: {band:?}");
                 assert!(edge_below.max_abs <= tol, "seed {} {angle}°: below 400 max |Δ| {}", c.seed, edge_below.max_abs);
                 // Relative to the edge columns' whole legacy energy (#35's

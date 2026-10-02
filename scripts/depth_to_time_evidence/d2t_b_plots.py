@@ -54,28 +54,49 @@ def sections(seed):
     fig.savefig(p, dpi=110); plt.close(fig)
     return p
 
+SHOWCASE = (7, 30)
+CAVEAT = (2, 3)
+
 def pullup_fig(seeds):
-    """Sub-sample (16x FFT) pull-up picks vs the velocity prediction."""
-    fig, ax = plt.subplots(1, 2, figsize=(13, 5.5), constrained_layout=True)
+    """Sub-sample (16x FFT) pull-up picks vs the velocity prediction.
+
+    Seeds 7 and 30 are the showcase. Seeds 2 and 3 are drawn faded: under
+    their thick salt the only sub-salt reflectors are very weak (Strata:
+    |rc| 0.009 / 0.006, picks -3.1 / -2.2 ms at clean columns), so their
+    measured columns are those with a stronger reflector, not the thickest
+    salt.
+    """
+    fig, ax = plt.subplots(1, 2, figsize=(13.5, 6), constrained_layout=True)
     rows = []
     for seed in seeds:
         row, d = sub.measure(seed); rows.append(row)
-        h, = ax[0].plot(d["pred"], d["meas"], ".", ms=3,
-                        label=f"seed {seed} (L{d['L']}, {row['columns']} cols)")
-        ax[0].plot(d["pred"], d["legacy"], "x", ms=3, alpha=0.4, color=h.get_color())
+        show = seed in SHOWCASE
+        cav = seed in CAVEAT
+        alpha = 1.0 if show else (0.25 if cav else 0.6)
+        tag = " SHOWCASE" if show else (" caveat: weak sub-salt rc" if cav else "")
+        h, = ax[0].plot(d["pred"], d["meas"], ".", ms=4 if show else 2.5, alpha=alpha,
+                        label=f"seed {seed} (L{d['L']}, {row['columns']} cols, |rc| {row['event_rc_median']:.3f}){tag}")
+        ax[0].plot(d["pred"], d["legacy"], "x", ms=3, alpha=0.3 * alpha, color=h.get_color())
         r = d["meas"] - d["pred"]
         ax[1].hist(r, bins=np.arange(-3.5, 3.55, 0.1), histtype="step", color=h.get_color(),
-                   label=f"seed {seed}: mean {r.mean():+.2f}, std {r.std():.2f}, max {np.abs(r).max():.2f} ms")
+                   lw=1.8 if show else 0.8, alpha=max(alpha, 0.4), ls="-" if not cav else "--",
+                   label=f"seed {seed}: mean {r.mean():+.2f}, std {r.std():.2f}, max {np.abs(r).max():.2f} ms{tag}")
     lim = max(r["pred_max"] for r in rows) * 1.05
     ax[0].plot([0, lim], [0, lim], "k--", lw=0.8, label="1:1")
     ax[0].set_xlabel("predicted pull-up from Vp (ms)")
     ax[0].set_ylabel("measured pull-up (ms)")
     ax[0].set_title("salt pull-up per column: dots = time output, 16x FFT sub-sample picks\n"
                     "x = legacy axis (before), 4 ms label picks", fontsize=10)
-    ax[0].legend(fontsize=8, markerscale=3)
+    ax[0].legend(fontsize=7, markerscale=3, loc="upper left")
     ax[1].set_xlabel("measured - predicted (ms)")
     ax[1].set_title("residual, sub-sample picks on the time-mode reflectivity", fontsize=10)
-    ax[1].legend(fontsize=7)
+    ax[1].legend(fontsize=6.5, loc="upper left")
+    ax[1].text(0.99, 0.02, "Seeds 2, 3 (dashed): under the thickest salt the only sub-salt\n"
+               "reflectors are very weak (|rc| 0.009 / 0.006); Strata's picks there\n"
+               "are -3.1 / -2.2 ms (interference). Measured columns here are the\n"
+               "ones with a stronger reflector, not the thickest salt.",
+               transform=ax[1].transAxes, ha="right", va="bottom", fontsize=7,
+               bbox=dict(fc="lightyellow", ec="0.6"))
     p = f"{OUT}/pullup_measured_vs_predicted.png"
     fig.savefig(p, dpi=110); plt.close(fig)
     return p, rows
@@ -140,7 +161,7 @@ def uniform2000_fig():
 
 if __name__ == "__main__":
     paths = [sections(s) for s in (1, 2, 3, 30)]
-    p, rows = pullup_fig((1, 2, 3, 7, 30)); paths.append(p)
+    p, rows = pullup_fig((7, 30, 1, 2, 3)); paths.append(p)
     p, finfo = faults_fig(); paths.append(p)
     paths.append(uniform2000_fig())
     json.dump(dict(pullup=rows, faults=finfo, pngs=paths), open(f"{OUT}/summary.json", "w"), indent=1)

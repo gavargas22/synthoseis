@@ -116,6 +116,9 @@ enum Commands {
         /// reflectivity sample, reproducing master before the trailing-sample
         /// fix bit for bit. Default: bandpass the first NK-1 samples, exactly
         /// the trace legacy filters, and write the trailing sample as 0.
+        /// Legacy axis only (`--legacy-depth-as-time`): in time mode, when the
+        /// bandpass replaces the Ricker, the dead last sample NT-1 is always
+        /// 0; with the Ricker on there is no dead sample.
         #[arg(long, default_value_t = false)]
         bandpass_trailing_sample: bool,
         /// Add deterministic random noise at this signal-to-noise ratio (dB)
@@ -231,7 +234,9 @@ enum Commands {
 /// `--legacy-depth-as-time` / `--dt-ms` / `--twt-samples` / `--twt-kernel`
 /// (spec §2). The time options are rejected with either legacy switch
 /// (`--legacy-toy-depth` implies the legacy axis), and
-/// `--bandpass-trailing-sample` is legacy-axis only.
+/// `--bandpass-trailing-sample` is legacy-axis only: in time mode the dead
+/// last sample `nt - 1` is zeroed whenever the bandpass replaces the Ricker
+/// (spec §3.7), and there is no dead sample when the Ricker is on.
 fn parse_time(
     legacy_depth_as_time: bool,
     legacy_toy_depth: bool,
@@ -252,7 +257,7 @@ fn parse_time(
     }
     if bandpass_trailing_sample {
         return Err(
-            "--bandpass-trailing-sample requires --legacy-depth-as-time (time mode always zeroes the dead last sample)"
+            "--bandpass-trailing-sample requires --legacy-depth-as-time (in time mode the dead last sample nt-1 is zeroed whenever the bandpass replaces the Ricker)"
                 .into(),
         );
     }

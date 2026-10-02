@@ -12,7 +12,8 @@ use synthoseis_core::time_mode::tile_twt;
 use synthoseis_core::{
     elastic_model, generate_chunked, generate_fault_labels, generate_labels,
     generate_output_labels, generate_reflectivity, run_e2e_geometry_once_seismic_many,
-    run_e2e_multiprocess, run_e2e_streaming, run_e2e_strip_stitched, time_column_summary,
+    run_e2e_multiprocess, run_e2e_streaming, run_e2e_streaming_overlapped, run_e2e_strip_stitched,
+    time_column_summary,
     FaultConfig, FilterConfig, NoiseConfig, RockPhysicsConfig, SeismicFilters, TimeConfig,
     TwtKernel, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
 };
@@ -102,9 +103,11 @@ fn assert_store(name: &str, cfg: &E2eConfig, s: &Store, r: &Reference) {
     assert!(s.salt == r.salt, "{name}: salt_labels");
 }
 
-/// Every path writes the same time-domain cubes: classic, chunked (four
-/// chunk shapes, including single-column and k-chunked tiles), streaming,
-/// strip-stitch 2/3/4, multiprocess 1/2/3 and geometry-once (spec §5.4).
+/// Every path writes the same time-domain cubes (angle stack, labels,
+/// fault_labels, salt_labels): classic, chunked and streaming and overlapped
+/// streaming (every chunk shape given, including single-column and
+/// k-chunked tiles), strip-stitch 2/3/4, multiprocess 1/2/3 and
+/// geometry-once (its store; spec §5.4).
 fn assert_tiling_invariant(cfg: &E2eConfig, chunk_shapes: &[[usize; 3]]) {
     let r = reference(cfg);
     let nt = cfg.output_samples();
@@ -118,6 +121,9 @@ fn assert_tiling_invariant(cfg: &E2eConfig, chunk_shapes: &[[usize; 3]]) {
         let p = dir.path().join(format!("stream{n}.mdio"));
         run_e2e_streaming(&E2eConfig { store_path: Some(p.clone()), ..cc.clone() }).unwrap();
         assert_store(&format!("streaming {c:?}"), cfg, &read_store(&p), &r);
+        let p = dir.path().join(format!("overlap{n}.mdio"));
+        run_e2e_streaming_overlapped(&E2eConfig { store_path: Some(p.clone()), ..cc.clone() }).unwrap();
+        assert_store(&format!("overlap {c:?}"), cfg, &read_store(&p), &r);
     }
     let strip_chunks = [3, 4, 16];
     for workers in [2, 3, 4] {
@@ -132,10 +138,13 @@ fn assert_tiling_invariant(cfg: &E2eConfig, chunk_shapes: &[[usize; 3]]) {
         run_e2e_multiprocess(&mc, workers).unwrap();
         assert_store(&format!("multiprocess {workers}"), cfg, &read_store(&p), &r);
     }
-    let gc = E2eConfig { chunk_shape: Some([4, 4, nt]), ..cfg.clone() };
+    let p = dir.path().join("geo.mdio");
+    let gc = E2eConfig { chunk_shape: Some([4, 4, nt]), store_path: Some(p), ..cfg.clone() };
     let (g, _) = run_e2e_geometry_once_seismic_many(&gc, &[DEFAULT_INCIDENCE_DEG]).unwrap();
     assert!(bits(&g.stacks[0].volumes.angle_stack) == r.angles, "geometry-once: angle_stack");
     assert!(g.labels == r.labels, "geometry-once: labels");
+    let gp = g.stacks[0].store_path.as_ref().expect("geometry-once store");
+    assert_store("geometry-once store", cfg, &read_store(gp), &r);
 }
 
 const TILING_CHUNKS: [[usize; 3]; 4] = [[1, 1, 0], [5, 7, 0], [3, 20, 16], [8, 5, 16]];
@@ -167,6 +176,35 @@ fn time_mode_tiling_invariance_rich() {
     assert!(short_and_long, "some configuration must have both short and long columns");
 }
 
+/// Faults and salt together at 24 × 24 × 128 (seed 4, RICH flags): the
+/// fault ∩ salt voxels of the output cubes span several chunks of every
+/// chunk shape here, laterally and along k, so per-chunk label writers are
+/// checked where the two cubes meet (spec §5.4). (When the fault-label salt
+/// mask lands, the same overlap is the set the mask removes.)
+#[test]
+fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
+    let cfg = rich(4, [24, 24, 128], None, 3);
+    let (labels, sh) = generate_labels(&cfg);
+    let model = elastic_model(&cfg, &labels, sh);
+    let out = generate_output_labels(&cfg, &labels, &model);
+    let (f, s) = (out.faults.unwrap(), out.salt.unwrap());
+    let [ni, nj, nt] = cfg.output_shape();
+    let both: Vec<[usize; 3]> = (0..ni * nj * nt)
+        .filter(|&v| f[v] == 1 && s[v] == 1)
+        .map(|v| [v / (nj * nt), (v / nt) % nj, v % nt])
+        .collect();
+    let chunks = [[5, 7, 0], [8, 5, 16], [3, 20, 32]];
+    for c in chunks {
+        let ck = if c[2] == 0 { nt } else { c[2] };
+        let mut ids: Vec<[usize; 3]> = both.iter().map(|v| [v[0] / c[0], v[1] / c[1], v[2] / ck]).collect();
+        ids.sort();
+        ids.dedup();
+        println!("seed 4 fault ∩ salt: {} voxels in {} chunks of {c:?}", both.len(), ids.len());
+        assert!(ids.len() >= 2, "fault ∩ salt must cross a chunk edge of {c:?}");
+    }
+    assert_tiling_invariant(&cfg, &chunks);
+}
+
 /// dt = 2 ms on a 2 m depth grid: tiling invariant, no staircase warning
 /// (2 m ≤ 1580 · 2 ms / 1.2 = 2.63 m). dt = 2 ms on the default 4 m grid
 /// fires the staircase warning (spec §3.3).
@@ -191,13 +229,17 @@ fn dt_2ms_invariance_and_staircase_warning() {
     assert!(E2eConfig { time: TimeConfig::legacy(), ..coarse }.time_warning().is_none());
 }
 
-/// Label round trip (spec §5.5): every output sample carries the class of
-/// the depth cell whose time interval contains it (`T_k ≤ t_n < T_k+1`,
-/// the last cell below the base), for labels, fault labels and salt labels
-/// alike; no class is invented; every depth cell at least `dt` thick in
-/// time is sampled; and the per-voxel invariants survive: a sample is
-/// fault ∧ salt only where its depth cell is (so the fault-label salt mask
-/// carries over unchanged), and 255 stays above the seabed.
+/// Label round trip (spec §5.5), depth → time → depth, for labels, fault
+/// labels and salt labels alike:
+///
+/// * back to depth: each depth cell k (inside the trace) reads the output
+///   sample nearest its centre time `(T_k + T_k+1) / 2`. Every cell whose
+///   half-thickness in time is ≥ dt/2 (so that sample lies inside it) must
+///   be recovered exactly; the recovered fraction of all cells is reported;
+/// * seabed, exact: an output sample is 255 if and only if `t_n < T_sb`,
+///   the two-way time of the seabed (top of the first non-255 cell);
+/// * no class is invented, and fault ∧ salt is recovered per cell (so the
+///   fault-label salt mask carries over unchanged).
 #[test]
 fn label_round_trip() {
     for (seed, nt) in [(30u64, None), (11, Some(64 + 37))] {
@@ -211,46 +253,61 @@ fn label_round_trip() {
         let axis = cfg.time_axis().unwrap();
         let (nt, dt) = (axis.nt, axis.dt_ms);
         let t = tile_twt(&model, &labels, shape, 0, ni, 0, nj, &axis);
-        let mut sampled_thick = 0usize;
+        let fo = out.faults.as_ref().unwrap();
+        let (mut cells, mut recovered, mut thick, mut seabeds) = (0usize, 0usize, 0usize, 0usize);
         for c in 0..ni * nj {
             let tc = &t[c * (nz + 1)..(c + 1) * (nz + 1)];
-            let z = c * nz..(c + 1) * nz;
-            let o = c * nt..(c + 1) * nt;
-            let cube = |zc: &[u8], oc: &[u8], what: &str| {
-                let mut seen = vec![false; nz];
-                for n in 0..nt {
-                    let tn = n as f64 * dt;
-                    let k = (0..nz).rev().find(|&k| tc[k] <= tn).unwrap_or(0);
-                    assert_eq!(oc[n], zc[k], "seed {seed} col {c} n {n}: {what}");
-                    seen[k] = true;
+            let (z, o) = (c * nz, c * nt);
+            // Depth cubes of this column: (depth, output, name).
+            let mut cubes: Vec<(&[u8], &[u8], &str)> = vec![
+                (&labels[z..z + nz], &out.labels[o..o + nt], "labels"),
+                (&faults_z[z..z + nz], &fo[o..o + nt], "fault_labels"),
+            ];
+            if let (Some(sz), Some(so)) = (&salt_z, &out.salt) {
+                cubes.push((&sz[z..z + nz], &so[o..o + nt], "salt_labels"));
+            }
+            for k in 0..nz {
+                let centre = 0.5 * (tc[k] + tc[k + 1]);
+                let n = (centre / dt).round() as usize;
+                if n >= nt {
+                    break;
                 }
-                for k in 0..nz - 1 {
-                    if tc[k + 1] - tc[k] >= dt && tc[k] < (nt - 1) as f64 * dt {
-                        assert!(seen[k], "seed {seed} col {c}: cell {k} ({what}) not sampled");
+                let must = 0.5 * (tc[k + 1] - tc[k]) >= 0.5 * dt;
+                let ok = cubes.iter().all(|(zc, oc, _)| oc[n] == zc[k]);
+                if must {
+                    for (zc, oc, what) in &cubes {
+                        assert_eq!(oc[n], zc[k], "seed {seed} col {c} cell {k}: {what} not recovered");
+                    }
+                    thick += 1;
+                }
+                cells += 1;
+                recovered += ok as usize;
+                if let (Some(sz), Some(so)) = (&salt_z, &out.salt) {
+                    if must {
+                        let both_t = so[o + n] == 1 && fo[o + n] == 1;
+                        let both_z = sz[z + k] == 1 && faults_z[z + k] == 1;
+                        assert_eq!(both_t, both_z, "fault ∧ salt col {c} cell {k}");
                     }
                 }
-                assert!(oc.iter().all(|v| zc.contains(v)), "{what}: invented class");
-            };
-            cube(&labels[z.clone()], &out.labels[o.clone()], "labels");
-            cube(&faults_z[z.clone()], &out.faults.as_ref().unwrap()[o.clone()], "fault_labels");
-            if let (Some(sz), Some(so)) = (&salt_z, &out.salt) {
-                cube(&sz[z.clone()], &so[o.clone()], "salt_labels");
-                let fo = out.faults.as_ref().unwrap();
-                for n in 0..nt {
-                    let tn = n as f64 * dt;
-                    let k = (0..nz).rev().find(|&k| tc[k] <= tn).unwrap_or(0);
-                    let both_t = so[o.start + n] == 1 && fo[o.start + n] == 1;
-                    let both_z = sz[z.start + k] == 1 && faults_z[z.start + k] == 1;
-                    assert_eq!(both_t, both_z, "fault ∧ salt col {c} n {n}");
+            }
+            for (zc, oc, what) in &cubes {
+                assert!(oc.iter().all(|v| zc.contains(v)), "seed {seed} col {c}: {what}: invented class");
+            }
+            // Seabed: 255 exactly where t_n < T_sb.
+            let ol = &out.labels[o..o + nt];
+            if let Some(ksb) = labels[z..z + nz].iter().position(|&v| v != 255) {
+                let t_sb = tc[ksb];
+                for (n, &v) in ol.iter().enumerate() {
+                    assert_eq!(v == 255, (n as f64 * dt) < t_sb, "seed {seed} col {c} n {n}: seabed at {t_sb} ms");
                 }
+                seabeds += 1;
             }
-            let ol = &out.labels[o.clone()];
-            if let Some(first) = ol.iter().position(|&v| v != 255) {
-                assert!(ol[first..].iter().all(|&v| v != 255), "255 below the seabed in col {c}");
-            }
-            sampled_thick += 1;
         }
-        assert_eq!(sampled_thick, ni * nj);
+        println!(
+            "seed {seed} nt {nt}: {recovered}/{cells} depth cells recovered ({:.2} %), all {thick} cells >= dt thick recovered; seabed exact in {seabeds} columns",
+            100.0 * recovered as f64 / cells as f64
+        );
+        assert!(thick > 0 && seabeds == ni * nj);
     }
 }
 

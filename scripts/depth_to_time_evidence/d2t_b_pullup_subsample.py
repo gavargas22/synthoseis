@@ -103,10 +103,13 @@ def measure_horizon(s, n, L, h):
         for name, r, tl, z in (("salt", s, h["ts"], h["zs"]), ("nosalt", n, h["tn"], h["zn"])):
             tr = r["time_rfc"] if kind == "rfc" else r["time_stack"].reshape(-1, r["meta"]["nt"])
             t[name], t[name + "_pol"] = pick(tr[idx], tl[ok])
+            nn = np.clip(np.nan_to_num(np.round(t[name])).astype(int), 0, tr.shape[1] - 1)
+            t[name + "_amp"] = np.abs(tr[idx, nn])
             t[name + "_abs"] = t[name] * dt - r["twt"][ii, jj, z[ok]]
         meas = (t["nosalt"] - t["salt"]) * dt
         good = np.isfinite(meas) & (t["salt_pol"] == t["nosalt_pol"])
-        out[kind] = dict(meas=meas, good=good, abs_salt=t["salt_abs"], abs_nosalt=t["nosalt_abs"])
+        out[kind] = dict(meas=meas, good=good, abs_salt=t["salt_abs"], abs_nosalt=t["nosalt_abs"],
+                         amp=np.minimum(t["salt_amp"], t["nosalt_amp"]))
     return out
 
 def measure(seed):
@@ -123,6 +126,7 @@ def measure(seed):
                meas_med=float(np.median(meas)), meas_max=float(meas.max()),
                resid=stats(meas - pred),
                abs_pick_err=stats(np.r_[m["rfc"]["abs_salt"][g], m["rfc"]["abs_nosalt"][g]]))
+    res["event_rc_median"] = float(np.median(m["rfc"]["amp"][g]))
     k = int(np.argmax(pred)); res["at_max_pred"] = dict(pred=float(pred[k]), meas=float(meas[k]))
     gs = m["stack"]["good"]
     res["stack_check"] = dict(columns=int(gs.sum()), resid=stats(m["stack"]["meas"][gs] - m["pred"][gs]))
