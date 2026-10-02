@@ -41,6 +41,8 @@ fn demo(seed: u64, shape: [usize; 3], faults: usize) -> E2eConfig {
         rock_physics: RockPhysicsConfig {
             lithology: ToyLithology::Alternating,
             closures_unsegmented: true,
+            // ... and before salt bodies (`salt: false` = master b4f4259).
+            salt: false,
             ..RockPhysicsConfig::default()
         },
         geometry: ToyGeometry::Layered,

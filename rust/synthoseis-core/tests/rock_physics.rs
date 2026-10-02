@@ -9,6 +9,7 @@
 
 use serde::Deserialize;
 use serde_json::Value;
+use synthoseis_core::closure_segments::unit_closure_runs_salt;
 use synthoseis_core::pipeline::{
     generate_tiny_cube, E2eConfig, FaultConfig, FilterConfig, NoiseConfig, RockPhysicsConfig,
 };
@@ -419,6 +420,8 @@ fn legacy_toy_depth_switch_reproduces_master_10f4dcd() {
                 legacy_angle_weights: false,
                 legacy_seabed: false,
             },
+            // Golden from before the bandpass trailing-sample fix.
+            bandpass_trailing_sample: true,
             ..FilterConfig::legacy(4.0, 30.0, 3)
         },
         ..cfg(10, [24, 20, 64], [8, 5, 64], 3)
@@ -476,6 +479,8 @@ fn unit_case(closures_per_layer: bool) -> E2eConfig {
             sand_layer_fraction: Some(0.4),
             sand_layer_thickness: 3.0,
             closures_per_layer,
+            // Pinned master b4f4259 scenario (tests/closure_units.rs).
+            salt: false,
             ..RockPhysicsConfig::default()
         },
         filters: r.filters.clone(),
@@ -492,10 +497,80 @@ fn segmented_case(unsegmented: bool) -> E2eConfig {
             sand_layer_fraction: Some(0.5),
             sand_layer_thickness: 1.0,
             closures_unsegmented: unsegmented,
+            // Pinned master b4f4259 scenario (tests/closure_segments.rs).
+            salt: false,
             ..RockPhysicsConfig::default()
         },
         ..cfg(7, [24, 20, 128], [8, 5, 128], 4)
     }
+}
+
+/// Salt body (default on) with 4 faults, sitting mid-cube (seed 102:
+/// inlines 7-20, crosslines 5-15, samples 59-116 of 24x20x128), so it
+/// crosses the chunk boundaries of every tiling below, with closures sealed
+/// against its flank by the salt walls (closures of >= 100 voxels kept, so
+/// the walled closures reach the model); salt labels are checked by every
+/// MDIO path.
+fn salt_case(salt: bool) -> E2eConfig {
+    E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Layered,
+        rock_physics: RockPhysicsConfig {
+            sand_layer_fraction: Some(0.4),
+            min_closure_voxels: 100,
+            salt,
+            ..RockPhysicsConfig::default()
+        },
+        ..cfg(102, [24, 20, 128], [8, 5, 128], 4)
+    }
+}
+
+/// Salt wall effect in `cfg`: (columns outside salt gaps whose closure
+/// contact differs from an unwalled fill of the same labels, walled closure
+/// columns), summed over the sand units.
+fn salt_wall_effect(cfg: &E2eConfig) -> (usize, usize) {
+    let (labels, shape) = generate_labels(cfg);
+    let ElasticModel::Rpm(m) = elastic_model(cfg, &labels, shape) else { panic!() };
+    let body = m.salt.as_ref().expect("salt");
+    let rp = &cfg.rock_physics;
+    let sand = synthoseis_core::lithology::interval_sand(
+        cfg.effective_lithology(),
+        cfg.seed,
+        m.nh,
+        rp.sand_layer_fraction,
+        rp.sand_layer_thickness,
+    );
+    let [ni, nj, nk] = shape;
+    let max_column = rp.max_column_m / rp.depth_step_m;
+    let (mut changed, mut closed) = (0, 0);
+    for (top, end) in synthoseis_core::lithology::closure_units(&sand) {
+        let ids: Vec<u8> = m
+            .intervals
+            .iter()
+            .enumerate()
+            .filter(|&(l, &h)| l < 255 && h >= top && h < end)
+            .map(|(l, _)| l as u8)
+            .collect();
+        if ids.is_empty() {
+            continue;
+        }
+        let contacts = |salt| {
+            let mut c = vec![None; ni * nj];
+            for r in unit_closure_runs_salt(&labels, shape, &ids, top, max_column, salt) {
+                c[r.col] = Some(r.contact.to_bits());
+            }
+            c
+        };
+        let (walled, plain) = (contacts(Some(body)), contacts(None));
+        closed += walled.iter().filter(|c| c.is_some()).count();
+        for c in 0..ni * nj {
+            let col = &labels[c * nk..(c + 1) * nk];
+            let gap = col.iter().position(|l| ids.contains(l)).is_some_and(|k| body.contains(c, k));
+            if !gap && walled[c] != plain[c] {
+                changed += 1;
+            }
+        }
+    }
+    (changed, closed)
 }
 
 fn rich(chunks: [usize; 3]) -> E2eConfig {
@@ -561,6 +636,8 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
         // 3D closure segmentation where faults join closures of different
         // sand units (tests/closure_segments.rs).
         segmented_case(false),
+        // Salt body (tests/salt.rs).
+        salt_case(true),
     ]
     .into_iter()
         .enumerate()
@@ -603,6 +680,63 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
                 bits(&generate_chunked(&base).0.angle_stack),
                 bits(&generate_chunked(&segmented_case(true)).0.angle_stack),
                 "segmented vs unsegmented"
+            );
+        }
+        if n == 10 {
+            let body = synthoseis_core::salt::salt_body(&base).expect("salt");
+            assert!(body.voxels(base.samples) > 500);
+            // Mid-cube: the salt's bounding box is inside the cube and
+            // crosses inline, crossline and sample chunk boundaries.
+            let [ni, nj, nk] = base.shape();
+            let (mut lo, mut hi) = ([usize::MAX; 3], [0usize; 3]);
+            for c in 0..ni * nj {
+                let (a, b) = body.runs[c];
+                let (a, b) = (a as usize, (b as usize).min(nk));
+                if b > a {
+                    for (d, v) in [(0, c / nj), (1, c % nj), (2, a)] {
+                        lo[d] = lo[d].min(v);
+                    }
+                    for (d, v) in [(0, c / nj), (1, c % nj), (2, b - 1)] {
+                        hi[d] = hi[d].max(v);
+                    }
+                }
+            }
+            assert!(lo[0] > 0 && hi[0] < ni - 1 && lo[1] > 0 && hi[1] < nj - 1, "{lo:?} {hi:?}");
+            assert!(lo[2] > 0 && hi[2] < nk - 1, "{lo:?} {hi:?}");
+            assert!(lo[0] < 8 && hi[0] >= 16 && lo[1] < 10 && hi[1] >= 15, "{lo:?} {hi:?}");
+            assert!(lo[2] < 64 && hi[2] >= 112, "{lo:?} {hi:?}");
+            // The salt walls actually trigger: closure columns outside the
+            // salt gaps differ from an unwalled fill.
+            let (changed, closed) = salt_wall_effect(&base);
+            assert!(changed >= 20 && closed > 100, "wall effect {changed} / {closed}");
+            let (labels, shape) = generate_labels(&base);
+            let ElasticModel::Rpm(m) = elastic_model(&base, &labels, shape) else { panic!() };
+            assert!(m.salt.is_some());
+            assert!(m.layers.iter().any(|l| l.fluids.as_ref().is_some_and(|f| !f.closures.is_empty())));
+            // ... and change the closures kept in the model: the same labels
+            // and maps without walls give different closures.
+            let sand = synthoseis_core::lithology::interval_sand(
+                base.effective_lithology(),
+                base.seed,
+                m.nh,
+                base.rock_physics.sand_layer_fraction,
+                base.rock_physics.sand_layer_thickness,
+            );
+            let rp = RockPhysicsConfig {
+                closures_per_layer: base.effective_closures_per_layer(),
+                ..base.rock_physics.clone()
+            };
+            let unwalled = synthoseis_core::rock_physics::RpmModel::build_with_salt(
+                base.seed, &rp, &m.maps, m.nh, &labels, shape, &sand, None,
+            );
+            let kept = |m: &synthoseis_core::rock_physics::RpmModel| {
+                m.layers.iter().map(|l| l.fluids.as_ref().map(|f| f.closures.clone())).collect::<Vec<_>>()
+            };
+            assert_ne!(kept(&m), kept(&unwalled), "salt walls change the kept closures");
+            assert_ne!(
+                bits(&generate_chunked(&base).0.angle_stack),
+                bits(&generate_chunked(&salt_case(false)).0.angle_stack),
+                "salt vs no salt"
             );
         }
         if n == 5 {

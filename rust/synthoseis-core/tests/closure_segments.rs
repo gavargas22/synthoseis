@@ -286,6 +286,8 @@ fn faulted_sandy(seed: u64, unsegmented: bool) -> E2eConfig {
             sand_layer_fraction: Some(0.5),
             sand_layer_thickness: 1.0,
             closures_unsegmented: unsegmented,
+            // Pinned master b4f4259 scenario (tests/salt.rs covers salt).
+            salt: false,
             ..RockPhysicsConfig::default()
         },
         geometry: ToyGeometry::Layered,

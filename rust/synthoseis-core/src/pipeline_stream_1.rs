@@ -152,5 +152,8 @@ pub fn write_e2e_mdio_chunked(
             .write_fault_labels_u8(&mask)
             .map_err(|e| e.to_string())?;
     }
+    if let Some(mask) = crate::salt::generate_salt_labels(cfg) {
+        store.write_salt_labels_u8(&mask).map_err(|e| e.to_string())?;
+    }
     Ok(chunks)
 }

@@ -112,6 +112,12 @@ enum Commands {
         /// the Ricker wavelet (legacy chain: reflectivity, then bandpass).
         #[arg(long, default_value_t = false)]
         keep_ricker: bool,
+        /// With `--bandpass` (Ricker skipped): also bandpass the trailing
+        /// reflectivity sample, reproducing master before the trailing-sample
+        /// fix bit for bit. Default: bandpass the first NK-1 samples, exactly
+        /// the trace legacy filters, and write the trailing sample as 0.
+        #[arg(long, default_value_t = false)]
+        bandpass_trailing_sample: bool,
         /// Add deterministic random noise at this signal-to-noise ratio (dB)
         /// to the raw reflectivity before the wavelet / bandpass (port of
         /// Seismic.add_weighted_noise; legacy example config 7.5-17.5 dB).
@@ -190,6 +196,16 @@ enum Commands {
         /// docs/closure-segmentation-faults.md.
         #[arg(long, default_value_t = false)]
         closures_unsegmented: bool,
+        /// Legacy switch: no salt body (master b4f4259). Salt is on by
+        /// default for the layered geometry (legacy `include_salt: true`).
+        /// See docs/salt-bodies.md.
+        #[arg(long, default_value_t = false)]
+        no_salt: bool,
+        /// Legacy switch: absolute U(150, 300)-sample salt top offset below
+        /// horizon 1 (legacy 1250-sample cubes) instead of the default
+        /// scaled by min(samples / 1250, 1).
+        #[arg(long, default_value_t = false)]
+        salt_legacy_top_offset: bool,
     },
 }
 
@@ -232,10 +248,14 @@ fn parse_filters(
     bandpass: Option<&str>,
     lateral_filter: usize,
     keep_ricker: bool,
+    bandpass_trailing_sample: bool,
     noise: synthoseis_core::NoiseConfig,
 ) -> Result<synthoseis_core::FilterConfig, String> {
     if keep_ricker && bandpass.is_none() {
         return Err("--keep-ricker requires --bandpass".into());
+    }
+    if bandpass_trailing_sample && bandpass.is_none() {
+        return Err("--bandpass-trailing-sample requires --bandpass".into());
     }
     if !noise.enabled()
         && (noise.seed.is_some() || noise.legacy_angle_weights || noise.legacy_seabed)
@@ -253,6 +273,7 @@ fn parse_filters(
     let mut fc = synthoseis_core::FilterConfig {
         lateral_size: lateral_filter.max(1),
         keep_ricker,
+        bandpass_trailing_sample,
         noise,
         ..Default::default()
     };
@@ -410,6 +431,29 @@ fn apply_lithology(
     Ok(rock)
 }
 
+/// `--no-salt` / `--salt-legacy-top-offset`: salt exists only in the layered
+/// geometry, so both are rejected with the planar geometry (and
+/// `--legacy-toy-depth`), and the offset switch is rejected with `--no-salt`.
+fn apply_salt(
+    mut rock: synthoseis_core::RockPhysicsConfig,
+    geometry: synthoseis_core::ToyGeometry,
+    no_salt: bool,
+    legacy_top_offset: bool,
+) -> Result<synthoseis_core::RockPhysicsConfig, String> {
+    if geometry == synthoseis_core::ToyGeometry::Planar && (no_salt || legacy_top_offset) {
+        return Err(
+            "--no-salt / --salt-legacy-top-offset have no effect with the planar geometry or --legacy-toy-depth (no salt)"
+                .into(),
+        );
+    }
+    if no_salt && legacy_top_offset {
+        return Err("--salt-legacy-top-offset has no effect with --no-salt".into());
+    }
+    rock.salt = !no_salt;
+    rock.salt_legacy_top_offset = legacy_top_offset;
+    Ok(rock)
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -440,6 +484,7 @@ fn main() {
             bandpass,
             lateral_filter,
             keep_ricker,
+            bandpass_trailing_sample,
             noise_snr_db,
             noise_seed,
             noise_legacy_weights,
@@ -456,6 +501,8 @@ fn main() {
             sand_layer_thickness,
             closures_per_layer,
             closures_unsegmented,
+            no_salt,
+            salt_legacy_top_offset,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -507,7 +554,13 @@ fn main() {
                 legacy_angle_weights: noise_legacy_weights,
                 legacy_seabed: noise_legacy_seabed,
             };
-            let filters = parse_filters(bandpass.as_deref(), lateral_filter, keep_ricker, noise)
+            let filters = parse_filters(
+                bandpass.as_deref(),
+                lateral_filter,
+                keep_ricker,
+                bandpass_trailing_sample,
+                noise,
+            )
                 .unwrap_or_else(|e| {
                     eprintln!("{e}");
                     std::process::exit(2);
@@ -546,6 +599,7 @@ fn main() {
                 sand_layer_fraction,
                 sand_layer_thickness,
             )
+            .and_then(|r| apply_salt(r, geometry, no_salt, salt_legacy_top_offset))
             .unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);

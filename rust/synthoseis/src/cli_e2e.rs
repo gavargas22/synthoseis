@@ -253,6 +253,23 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         }
     };
     println!("toy geometry: {} ({nh} horizons)", g.as_str());
+    if let Some(b) = synthoseis_core::salt::salt_body(cfg) {
+        let nk = cfg.samples;
+        println!(
+            "salt: top {:.1} samples, radius {:.1} columns, {} voxels in {} columns{}",
+            b.top,
+            b.radius,
+            b.voxels(nk),
+            b.columns(nk),
+            if cfg.rock_physics.salt_legacy_top_offset {
+                " (--salt-legacy-top-offset)"
+            } else {
+                ""
+            }
+        );
+    } else if g == synthoseis_core::ToyGeometry::Layered {
+        println!("salt: off (--no-salt, master b4f4259)");
+    }
     let rp = &cfg.rock_physics;
     let lith = cfg.effective_lithology();
     let sand = synthoseis_core::lithology::interval_sand(
@@ -344,6 +361,14 @@ fn print_filter_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         "filters: bandpass={bandpass}, lateral_size={}, wavelet={wavelet} (applied to data/angle_stack)",
         fc.lateral_size
     );
+    if fc.skips_ricker() {
+        let trace = if fc.bandpass_excludes_trailing_sample() {
+            "first nk-1 samples, trailing sample 0 (legacy parity)"
+        } else {
+            "all nk samples (--bandpass-trailing-sample, master before the fix)"
+        };
+        println!("bandpass trace: {trace}");
+    }
     if let Some(db) = fc.noise.snr_db {
         println!(
             "noise: snr={db} dB, seed={}, weights={}, data_std_cutoff={} (added to raw reflectivity before wavelet/bandpass)",

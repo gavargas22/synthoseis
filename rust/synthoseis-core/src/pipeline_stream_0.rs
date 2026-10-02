@@ -113,7 +113,21 @@ pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
             crate::toy_geometry::planar_horizon_maps(cfg.seed, cfg.shape())
         }
         crate::toy_geometry::ToyGeometry::Layered => {
-            crate::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape())
+            let (maps, nh) = crate::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape());
+            match crate::salt::salt_body_from_maps(cfg, &maps, nh) {
+                None => (maps, nh),
+                Some(body) => {
+                    let [ni, nj, _] = cfg.shape();
+                    let mut dragged = crate::salt::drag_horizon_maps(&maps, [ni, nj, nh], &body);
+                    // Whole samples, as the layered geometry (see
+                    // `layered_horizon_maps`); rounding keeps the order.
+                    for v in &mut dragged {
+                        *v = v.round();
+                    }
+                    synthoseis_geo::enforce_nonnegative_thicknesses(&mut dragged, [ni, nj, nh]);
+                    (dragged, nh)
+                }
+            }
         }
     }
 }
