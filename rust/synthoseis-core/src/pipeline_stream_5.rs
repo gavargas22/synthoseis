@@ -90,6 +90,7 @@ pub fn run_e2e_strip_stitched(
                         trends,
                         &wavelet,
                         faults_ref,
+                        crate::salt::fault_label_salt(cfg, trends),
                         filters_ref,
                     )
                 }));

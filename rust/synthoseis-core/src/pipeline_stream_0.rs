@@ -200,6 +200,12 @@ pub(crate) fn apply_faults_to_labels(cfg: &E2eConfig, maps: &[f64], nh: usize, l
 pub fn generate_fault_labels(cfg: &E2eConfig) -> Option<Vec<u8>> {
     let model = fault_model(cfg)?;
     let [ni, nj, nk] = cfg.shape();
+    // `fault AND NOT salt` (see [`crate::salt::mask_fault_tile_salt`]).
+    let salt = if cfg.effective_fault_salt_mask() {
+        crate::salt::salt_body(cfg)
+    } else {
+        None
+    };
     let mut mask = vec![0u8; ni * nj * nk];
     model.for_each_tile(fault_tile(cfg), |t| {
         for i in t.i0..t.i1 {
@@ -207,6 +213,13 @@ pub fn generate_fault_labels(cfg: &E2eConfig) -> Option<Vec<u8>> {
                 let g = (i * nj + j) * nk;
                 let l = t.col_offset(i, j);
                 mask[g..g + nk].copy_from_slice(&t.mask[l..l + nk]);
+                if let Some(s) = &salt {
+                    let (a, b) = s.runs[i * nj + j];
+                    let (a, b) = ((a as usize).min(nk), (b as usize).min(nk));
+                    if a < b {
+                        mask[g + a..g + b].fill(0);
+                    }
+                }
             }
         }
     });

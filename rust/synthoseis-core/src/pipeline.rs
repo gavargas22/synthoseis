@@ -325,6 +325,12 @@ impl E2eConfig {
         self.rock_physics.salt && self.effective_geometry() == ToyGeometry::Layered
     }
 
+    /// Fault labels are masked by the salt body (`fault AND NOT salt`):
+    /// salt present, faults enabled and no `--fault-labels-through-salt`.
+    pub fn effective_fault_salt_mask(&self) -> bool {
+        self.effective_salt() && self.faults.enabled() && !self.rock_physics.fault_labels_through_salt
+    }
+
     pub fn tiny(seed: u64) -> Self {
         Self {
             seed,

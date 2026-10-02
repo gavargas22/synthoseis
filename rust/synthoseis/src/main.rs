@@ -206,6 +206,11 @@ enum Commands {
         /// scaled by min(samples / 1250, 1).
         #[arg(long, default_value_t = false)]
         salt_legacy_top_offset: bool,
+        /// Legacy switch: keep fault labels inside the salt body (master
+        /// 2b3850ba). By default data/fault_labels is fault AND NOT salt.
+        /// See docs/salt-bodies.md.
+        #[arg(long, default_value_t = false)]
+        fault_labels_through_salt: bool,
     },
 }
 
@@ -431,15 +436,34 @@ fn apply_lithology(
     Ok(rock)
 }
 
-/// `--no-salt` / `--salt-legacy-top-offset`: salt exists only in the layered
-/// geometry, so both are rejected with the planar geometry (and
-/// `--legacy-toy-depth`), and the offset switch is rejected with `--no-salt`.
+/// `--no-salt` / `--salt-legacy-top-offset` / `--fault-labels-through-salt`:
+/// salt exists only in the layered geometry, so all are rejected with the
+/// planar geometry (and `--legacy-toy-depth`); the offset and fault-label
+/// switches are rejected with `--no-salt`, and the fault-label switch
+/// without faults.
 fn apply_salt(
     mut rock: synthoseis_core::RockPhysicsConfig,
     geometry: synthoseis_core::ToyGeometry,
     no_salt: bool,
     legacy_top_offset: bool,
+    fault_labels_through_salt: bool,
+    faults: usize,
 ) -> Result<synthoseis_core::RockPhysicsConfig, String> {
+    if fault_labels_through_salt {
+        if geometry == synthoseis_core::ToyGeometry::Planar {
+            return Err(
+                "--fault-labels-through-salt has no effect with the planar geometry or --legacy-toy-depth (no salt)"
+                    .into(),
+            );
+        }
+        if no_salt {
+            return Err("--fault-labels-through-salt has no effect with --no-salt".into());
+        }
+        if faults == 0 {
+            return Err("--fault-labels-through-salt has no effect without --faults (no fault labels)".into());
+        }
+    }
+    rock.fault_labels_through_salt = fault_labels_through_salt;
     if geometry == synthoseis_core::ToyGeometry::Planar && (no_salt || legacy_top_offset) {
         return Err(
             "--no-salt / --salt-legacy-top-offset have no effect with the planar geometry or --legacy-toy-depth (no salt)"
@@ -503,6 +527,7 @@ fn main() {
             closures_unsegmented,
             no_salt,
             salt_legacy_top_offset,
+            fault_labels_through_salt,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -599,7 +624,16 @@ fn main() {
                 sand_layer_fraction,
                 sand_layer_thickness,
             )
-            .and_then(|r| apply_salt(r, geometry, no_salt, salt_legacy_top_offset))
+            .and_then(|r| {
+                apply_salt(
+                    r,
+                    geometry,
+                    no_salt,
+                    salt_legacy_top_offset,
+                    fault_labels_through_salt,
+                    faults,
+                )
+            })
             .unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);

@@ -177,6 +177,7 @@ pub fn run_worker_partition(
         &trends,
         &wavelet,
         faults.as_ref(),
+        crate::salt::fault_label_salt(cfg, &trends),
         filters.as_ref(),
     )?;
 

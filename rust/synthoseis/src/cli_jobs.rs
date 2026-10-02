@@ -185,6 +185,9 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     if rock.salt_legacy_top_offset {
         a.push("--salt-legacy-top-offset".into());
     }
+    if rock.fault_labels_through_salt {
+        a.push("--fault-labels-through-salt".into());
+    }
     // Planar workers derive `alternating` from `--toy-geometry planar`.
     if rock.lithology == synthoseis_core::ToyLithology::Markov {
         if let Some(f) = rock.sand_layer_fraction {

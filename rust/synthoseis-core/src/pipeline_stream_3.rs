@@ -80,7 +80,11 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
                 &mut stats,
             );
             stats.tiles_processed += 1;
-            let fault_tile = faults.as_ref().map(|m| m.compute_tile(i0, i1, j0, j1));
+            let mut fault_tile = faults.as_ref().map(|m| m.compute_tile(i0, i1, j0, j1));
+            let fault_salt = crate::salt::fault_label_salt(cfg, &trends);
+            if let (Some(t), Some(s)) = (fault_tile.as_mut(), fault_salt) {
+                crate::salt::mask_fault_tile_salt(t, s);
+            }
             if let Some(t) = &fault_tile {
                 stats.observe(t.lookup.capacity() * 4 + t.mask.capacity() * 2);
             }

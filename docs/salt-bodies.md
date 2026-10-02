@@ -17,6 +17,8 @@ Switches:
   b4f4259 bit for bit.
 - `--salt-legacy-top-offset` (`RockPhysicsConfig::salt_legacy_top_offset`)
   uses legacy's absolute top offset (see Deviations).
+- `--fault-labels-through-salt` keeps fault labels inside the salt (master
+  2b3850ba); by default they are masked (see Fault labels and salt).
 - The planar geometry and `--legacy-toy-depth` never have salt. Passing
   either switch with them exits with code 2.
 
@@ -309,6 +311,71 @@ python rust/synthoseis-core/examples/plot_salt_demo.py /tmp/saltd /tmp/salts OUT
 - **CI smoke** (`rust-ci.yml`): default (checks the summary line and
   `data/salt_labels`), `--no-salt` (checks there is no `salt_labels`),
   `--salt-legacy-top-offset`, GPU, multi-process and overlap runs.
+
+## Fault labels and salt
+
+Since this change, `data/fault_labels` is **fault AND NOT salt**: no voxel is
+both a fault label and salt, and `fault_labels` agrees with `salt_labels`.
+
+- **Why.** Halite is weak and creeps, so brittle faults in the overburden
+  die out against salt or sole into it instead of offsetting it (Jackson &
+  Hudec 2017, doi:10.1017/9781139003988; Vendeville & Jackson 1992,
+  doi:10.1016/0264-8172(92)90047-I). The salt has constant properties, so
+  it has zero reflectivity inside: a fault label there has no seismic
+  expression. It is label noise.
+- **What changes.** Only `data/fault_labels` and the CLI `fault_voxels`
+  count. The fault displacement of the sediment labels, the angle stacks,
+  layer labels, `salt_labels`, closures and properties are unchanged (the
+  tests check the angle-stack hashes). A fault cut by the salt keeps one id
+  on both sides.
+- **How.** `salt::mask_fault_tile_salt` zeroes the salt run of each column
+  in a fault tile (mask and internal `segment_id`), right after the tile is
+  computed (streaming and strip / multi-process paths), and
+  `generate_fault_labels` does the same per column (classic and chunked
+  writers, CLI summary, read-back references). It is per column with no
+  halo, so every tiling gives the same labels. The salt body is the one
+  already held by the elastic model; no new memory on the streaming paths.
+- **Switch.** `--fault-labels-through-salt`
+  (`RockPhysicsConfig::fault_labels_through_salt`) keeps the labels inside
+  the salt and reproduces master 2b3850ba bit for bit (whole store
+  directories identical except the creation timestamp). It exits 2 with
+  `--no-salt`, the planar geometry, `--legacy-toy-depth`, or without
+  `--faults`. With `--no-salt` the fault labels are those of master
+  b4f4259.
+- **CLI summary.** `faults: ... fault_voxels=32193, masked_in_salt=1619`
+  (or `(--fault-labels-through-salt)` with the switch).
+
+Before / after (`fault ∧ salt` = fault-label voxels inside the salt):
+
+| config | 2b3850ba / `--fault-labels-through-salt` fault voxels | default fault voxels | removed (fault ∧ salt before) | salt voxels |
+|---|---|---|---|---|
+| demo 64×64×256, seed 7, `--faults 3` or `4` (2 inserted either way) | 33 812 | 32 193 | **1 619** (4.79 %) | 18 535 |
+| seed 11, 24×24×128, 4 faults, sand 0.4 (invariance case) | 4 074 | 3 919 | 155 | 2 851 |
+| `FAULTED --seed 7` (CLI test) | 9 421 | 8 998 | 423 | 2 336 |
+| `FAULTED --seed 4` (CLI test) | 11 003 | 10 293 | 710 | 3 007 |
+| `RICH` (CLI test) | 240 | 240 | 0 | 212 |
+
+After the mask, fault ∧ salt is 0 in every case.
+
+Figure (bench box, not committed): `fault_labels_salt_mask.png`
+(`/workspace/synthoseis-bench/out/fault_labels_salt_mask.png`). It shows
+inline 10 of the demo cube: fault labels before and after the mask over the
+salt, and the unchanged 15° stack with the removed labels in blue. To
+reproduce it, see `examples/fault_salt_dump.rs` and
+`examples/plot_fault_salt_mask.py`.
+
+Tests:
+- `tests/salt.rs::fault_labels_exclude_salt` pins the counts above, and
+  checks masked == unmasked AND NOT salt voxel for voxel and the tile
+  invariant `segment_id != 0 <=> mask == 1`.
+- The invariance matrix (`tests/rock_physics.rs`) has the seed-11 case
+  masked and with the switch. Its fault labels are identical across 4 chunk
+  shapes, streaming ×2, strip-stitch 2/3/4 and multi-process 1/2/3 (the
+  overlap path writes no fault labels). The mask does not change the angle
+  stack.
+- `rock_physics_cli.rs::fault_labels_through_salt_flag_reproduces_master_2b3850ba`
+  pins the fault-label hashes of b4f4259 (`--no-salt`), 2b3850ba (switch)
+  and the new default, plus the exit-2 cases.
 
 ## Deferred
 

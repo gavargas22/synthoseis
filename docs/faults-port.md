@@ -212,6 +212,14 @@ deeper than `wb_max`.
   peak stays at the chosen centre (zero shift) would be the alternative. It is
   not the default because it departs further from the legacy σ distribution.
 
+## Fault labels and salt
+
+With a salt body (layered geometry), `data/fault_labels` is fault AND NOT
+salt: faults die out against salt, and labels inside it have no seismic
+expression. The sediment displacement is unchanged.
+`--fault-labels-through-salt` reproduces master 2b3850ba. See
+[salt-bodies.md](salt-bodies.md#fault-labels-and-salt).
+
 ## Deferred (follow-ups)
 
 - Hockey-stick drag zone (throw ≥ 29.75). Faults are flagged
