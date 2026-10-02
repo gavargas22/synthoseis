@@ -30,6 +30,8 @@ fn store_hash(p: &Path) -> u64 {
 }
 
 const PLAIN: &[&str] = &["--shape", "12,10,64", "--chunk-i", "5"];
+// `--bandpass-trailing-sample`: every RICH golden below is a store written by
+// a master binary from before the bandpass trailing-sample fix.
 const RICH: &[&str] = &[
     "--shape",
     "12,10,64",
@@ -39,6 +41,7 @@ const RICH: &[&str] = &[
     "3",
     "--bandpass",
     "4,30",
+    "--bandpass-trailing-sample",
     "--noise-snr-db",
     "12.5",
 ];

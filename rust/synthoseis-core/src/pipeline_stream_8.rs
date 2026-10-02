@@ -9,6 +9,10 @@ pub struct SeismicFilters {
     /// Skip the Ricker convolution (bandpass on, `keep_ricker == false`):
     /// the tile is fused as raw reflectivity, then bandpassed (legacy chain).
     pub skip_wavelet: bool,
+    /// Bandpass the first `nk - 1` samples only and write the trailing
+    /// sample as 0 (legacy parity, see
+    /// [`crate::pipeline::FilterConfig::bandpass_excludes_trailing_sample`]).
+    pub exclude_trailing_sample: bool,
     /// Additive noise before the wavelet / bandpass (`None` = off).
     pub noise: Option<SeismicNoise>,
 }
@@ -61,11 +65,19 @@ impl SeismicFilters {
                     fc.bandpass_order,
                 )
                 .map_err(|e| format!("bandpass {low}-{high} Hz: {e}"))?;
-                if cfg.samples <= f.padlen() {
+                // Samples the bandpass actually sees (legacy parity mode
+                // excludes the trailing reflectivity sample).
+                let filtered = if fc.bandpass_excludes_trailing_sample() {
+                    cfg.samples.saturating_sub(1)
+                } else {
+                    cfg.samples
+                };
+                if filtered <= f.padlen() {
                     return Err(format!(
-                        "bandpass order {} needs more than {} samples per trace (got {})",
+                        "bandpass order {} needs more than {} filtered samples per trace (got {} of {} samples)",
                         fc.bandpass_order,
                         f.padlen(),
+                        filtered,
                         cfg.samples
                     ));
                 }
@@ -89,6 +101,7 @@ impl SeismicFilters {
             bandpass,
             lateral_size: fc.lateral_size.max(1),
             skip_wavelet: fc.skips_ricker(),
+            exclude_trailing_sample: fc.bandpass_excludes_trailing_sample(),
             noise,
         }))
     }
@@ -119,8 +132,23 @@ impl SeismicFilters {
     }
 
     /// Filter one fused source tile in place (bandpass on every trace).
+    ///
+    /// With [`SeismicFilters::exclude_trailing_sample`] only the first
+    /// `nk - 1` samples of each trace are filtered (legacy `rfc_raw` has
+    /// `nk - 1` samples) and the trailing sample is set to 0.
     fn bandpass_traces(&self, src: &mut [f32], nk: usize) {
-        if let Some(f) = &self.bandpass {
+        let Some(f) = &self.bandpass else {
+            return;
+        };
+        if self.exclude_trailing_sample {
+            let mut scratch = Vec::new();
+            for trace in src.chunks_exact_mut(nk) {
+                let (body, last) = trace.split_at_mut(nk - 1);
+                f.filtfilt_f32(body, &mut scratch)
+                    .expect("trace length validated in SeismicFilters::from_config");
+                last[0] = 0.0;
+            }
+        } else {
             f.filtfilt_traces_f32(src, nk)
                 .expect("trace length validated in SeismicFilters::from_config");
         }

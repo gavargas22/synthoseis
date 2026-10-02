@@ -99,6 +99,18 @@ pub struct FilterConfig {
     /// wavelet when the bandpass is on (legacy chain). Ignored when the
     /// bandpass is off.
     pub keep_ricker: bool,
+    /// Bandpass the whole `nk`-sample trace, including the trailing
+    /// reflectivity sample (always 0 before noise), as master did before the
+    /// trailing-sample fix (CLI `--bandpass-trailing-sample`).
+    ///
+    /// Default `false` (legacy parity): when the Ricker is skipped, the
+    /// bandpass runs on the first `nk - 1` samples only, which is exactly the
+    /// trace legacy filters (`rfc_raw` has `nk - 1` samples), and the
+    /// trailing sample, which legacy never produces, is written as 0 (the
+    /// fuse's "no interface below" value). Ignored when the bandpass is off
+    /// or [`FilterConfig::keep_ricker`] is set (a Ricker-convolved trace has
+    /// real signal in its last sample). See `docs/filters-port.md`.
+    pub bandpass_trailing_sample: bool,
     /// Additive random noise before the wavelet / bandpass (legacy
     /// `add_weighted_noise`). Off by default.
     pub noise: NoiseConfig,
@@ -111,6 +123,7 @@ impl Default for FilterConfig {
             bandpass_order: 4,
             lateral_size: 1,
             keep_ricker: false,
+            bandpass_trailing_sample: false,
             noise: NoiseConfig::default(),
         }
     }
@@ -191,6 +204,7 @@ impl FilterConfig {
             bandpass_order: 4,
             lateral_size,
             keep_ricker: false,
+            bandpass_trailing_sample: false,
             noise: NoiseConfig::default(),
         }
     }
@@ -205,6 +219,13 @@ impl FilterConfig {
     /// [`FilterConfig::keep_ricker`] is `false`.
     pub fn skips_ricker(&self) -> bool {
         self.bandpass_hz.is_some() && !self.keep_ricker
+    }
+
+    /// `true` when the bandpass runs on the first `nk - 1` samples only and
+    /// the trailing sample is written as 0 (legacy parity): the Ricker is
+    /// skipped and [`FilterConfig::bandpass_trailing_sample`] is off.
+    pub fn bandpass_excludes_trailing_sample(&self) -> bool {
+        self.skips_ricker() && !self.bandpass_trailing_sample
     }
 }
 

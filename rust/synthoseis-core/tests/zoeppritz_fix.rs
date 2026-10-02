@@ -55,6 +55,8 @@ fn rich(rock: RockPhysicsConfig) -> E2eConfig {
                 legacy_angle_weights: false,
                 legacy_seabed: false,
             },
+            // Golden from before the bandpass trailing-sample fix.
+            bandpass_trailing_sample: true,
             ..FilterConfig::legacy(4.0, 30.0, 3)
         },
         rock_physics: RockPhysicsConfig {

@@ -112,6 +112,12 @@ enum Commands {
         /// the Ricker wavelet (legacy chain: reflectivity, then bandpass).
         #[arg(long, default_value_t = false)]
         keep_ricker: bool,
+        /// With `--bandpass` (Ricker skipped): also bandpass the trailing
+        /// reflectivity sample, reproducing master before the trailing-sample
+        /// fix bit for bit. Default: bandpass the first NK-1 samples, exactly
+        /// the trace legacy filters, and write the trailing sample as 0.
+        #[arg(long, default_value_t = false)]
+        bandpass_trailing_sample: bool,
         /// Add deterministic random noise at this signal-to-noise ratio (dB)
         /// to the raw reflectivity before the wavelet / bandpass (port of
         /// Seismic.add_weighted_noise; legacy example config 7.5-17.5 dB).
@@ -242,10 +248,14 @@ fn parse_filters(
     bandpass: Option<&str>,
     lateral_filter: usize,
     keep_ricker: bool,
+    bandpass_trailing_sample: bool,
     noise: synthoseis_core::NoiseConfig,
 ) -> Result<synthoseis_core::FilterConfig, String> {
     if keep_ricker && bandpass.is_none() {
         return Err("--keep-ricker requires --bandpass".into());
+    }
+    if bandpass_trailing_sample && bandpass.is_none() {
+        return Err("--bandpass-trailing-sample requires --bandpass".into());
     }
     if !noise.enabled()
         && (noise.seed.is_some() || noise.legacy_angle_weights || noise.legacy_seabed)
@@ -263,6 +273,7 @@ fn parse_filters(
     let mut fc = synthoseis_core::FilterConfig {
         lateral_size: lateral_filter.max(1),
         keep_ricker,
+        bandpass_trailing_sample,
         noise,
         ..Default::default()
     };
@@ -473,6 +484,7 @@ fn main() {
             bandpass,
             lateral_filter,
             keep_ricker,
+            bandpass_trailing_sample,
             noise_snr_db,
             noise_seed,
             noise_legacy_weights,
@@ -542,7 +554,13 @@ fn main() {
                 legacy_angle_weights: noise_legacy_weights,
                 legacy_seabed: noise_legacy_seabed,
             };
-            let filters = parse_filters(bandpass.as_deref(), lateral_filter, keep_ricker, noise)
+            let filters = parse_filters(
+                bandpass.as_deref(),
+                lateral_filter,
+                keep_ricker,
+                bandpass_trailing_sample,
+                noise,
+            )
                 .unwrap_or_else(|e| {
                     eprintln!("{e}");
                     std::process::exit(2);
