@@ -19,6 +19,50 @@ term is second order in the elastic contrast, so the legacy result still
 agrees with Aki-Richards to first order, but it is wrong for strong contrasts:
 the seabed, gas sands and post-critical angles.
 
+### Both legacy Zoeppritz paths carry the typo
+
+Legacy has two Zoeppritz implementations. Both have the bug.
+
+- **`Seismic.RFC.zoeppritz_reflectivity`.** This is the original upstream
+  path: `create_rfc_volumes` called it per trace until upstream `6e4c2e30`,
+  with complex64 storage. The method still ships in `datagenerator/Seismic.py`.
+  It defines `d = 2 (ρ2 vs2² − ρ1 vs1²)`, then **reassigns**
+  `d = e * f + g * h * p**2` (the denominator) before the numerator. The
+  numerator's `a + d * ...` therefore uses the denominator, exactly like
+  `det` in the kernel.
+- **`datagenerator/zoeppritz_kernel.py`.** This is the Numba kernel that
+  replaced it in `0a4ceeed`. `create_rfc_volumes` uses it today. Its copy,
+  `tests/_zoeppritz_reference.py`, writes `det` explicitly.
+
+This PR did not modify either legacy Python path. It fixed the Rust port
+(`ZoeppritzForm::Exact`) and kept the legacy form behind
+`--legacy-zoeppritz`.
+
+**Which path the existing references replay.** The references behind the
+`--legacy-zoeppritz` / legacy-form tests replay the kernel / `det`
+expression, not the `RFC` class:
+
+- `seismic_kernels.json` and `rpm_reflectivity_rootcause.py` use re-typed
+  copies of `_zoeppritz_reference.zoeppritz_vectorised`;
+- `zoeppritz_reference.json` uses its own `legacy_rpp`;
+- `tests/test_zoeppritz_numba_parity.py` checks the Numba kernel against
+  `_zoeppritz_reference`;
+- the `zoeppritz_fix.rs` goldens are hashes of earlier Rust masters.
+
+**Cross-check on real legacy models.** `generate_angle_stack_e2e.py` replays
+both paths on the elastic cubes of two full legacy models (see
+`angle-stack-e2e-parity.md`):
+
+- The `RFC` path, driven like upstream `create_rfc_volumes`, and the Numba
+  kernel agree to ≤ 6.0e-8. That is float32 rounding: 63–70 % of samples are
+  bit-identical.
+- Both differ from the textbook `d` form (bruges `zoeppritz_rpp`) by the same
+  5.1e-3 / 2.30e-2 / 5.64e-2 / 0.164 at 7 / 15 / 24 / 45°.
+
+So `--legacy-zoeppritz` reproduces both legacy paths: bit for bit (above the
+round-off residue of zero reflections) for the Numba kernel, and to float32
+rounding for the `RFC` class.
+
 ## What changed
 
 | | default | `--legacy-zoeppritz` | `--legacy-toy-depth` |
