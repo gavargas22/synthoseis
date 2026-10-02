@@ -25,6 +25,7 @@ fn ah(v: &[f32]) -> u64 {
 
 fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
     E2eConfig {
+        time: synthoseis_core::TimeConfig::legacy(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed: 7,
         inline_count: 64,
@@ -40,6 +41,7 @@ fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
 
 fn rich(rock: RockPhysicsConfig) -> E2eConfig {
     E2eConfig {
+        time: synthoseis_core::TimeConfig::legacy(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed: 10,
         inline_count: 24,
@@ -97,6 +99,7 @@ fn legacy_zoeppritz_reproduces_master_33a3a93() {
     let tiny = E2eConfig {
         rock_physics: legacy_z(),
         geometry: synthoseis_core::ToyGeometry::Planar,
+        time: synthoseis_core::TimeConfig::legacy(),
         ..E2eConfig::tiny(42)
     };
     assert_eq!(

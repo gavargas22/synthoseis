@@ -21,6 +21,7 @@ pub fn maybe_run_worker(
     chunk_shape: Option<[usize; 3]>,
     rock: &synthoseis_core::RockPhysicsConfig,
     geometry: synthoseis_core::ToyGeometry,
+    time: &synthoseis_core::TimeConfig,
 ) -> bool {
     let Some(wid) = worker_id else {
         return false;
@@ -46,6 +47,7 @@ pub fn maybe_run_worker(
         std::process::exit(1);
     });
     let cfg = synthoseis_core::pipeline::E2eConfig {
+        time: time.clone(),
         faults: Default::default(),
         filters: Default::default(),
         seed,
@@ -56,6 +58,7 @@ pub fn maybe_run_worker(
         chunk_shape: chunk_shape.or_else(|| {
             Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                 &synthoseis_core::pipeline::E2eConfig {
+                    time: time.clone(),
                     faults: Default::default(),
                     filters: Default::default(),
                     seed,
@@ -64,7 +67,7 @@ pub fn maybe_run_worker(
                     samples,
                     store_path: None,
                     chunk_shape: None,
-                    rock_physics: Default::default(),
+                    rock_physics: rock.clone(),
                     geometry: Default::default(),
                 },
             ))
@@ -97,7 +100,9 @@ pub fn maybe_write_partition_plan(
     crossline_count: usize,
     samples: usize,
     chunk_shape: Option<[usize; 3]>,
+    time: &synthoseis_core::TimeConfig,
 ) {
+    let rock = synthoseis_core::RockPhysicsConfig::default();
     let Some(ref plan_path) = partition_plan else {
         return;
     };
@@ -108,6 +113,7 @@ pub fn maybe_write_partition_plan(
         let ci = chunk_shape.map(|c| c[0]).unwrap_or_else(|| {
             synthoseis_core::pipeline_stream::resolve_chunk_shape(
                 &synthoseis_core::pipeline::E2eConfig {
+                    time: time.clone(),
                     faults: Default::default(),
                     filters: Default::default(),
                     seed,
@@ -116,7 +122,7 @@ pub fn maybe_write_partition_plan(
                     samples,
                     store_path: None,
                     chunk_shape: None,
-                    rock_physics: Default::default(),
+                    rock_physics: rock.clone(),
                     geometry: Default::default(),
                 },
             )[0]
@@ -200,6 +206,22 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     a
 }
 
+/// CLI flags that rebuild `time` in a worker process (spec §2: forwarded
+/// next to `--legacy-zoeppritz`).
+pub fn time_args(time: &synthoseis_core::TimeConfig) -> Vec<String> {
+    if !time.enabled {
+        return vec!["--legacy-depth-as-time".into()];
+    }
+    let mut a = vec!["--dt-ms".to_string(), format!("{:?}", time.dt_ms)];
+    if let Some(n) = time.samples {
+        a.push("--twt-samples".into());
+        a.push(n.to_string());
+    }
+    a.push("--twt-kernel".into());
+    a.push(time.kernel.as_str().into());
+    a
+}
+
 /// Returns true if multiprocess ran (caller should return).
 pub fn maybe_run_multiprocess(
     multiprocess: bool,
@@ -215,6 +237,7 @@ pub fn maybe_run_multiprocess(
     chunk_shape: Option<[usize; 3]>,
     rock: &synthoseis_core::RockPhysicsConfig,
     geometry: synthoseis_core::ToyGeometry,
+    time: &synthoseis_core::TimeConfig,
 ) -> bool {
     if !multiprocess {
         return false;
@@ -233,6 +256,7 @@ pub fn maybe_run_multiprocess(
     let resolved = chunk_shape.or_else(|| {
         Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
             &synthoseis_core::pipeline::E2eConfig {
+                time: time.clone(),
                 faults: Default::default(),
                 filters: Default::default(),
                 seed,
@@ -241,12 +265,13 @@ pub fn maybe_run_multiprocess(
                 samples,
                 store_path: None,
                 chunk_shape: None,
-                rock_physics: Default::default(),
+                rock_physics: rock.clone(),
                 geometry: Default::default(),
             },
         ))
     });
     let cfg = synthoseis_core::pipeline::E2eConfig {
+        time: time.clone(),
         faults: Default::default(),
         filters: Default::default(),
         seed,
@@ -295,6 +320,12 @@ pub fn maybe_run_multiprocess(
             .arg("--workers")
             .arg(workers.to_string())
             .args(rock_physics_args(rock))
+            .args(if rock.legacy_toy_depth {
+                // `--legacy-toy-depth` implies the legacy axis.
+                Vec::new()
+            } else {
+                time_args(time)
+            })
             .arg("--toy-geometry")
             .arg(geometry.as_str());
         if let Some([ci, cj, ck]) = resolved {
@@ -341,6 +372,7 @@ pub fn maybe_run_multiprocess(
     );
     crate::cli_e2e::print_rock_summary(&cfg.rock_physics);
     crate::cli_e2e::print_geometry_summary(&cfg);
+    crate::cli_e2e::print_time_summary(&cfg);
     if let Some(path) = report.store_path {
         println!(
             "wrote shared MDIO labels+angle-stack at {} (multi-process JobPartitionPlan, parity vs single-worker ok)",

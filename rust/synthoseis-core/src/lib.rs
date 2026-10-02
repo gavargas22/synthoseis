@@ -108,8 +108,21 @@ impl SingleWorkerRunner {
         rock_physics: &RockPhysicsConfig,
         geometry: ToyGeometry,
     ) -> Result<pipeline::E2eReport, String> {
+        self.run_e2e_with_time(store, rock_physics, geometry, &pipeline::TimeConfig::default())
+    }
+
+    /// [`Self::run_e2e_with_geometry`] with an explicit output axis
+    /// ([`pipeline::TimeConfig::legacy`] = master depth-as-time).
+    pub fn run_e2e_with_time(
+        &self,
+        store: Option<std::path::PathBuf>,
+        rock_physics: &RockPhysicsConfig,
+        geometry: ToyGeometry,
+        time: &pipeline::TimeConfig,
+    ) -> Result<pipeline::E2eReport, String> {
         // Tiny-cube floor: bump sub-8³ defaults (CLI smoke uses 8³).
         let cfg = pipeline::E2eConfig {
+            time: time.clone(),
             faults: Default::default(),
             filters: Default::default(),
             rock_physics: rock_physics.clone(),
@@ -137,13 +150,22 @@ pub mod salt;
 pub mod closure_segments;
 pub mod lithology;
 pub mod toy_geometry;
+pub mod time_mode;
+
+/// Spike-insertion kernel of the depth-to-time conversion (`--twt-kernel`).
+pub use synthoseis_seismic::TwtKernel;
 
 pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
     MultiWorkerRunner, SpatialStrip,
 };
 pub use pipeline::{
-    FaultConfig, FilterConfig, NoiseConfig, TimeConfig, NOISE_NORM_ANGLE_DEG, RICKER_PEAK_HZ,
+    FaultConfig, FilterConfig, NoiseConfig, TimeAxis, TimeConfig, NOISE_NORM_ANGLE_DEG,
+    RICKER_PEAK_HZ, VP_MIN_SEDIMENT,
+};
+pub use time_mode::{
+    generate_fault_labels_output, generate_labels_output, generate_output_labels,
+    generate_salt_labels_output, time_column_summary, OutputLabels, TimeColumnSummary,
 };
 pub use pipeline_geometry_many::{
     angle_store_path, angles_from_seismic_many, parse_angles_csv, run_e2e_geometry_once_as_report,
@@ -261,6 +283,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mp-api.mdio");
         let cfg = pipeline::E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),

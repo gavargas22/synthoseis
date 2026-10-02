@@ -4,17 +4,19 @@ use std::sync::mpsc::sync_channel;
 use std::thread;
 
 use synthoseis_io::{CreateConfig, Dimension, MdioStore};
-use synthoseis_seismic::ricker;
 
 use crate::parity;
-use crate::pipeline::{E2eConfig, E2eReport, TINY_DIGI};
+use crate::pipeline::{E2eConfig, E2eReport};
 use crate::pipeline_stream::{
     fuse_tile_filtered, generate_chunked, generate_labels, resolve_chunk_shape,
     SeismicFilters, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
 };
 use crate::rock_physics::elastic_model;
 
-type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>);
+/// `(key, angles, labels, salt)`. `salt` is `Some` in time mode (the
+/// producer point-samples the output-domain salt labels with the tile's T);
+/// on the legacy axis the writer rebuilds salt chunks from the body.
+type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>, Option<Vec<u8>>);
 
 /// Fuse tile N+1 on the caller while a dedicated std thread flushes tile N.
 ///
@@ -31,12 +33,13 @@ pub fn run_e2e_streaming_overlapped(
     SeismicFilters::from_config(cfg)?;
     let (labels, shape) = generate_labels(cfg);
     let filters = SeismicFilters::resolve(cfg, &labels, shape)?;
-    let [ni, nj, nk] = shape;
+    let oshape = cfg.output_shape();
+    let [ni, nj, nk] = oshape;
     let chunks = resolve_chunk_shape(cfg);
     let [ci, cj, ck] = chunks;
     let mut stats = WorkingSetStats {
         chunk_shape: chunks,
-        volume_shape: shape,
+        volume_shape: oshape,
         ..WorkingSetStats::default()
     };
 
@@ -47,13 +50,14 @@ pub fn run_e2e_streaming_overlapped(
             Dimension::sized("sample", nk),
         ],
         chunks: Some(chunks),
-        digi: TINY_DIGI,
+        digi: cfg.digi_ms(),
         seed: cfg.seed,
         units: "ms".into(),
         name: "synthoseis-e2e".into(),
     };
     {
         let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
+        crate::time_mode::write_time_attrs(&store, cfg)?;
         store.ensure_labels_array().map_err(|e| e.to_string())?;
         if cfg.effective_salt() {
             store.ensure_salt_labels_array().map_err(|e| e.to_string())?;
@@ -62,6 +66,7 @@ pub fn run_e2e_streaming_overlapped(
     // Salt labels are rebuilt per chunk by the writer from the salt body.
     let salt = crate::salt::salt_body(cfg);
     let has_salt = salt.is_some();
+    let time_mode = cfg.time_enabled();
 
     let (tx, rx) = sync_channel::<WriteChunk>(1);
     let (ack_tx, ack_rx) = sync_channel::<()>(0);
@@ -69,12 +74,16 @@ pub fn run_e2e_streaming_overlapped(
     let writer = thread::spawn(move || -> Result<(), String> {
         let store = MdioStore::open(&writer_path).map_err(|e| e.to_string())?;
         let mut chunk_salt = Vec::new();
-        for (key, angles, chunk_labels) in rx {
+        for (key, angles, chunk_labels, out_salt) in rx {
             store.write_chunk(key, &angles).map_err(|e| e.to_string())?;
             store
                 .write_labels_chunk(key, &chunk_labels)
                 .map_err(|e| e.to_string())?;
-            if let Some(s) = &salt {
+            if let Some(t) = out_salt {
+                store
+                    .write_salt_labels_chunk(key, &t)
+                    .map_err(|e| e.to_string())?;
+            } else if let Some(s) = &salt {
                 let [i0, j0, k0] = [key[0] * ci, key[1] * cj, key[2] * ck];
                 let (i1, j1, k1) = ((i0 + ci).min(ni), (j0 + cj).min(nj), (k0 + ck).min(nk));
                 crate::salt::salt_chunk(s, i0, i1, j0, j1, k0, k1, &mut chunk_salt);
@@ -90,7 +99,7 @@ pub fn run_e2e_streaming_overlapped(
     });
 
     let trends = elastic_model(cfg, &labels, shape);
-    let wavelet = ricker(40.0, TINY_DIGI, 1);
+    let wavelet = cfg.ricker();
     let mut tile_angles = vec![0.0f32; ci * cj * nk];
     // Elastic model + trace scratch + wavelet (+ tile Vp/Vs/rho for the
     // rock-physics model) + tile output + exactly one writer-owned chunk.
@@ -126,6 +135,20 @@ pub fn run_e2e_streaming_overlapped(
                 &mut stats,
             );
             stats.tiles_processed += 1;
+            // Time mode: output-domain labels/salt for this tile.
+            let out_labels = time_mode.then(|| {
+                crate::time_mode::output_label_tile(
+                    &trends,
+                    &labels,
+                    shape,
+                    i0,
+                    i1,
+                    j0,
+                    j1,
+                    None,
+                    trends.salt(),
+                )
+            });
 
             for (k_chunk, k0) in (0..nk).step_by(ck).enumerate() {
                 // Tile fusion above overlaps the previous flush. Wait only at handoff,
@@ -144,16 +167,33 @@ pub fn run_e2e_streaming_overlapped(
                 let n = ti * tj * tk;
                 let mut chunk_angles = Vec::with_capacity(n);
                 let mut chunk_labels = Vec::with_capacity(n);
-                for di in 0..ti {
-                    for dj in 0..tj {
-                        for k in k0..k1 {
-                            chunk_angles.push(tile_angles[(di * tj + dj) * nk + k]);
-                            chunk_labels.push(labels[((i0 + di) * nj + (j0 + dj)) * nk + k]);
+                let mut chunk_salt = None;
+                if let Some(t) = &out_labels {
+                    for di in 0..ti {
+                        for dj in 0..tj {
+                            for k in k0..k1 {
+                                chunk_angles.push(tile_angles[(di * tj + dj) * nk + k]);
+                            }
+                        }
+                    }
+                    t.chunk(&t.labels, k0, k1, &mut chunk_labels);
+                    if let Some(sc) = &t.salt {
+                        let mut v = Vec::with_capacity(n);
+                        t.chunk(sc, k0, k1, &mut v);
+                        chunk_salt = Some(v);
+                    }
+                } else {
+                    for di in 0..ti {
+                        for dj in 0..tj {
+                            for k in k0..k1 {
+                                chunk_angles.push(tile_angles[(di * tj + dj) * nk + k]);
+                                chunk_labels.push(labels[((i0 + di) * nj + (j0 + dj)) * nk + k]);
+                            }
                         }
                     }
                 }
                 if tx
-                    .send(([i_chunk, j_chunk, k_chunk], chunk_angles, chunk_labels))
+                    .send(([i_chunk, j_chunk, k_chunk], chunk_angles, chunk_labels, chunk_salt))
                     .is_err()
                 {
                     producer_error = Some("overlap writer stopped while sending chunk".to_string());
@@ -229,6 +269,7 @@ mod tests {
     fn assert_overlap(shape: [usize; 3], chunks: [usize; 3], seed: u64) {
         let dir = tempdir().unwrap();
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
@@ -254,7 +295,7 @@ mod tests {
             + props_tile_bytes(&model, chunks[0] * chunks[1] * shape[2])
             + 4 * shape[2] * 4
             + shape[2] * 8
-            + ricker(40.0, TINY_DIGI, 1).len() * 8
+            + cfg.ricker().len() * 8
             + chunks[0] * chunks[1] * shape[2] * 4
             + chunks.iter().product::<usize>() * 5;
         assert_eq!(stats.peak_temp_bytes, expected_peak);

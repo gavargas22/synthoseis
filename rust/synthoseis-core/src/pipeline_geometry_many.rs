@@ -16,10 +16,9 @@
 use std::path::{Path, PathBuf};
 
 use synthoseis_io::MdioStore;
-use synthoseis_seismic::ricker;
 
 use crate::parity;
-use crate::pipeline::{E2eConfig, E2eReport, E2eVolumes, TINY_DIGI};
+use crate::pipeline::{E2eConfig, E2eReport, E2eVolumes};
 use crate::pipeline_stream::{
     fuse_tile_filtered, generate_labels, resolve_chunk_shape, write_e2e_mdio_chunked,
     SeismicFilters, WorkingSetStats,
@@ -122,16 +121,23 @@ pub fn run_e2e_geometry_once_seismic_many(
     let filters = SeismicFilters::resolve(cfg, &labels, shape)?;
     let labels_generated = 1usize;
 
-    let [ni, nj, nk] = shape;
+    let oshape = cfg.output_shape();
+    let [ni, nj, nk] = oshape;
     let chunks = resolve_chunk_shape(cfg);
     let mut stats = WorkingSetStats {
         chunk_shape: chunks,
-        volume_shape: shape,
+        volume_shape: oshape,
         ..WorkingSetStats::default()
     };
 
     let trends = elastic_model(cfg, &labels, shape);
-    let wavelet = ricker(40.0, TINY_DIGI, 1);
+    let wavelet = cfg.ricker();
+    // Deliverable labels in the output domain (time-sampled in time mode).
+    let out_labels = if trends.time().is_some() {
+        crate::time_mode::generate_output_labels(cfg, &labels, &trends).labels
+    } else {
+        labels.clone()
+    };
     stats.observe(wavelet.len() * 8 + trends.model_bytes());
 
     let [ci, cj, _ck] = chunks;
@@ -181,9 +187,9 @@ pub fn run_e2e_geometry_once_seismic_many(
         }
 
         let volumes = E2eVolumes {
-            labels: labels.clone(),
+            labels: out_labels.clone(),
             angle_stack,
-            shape,
+            shape: oshape,
         };
 
         // Self-parity placeholder (exact vs itself); tests compare to single-angle refs.
@@ -227,8 +233,8 @@ pub fn run_e2e_geometry_once_seismic_many(
     // (Reference checks above call generate_labels intentionally.)
     Ok((
         GeometryOnceReport {
-            labels,
-            shape,
+            labels: out_labels,
+            shape: oshape,
             stacks,
             labels_generated,
             status: "ok-e2e-geometry-once-seismic-many",
@@ -288,6 +294,7 @@ mod tests {
     #[test]
     fn geometry_once_labels_identical_and_stacks_match_single_angle() {
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
@@ -333,6 +340,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let base = dir.path().join("out.mdio");
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
@@ -365,6 +373,7 @@ mod tests {
     #[test]
     fn geometry_once_does_not_regenerate_geology_n_times() {
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
@@ -389,7 +398,8 @@ mod tests {
         let (reference, _) = generate_chunked_at_angle(&cfg, 15.0);
         assert_eq!(from_labels.angle_stack, reference.angle_stack);
         assert_eq!(from_labels.labels, reference.labels);
-        assert_eq!(labels, reference.labels);
+        // The deliverable labels are the output-domain (time-sampled) labels.
+        assert_eq!(crate::time_mode::generate_labels_output(&cfg), reference.labels);
     }
 
     #[test]
@@ -397,6 +407,7 @@ mod tests {
         // Timing ratios are noisy in debug under parallel cargo test load.
         // Prove amortization structurally: one geology pass, N stacks, tile-bounded peak.
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),

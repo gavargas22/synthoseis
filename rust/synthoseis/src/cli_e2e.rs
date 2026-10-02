@@ -25,7 +25,18 @@ pub fn run_e2e(
     filters: synthoseis_core::FilterConfig,
     rock: synthoseis_core::RockPhysicsConfig,
     geometry: synthoseis_core::ToyGeometry,
+    time: synthoseis_core::TimeConfig,
 ) {
+    if let Some(w) = (synthoseis_core::pipeline::E2eConfig {
+        samples,
+        rock_physics: rock.clone(),
+        time: time.clone(),
+        ..Default::default()
+    })
+    .time_warning()
+    {
+        eprintln!("warning: {w}");
+    }
     if geo_many {
         let angle_list = if let Some(ref csv) = angles {
             parse_angles_csv(csv).unwrap_or_else(|e| {
@@ -39,6 +50,7 @@ pub fn run_e2e(
             })
         };
         let cfg = synthoseis_core::pipeline::E2eConfig {
+            time: time.clone(),
             faults: synthoseis_core::FaultConfig::with_count(faults),
             filters: filters.clone(),
             seed,
@@ -49,6 +61,7 @@ pub fn run_e2e(
             chunk_shape: chunk_shape.or_else(|| {
                 Some(synthoseis_core::resolve_chunk_shape(
                     &synthoseis_core::pipeline::E2eConfig {
+                        time: time.clone(),
                         faults: Default::default(),
                         filters: Default::default(),
                         seed,
@@ -57,7 +70,7 @@ pub fn run_e2e(
                         samples,
                         store_path: None,
                         chunk_shape: None,
-                        rock_physics: Default::default(),
+                        rock_physics: rock.clone(),
                         geometry: Default::default(),
                     },
                 ))
@@ -83,6 +96,7 @@ pub fn run_e2e(
         print_filter_summary(&cfg);
         print_rock_summary(&cfg.rock_physics);
         print_geometry_summary(&cfg);
+        print_time_summary(&cfg);
         for st in &report.stacks {
             println!(
                 "  angle={:.0}° parity(iou={:.4}, mae={:.3e}) store={:?}",
@@ -102,6 +116,7 @@ pub fn run_e2e(
         let resolved = chunk_shape.or_else(|| {
             Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                 &synthoseis_core::pipeline::E2eConfig {
+                    time: time.clone(),
                     faults: Default::default(),
                     filters: Default::default(),
                     seed,
@@ -110,14 +125,14 @@ pub fn run_e2e(
                     samples,
                     store_path: None,
                     chunk_shape: None,
-                    rock_physics: Default::default(),
+                    rock_physics: rock.clone(),
                     geometry: Default::default(),
                 },
             ))
         });
         let runner = MultiWorkerRunner::new(config.clone());
         let (report, stats) = runner
-            .run_e2e_strip_stitched_with_geometry(Some(store_path), resolved, &rock, geometry)
+            .run_e2e_strip_stitched_with_time(Some(store_path), resolved, &rock, geometry, &time)
             .unwrap_or_else(|e| {
                 eprintln!("strip-stitch e2e failed: {e}");
                 std::process::exit(1);
@@ -135,6 +150,16 @@ pub fn run_e2e(
             report.parity.angle_mae,
             report.parity.angle_max_abs
         );
+        print_time_summary(&synthoseis_core::pipeline::E2eConfig {
+            seed,
+            inline_count,
+            crossline_count,
+            samples,
+            rock_physics: rock.clone(),
+            geometry,
+            time: time.clone(),
+            ..Default::default()
+        });
         if let Some(path) = report.store_path {
             println!(
                 "wrote shared MDIO labels+angle-stack at {} (strip-stitch, parity vs single-worker ok)",
@@ -146,6 +171,7 @@ pub fn run_e2e(
 
     if chunked || chunk_shape.is_some() {
         let cfg = synthoseis_core::pipeline::E2eConfig {
+            time: time.clone(),
             faults: synthoseis_core::FaultConfig::with_count(faults),
             filters: filters.clone(),
             seed,
@@ -156,6 +182,7 @@ pub fn run_e2e(
             chunk_shape: chunk_shape.or_else(|| {
                 Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
                     &synthoseis_core::pipeline::E2eConfig {
+                        time: time.clone(),
                         faults: Default::default(),
                         filters: Default::default(),
                         seed,
@@ -164,7 +191,7 @@ pub fn run_e2e(
                         samples,
                         store_path: None,
                         chunk_shape: None,
-                        rock_physics: Default::default(),
+                        rock_physics: rock.clone(),
                         geometry: Default::default(),
                     },
                 ))
@@ -203,6 +230,7 @@ pub fn run_e2e(
         print_filter_summary(&cfg);
         print_rock_summary(&cfg.rock_physics);
         print_geometry_summary(&cfg);
+        print_time_summary(&cfg);
         if let Some(path) = report.store_path {
             println!(
                 "wrote MDIO labels+angle-stack at {} (sub-volume chunks, parity round-trip ok)",
@@ -214,7 +242,7 @@ pub fn run_e2e(
 
     let runner = MultiWorkerRunner::new(config.clone());
     let report = runner
-        .run_e2e_with_geometry(store.clone(), &rock, geometry)
+        .run_e2e_with_time(store.clone(), &rock, geometry, &time)
         .unwrap_or_else(|e| {
             eprintln!("e2e failed: {e}");
             std::process::exit(1);
@@ -230,6 +258,16 @@ pub fn run_e2e(
         report.parity.angle_mae,
         report.parity.angle_max_abs
     );
+    print_time_summary(&synthoseis_core::pipeline::E2eConfig {
+        seed,
+        inline_count: inline_count.max(synthoseis_core::pipeline::TINY_DIM),
+        crossline_count: crossline_count.max(synthoseis_core::pipeline::TINY_DIM),
+        samples: samples.max(synthoseis_core::pipeline::TINY_DIM),
+        rock_physics: rock.clone(),
+        geometry,
+        time: time.clone(),
+        ..Default::default()
+    });
     if workers > 1 {
         println!(
             "note: non-chunked e2e runs the full cube once; use --chunked --workers N for strip-stitch or --multiprocess for OS processes"
@@ -239,6 +277,35 @@ pub fn run_e2e(
         println!(
             "wrote MDIO labels+angle-stack at {} (parity round-trip ok)",
             path.display()
+        );
+    }
+}
+
+/// Output time axis lines (time mode only; the legacy axis prints nothing,
+/// keeping master's output): `dt`, `nt`, kernel, and the short / long
+/// column percentages with the worst shortfall / excess (spec §2).
+pub fn print_time_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
+    let Some(axis) = cfg.time_axis() else {
+        return;
+    };
+    println!(
+        "time axis: two-way time from voxel Vp (vp-twt), dt={} ms, nt={}, kernel={}, depth step {} m (--legacy-depth-as-time for master's depth-as-time axis)",
+        axis.dt_ms,
+        axis.nt,
+        axis.kernel.as_str(),
+        axis.dz
+    );
+    if let Some(s) = synthoseis_core::time_column_summary(cfg) {
+        let pct = |n: usize| 100.0 * n as f64 / s.columns.max(1) as f64;
+        println!(
+            "time columns: base TWT {:.1}-{:.1} ms vs trace end {:.1} ms; short {:.1}% (worst shortfall {:.1} ms, zero-filled below the model base), long {:.1}% (worst excess {:.1} ms, truncated)",
+            s.base_twt_ms[0],
+            s.base_twt_ms[1],
+            (axis.nt - 1) as f64 * axis.dt_ms,
+            pct(s.short),
+            s.max_shortfall_ms,
+            pct(s.long),
+            s.max_excess_ms
         );
     }
 }

@@ -196,6 +196,7 @@ fn filter_cfg(c: &Case, samples: usize) -> E2eConfig {
             lateral_size: c.j["lateral_filter_size"].as_u64().unwrap() as usize,
             ..FilterConfig::default()
         },
+        time: synthoseis_core::TimeConfig::legacy(),
         ..E2eConfig::default()
     }
 }
@@ -530,6 +531,156 @@ fn trailing_sample_bandpass_edge_matches_legacy_to_the_base() {
             assert!(old_band[3] < 2e-3, "50-100 samples above base {}", old_band[3]);
             assert!(old_band[4] < 5e-4, "100-200 samples above base {}", old_band[4]);
             assert!(old_band[5] < 5e-5, ">= 200 samples above base {}", old_band[5]);
+        }
+    }
+}
+
+/// Depth-to-time at a uniform 2000 m/s (spec §5.2), on the legacy fixture.
+///
+/// The legacy axis implies a constant 2000 m/s (one 4 m cell = 4 ms), so
+/// time mode with every column's T built from 2000 m/s (the
+/// constant-velocity test hook; Zoeppritz still sees the legacy Vp / Vs /
+/// rho) must be the legacy axis moved down one sample:
+///
+/// * raw reflectivity: the production time-mode fuse
+///   (`time_mode::fuse_props_tile_time`, sinc insertion) equals the
+///   production depth fuse (`fuse_props_tile_cpu`, the actual depth-path
+///   output) one sample down, bit for bit (`r_k` lands on `T_{k+1}`, an
+///   exact sample). No Zoeppritz is recomputed here.
+/// * stacks: the production time-mode filters (bandpass designed at dt with
+///   the dead last sample, lateral filter) on `nt = nk + 1` samples, read
+///   one sample down, against #35's legacy Python stack with #35's
+///   tolerance (max |Δ| ≤ 8 ulp of the peak, relative RMS ≤ 1e-7).
+///
+///   The one physical difference is the top edge: legacy puts the first
+///   interface at t = 0 and `filtfilt` pads by odd extension about that
+///   sample; the time trace has the correct zero sample above it. The two
+///   paddings agree when the first `padlen = 3 (2·order + 1)` = 27 samples
+///   are reflection-free (water column) across the lateral filter's
+///   footprint. Those "clean" sampled columns (3 of seed 3's, 2 of seed
+///   25's) meet the tolerance on the whole trace, at the same rounding level
+///   as the depth path. Seed 25's other two sampled columns have the seabed
+///   reflection at sample 21 < 27, so they carry a decaying top-edge
+///   transient (2.2–2.8e-3, ≤ 4 % of the peak, in the first 50 samples;
+///   2–3e-9 below sample 400), pinned here by depth band; they meet the
+///   tolerance from sample 400 down.
+#[test]
+fn legacy_fixture_time_mode_uniform_2000() {
+    const BANDS: [usize; 9] = [50, 100, 150, 200, 250, 300, 350, 400, usize::MAX];
+    for c in load_cases() {
+        let nk = c.nk();
+        let nt = nk + 1;
+        let axis = synthoseis_core::TimeAxis {
+            dt_ms: 4.0,
+            nt,
+            dz: 4.0,
+            kernel: synthoseis_seismic::TwtKernel::Sinc,
+            constant_twt_vp: Some(2000.0),
+        };
+        let time_cfg = E2eConfig {
+            time: synthoseis_core::TimeConfig {
+                samples: Some(nt),
+                constant_twt_vp: Some(2000.0),
+                ..synthoseis_core::TimeConfig::default()
+            },
+            ..filter_cfg(&c, nk)
+        };
+        assert!(time_cfg.time_enabled() && time_cfg.output_samples() == nt);
+        let padlen = 3 * (2 * time_cfg.filters.bandpass_order + 1);
+        for (a, &angle) in c.angles.iter().enumerate() {
+            let depth = rust_reflectivity(&c, angle, legacy_form());
+            let mut time = vec![0.0f32; c.shape[0] * c.shape[1] * nt];
+            synthoseis_core::time_mode::fuse_props_tile_time(
+                &c.vp,
+                &c.vs,
+                &c.rho,
+                nk,
+                &axis,
+                synthoseis_gpu::NO_WAVELET,
+                angle,
+                legacy_form(),
+                &mut time,
+            );
+            for (d, t) in depth.chunks_exact(nk).zip(time.chunks_exact(nt)) {
+                assert_eq!(t[0].to_bits(), 0);
+                assert!(
+                    t[1..].iter().zip(d).all(|(x, y)| x.to_bits() == y.to_bits()),
+                    "seed {} {angle}°: time reflectivity != depth fuse one sample down",
+                    c.seed
+                );
+            }
+            // First reflection per column (|r| above the residue level).
+            let first: Vec<usize> = depth
+                .chunks_exact(nk)
+                .map(|t| t.iter().position(|x| (*x as f64).abs() > RESIDUE).unwrap_or(nk))
+                .collect();
+            // Production time-mode filters, then back onto the legacy grid.
+            apply_filters_to_volume(&time_cfg, &mut time);
+            assert!(time.chunks_exact(nt).all(|t| t[nt - 1].to_bits() == 0), "dead last sample");
+            let stack: Vec<f32> =
+                time.chunks_exact(nt).flat_map(|t| t[1..nk].iter().copied()).collect();
+            let peak = c.legacy_stat("stack", a, "max_abs");
+            let tol = 8.0 * ulp_at(peak);
+            let half = time_cfg.filters.lateral_size / 2;
+            let (ni, nj) = (c.shape[0], c.shape[1]);
+            // Edge columns: a reflection within padlen samples of the top
+            // anywhere in the lateral filter's footprint.
+            let edge_column = |i: usize, j: usize| {
+                (i.saturating_sub(half)..(i + half + 1).min(ni))
+                    .flat_map(|a| (j.saturating_sub(half)..(j + half + 1).min(nj)).map(move |b| (a, b)))
+                    .any(|(a, b)| first[a * nj + b] < padlen)
+            };
+            // Optional evidence dump (PR description figures): per sampled
+            // column, #35's legacy Python stack then the time-mode stack on
+            // the legacy grid, `nk - 1` f32 each.
+            if let Some(dir) = std::env::var_os("SYNTHOSEIS_D2T_EVIDENCE_DIR") {
+                let mut out = Vec::new();
+                for (ci, &(i, j)) in c.columns.iter().enumerate() {
+                    let o = c.trace(i, j);
+                    let traces = c.s_stack[ci][a].iter().chain(&stack[o..o + nk - 1]);
+                    out.extend(traces.flat_map(|x| x.to_le_bytes()));
+                }
+                let name = format!("uniform2000_seed{}_angle{angle}.f32", c.seed);
+                std::fs::write(PathBuf::from(dir).join(name), out).expect("evidence dump");
+            }
+            let (mut clean, mut edge_top, mut edge_below) = (Diff::default(), Diff::default(), Diff::default());
+            let mut band = [0.0f64; 9];
+            let mut n_edge = 0;
+            for (ci, &(i, j)) in c.columns.iter().enumerate() {
+                let o = c.trace(i, j);
+                let is_edge = edge_column(i, j);
+                n_edge += is_edge as usize;
+                for (k, &l) in c.s_stack[ci][a].iter().enumerate() {
+                    let r = stack[o + k];
+                    if !is_edge {
+                        clean.add(r, l);
+                        continue;
+                    }
+                    let b = BANDS.iter().position(|&h| k < h).unwrap();
+                    band[b] = band[b].max((r as f64 - l as f64).abs());
+                    if k >= 400 { edge_below.add(r, l) } else { edge_top.add(r, l) }
+                }
+            }
+            println!(
+                "seed {} {angle:>2}° time-mode 2000 m/s stack vs legacy (8 ulp {tol:.1e}): {} clean columns max |Δ| {:.2e} rel RMS {:.2e} | {n_edge} top-edge columns (reflection above sample {padlen}) max |Δ| by samples [0,50) [50,100) … [350,400) [400,): {}",
+                c.seed,
+                c.columns.len() - n_edge,
+                clean.max_abs,
+                clean.rel_rms(),
+                band.iter().map(|x| format!("{x:.1e}")).collect::<Vec<_>>().join(" ")
+            );
+            assert!(clean.n > 0, "seed {}: no clean column", c.seed);
+            assert!(clean.max_abs <= tol, "seed {} {angle}°: clean max |Δ| {}", c.seed, clean.max_abs);
+            assert!(clean.rel_rms() <= 1e-7, "seed {} {angle}°: clean rel RMS {}", c.seed, clean.rel_rms());
+            if n_edge > 0 {
+                assert!(band[0] <= 0.04 * peak, "seed {} {angle}°: top-edge transient {}", c.seed, band[0]);
+                assert!(band.windows(2).all(|w| w[1] <= w[0]), "transient must decay: {band:?}");
+                assert!(edge_below.max_abs <= tol, "seed {} {angle}°: below 400 max |Δ| {}", c.seed, edge_below.max_abs);
+                // Relative to the edge columns' whole legacy energy (#35's
+                // relative-RMS normalisation).
+                let rms = (edge_below.sq_err / (edge_below.sq_ref + edge_top.sq_ref)).sqrt();
+                assert!(rms <= 1e-7, "seed {} {angle}°: below 400 rel RMS {rms}", c.seed);
+            }
         }
     }
 }

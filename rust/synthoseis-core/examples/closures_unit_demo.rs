@@ -46,6 +46,7 @@ fn main() {
     let thickness: f64 = arg(&args, 7, 2.0);
     std::fs::create_dir_all(&out).expect("create out dir");
     let base = E2eConfig {
+        time: Default::default(),
         geometry: ToyGeometry::Layered,
         seed,
         inline_count: ni,

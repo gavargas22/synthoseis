@@ -8,12 +8,11 @@ use synthoseis_geo::faults::{
 use synthoseis_geo::fill_layer_labels;
 use synthoseis_io::{CreateConfig, Dimension, MdioStore};
 use synthoseis_rpm::RpmExampleTrends;
-use synthoseis_seismic::ricker;
 
 use crate::parity;
 use crate::rock_physics::{elastic_model, ElasticModel};
 use crate::pipeline::{
-    E2eConfig, E2eReport, E2eVolumes, DEPTH_PER_SAMPLE, TINY_DIGI,
+    E2eConfig, E2eReport, E2eVolumes, DEPTH_PER_SAMPLE,
 };
 
 /// Peak temporary buffer bytes during fused generation / streaming write.
@@ -48,8 +47,10 @@ pub static GENERATE_LABELS_CALLS: AtomicUsize = AtomicUsize::new(0);
 ///
 /// Prefer explicit `cfg.chunk_shape`. Otherwise pick a proper **sub-volume**
 /// tile so e2e never writes `chunks == [ni,nj,nk]` when the grid allows.
+///
+/// The k chunk is along the output axis (`nt` in time mode).
 pub fn resolve_chunk_shape(cfg: &E2eConfig) -> [usize; 3] {
-    let [ni, nj, nk] = cfg.shape();
+    let [ni, nj, nk] = cfg.output_shape();
     if let Some(c) = cfg.chunk_shape {
         return [
             c[0].clamp(1, ni.max(1)),
@@ -214,6 +215,7 @@ pub fn generate_fault_labels(cfg: &E2eConfig) -> Option<Vec<u8>> {
 }
 
 /// Copy one MDIO chunk `[k0, k1)` of a fault tile's mask into `out`.
+#[allow(dead_code)]
 pub(crate) fn fault_tile_chunk(t: &FaultTile, k0: usize, k1: usize, out: &mut Vec<u8>) {
     out.clear();
     for i in t.i0..t.i1 {

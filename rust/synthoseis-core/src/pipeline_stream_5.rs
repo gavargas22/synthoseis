@@ -29,7 +29,7 @@ pub fn run_e2e_strip_stitched(
     let (labels, shape) = generate_labels(cfg);
     let filters = SeismicFilters::resolve(cfg, &labels, shape)?;
     let filters_ref = filters.as_ref();
-    let [ni, nj, nk] = shape;
+    let [ni, nj, nk] = cfg.output_shape();
     let chunks = resolve_chunk_shape(cfg);
     let [ci, _cj, _ck] = chunks;
 
@@ -49,12 +49,13 @@ pub fn run_e2e_strip_stitched(
             Dimension::sized("sample", nk),
         ],
         chunks: Some(chunks),
-        digi: TINY_DIGI,
+        digi: cfg.digi_ms(),
         seed: cfg.seed,
         units: "ms".into(),
         name: "synthoseis-e2e".into(),
     };
     let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
+    crate::time_mode::write_time_attrs(&store, cfg)?;
     store.ensure_labels_array().map_err(|e| e.to_string())?;
     let faults = fault_model(cfg);
     if faults.is_some() {
@@ -67,7 +68,7 @@ pub fn run_e2e_strip_stitched(
     if trends.salt().is_some() {
         store.ensure_salt_labels_array().map_err(|e| e.to_string())?;
     }
-    let wavelet = ricker(40.0, TINY_DIGI, 1);
+    let wavelet = cfg.ricker();
 
     // FS ownership is the lock: partitions from from_config_chunk_aligned never
     // share an MDIO chunk key. write_strip_partition takes no Mutex.
@@ -102,7 +103,7 @@ pub fn run_e2e_strip_stitched(
 
     let mut stats = WorkingSetStats {
         chunk_shape: chunks,
-        volume_shape: shape,
+        volume_shape: [ni, nj, nk],
         ..WorkingSetStats::default()
     };
     let mut all_samples: Vec<f32> = Vec::new();
@@ -137,7 +138,7 @@ pub fn run_e2e_strip_stitched(
     }
 
     // Fault labels written by N workers must equal the tile-wise reference.
-    if let Some(reference) = generate_fault_labels(cfg) {
+    if let Some(reference) = crate::time_mode::generate_fault_labels_output(cfg) {
         let back = opened.read_fault_labels_u8().map_err(|e| e.to_string())?;
         if back != reference {
             return Err("strip-stitch fault_labels diverged from single-pass reference".into());
@@ -146,8 +147,9 @@ pub fn run_e2e_strip_stitched(
     crate::salt::verify_salt_labels(&opened, cfg)
         .map_err(|e| format!("strip-stitch salt_labels diverged from the salt body: {e}"))?;
 
-    // Bit-identical labels vs reference (same generate_labels).
-    if *labels != reference.labels {
+    // Bit-identical labels vs reference (same generate_labels, same
+    // output-domain resampling).
+    if back_labels != reference.labels {
         return Err("strip-stitch labels diverged from chunked reference".into());
     }
 

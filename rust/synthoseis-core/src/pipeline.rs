@@ -68,6 +68,13 @@ pub struct E2eConfig {
     /// stack. `rock_physics.legacy_toy_depth` forces planar. See
     /// [`crate::toy_geometry`] and `docs/layered-toy-geometry.md`.
     pub geometry: ToyGeometry,
+    /// Depth-to-time conversion of the seismic chain (default: on, two-way
+    /// time from the voxel Vp). `TimeConfig::legacy()` (CLI
+    /// `--legacy-depth-as-time`) keeps the legacy axis, where each depth
+    /// sample is also one 4 ms time sample, bit for bit. Ignored with
+    /// `rock_physics.legacy_toy_depth` (no physical Vp). See
+    /// `docs/depth-to-time.md`.
+    pub time: TimeConfig,
 }
 
 /// Post-convolution filters applied to each fused angle-stack tile.
@@ -275,18 +282,20 @@ impl FaultConfig {
 /// Ricker peak frequency of the e2e pipeline (Hz), `ricker(40.0, dt, 1)`.
 pub const RICKER_PEAK_HZ: f64 = 40.0;
 
-/// Depth-to-time conversion settings (spec "depth-to-time conversion", §2).
+/// Depth-to-time conversion settings (spec "depth-to-time conversion", §2),
+/// [`E2eConfig::time`].
 ///
-/// **PR A: library only.** The conversion core (`synthoseis_seismic::twt_column`,
-/// `insert_spikes`, `point_sample_labels`, ...) and this config land first;
-/// no pipeline path reads it yet, it is not part of [`E2eConfig`] and there
-/// is no CLI. `enabled` defaults to `false`, so every output is unchanged by
-/// construction. PR B wires it into every path, adds `--legacy-depth-as-time`
-/// / `--dt-ms` / `--twt-samples` / `--twt-kernel` and flips the default.
+/// Time mode (the default) computes each column's two-way time from the
+/// voxel Vp, inserts the depth reflectivity band-limited at the interface
+/// times, and runs the wavelet, noise and filters on a uniform `dt` grid of
+/// `nt` samples. Labels, fault labels and salt labels are point-sampled
+/// onto the same grid. `enabled = false` ([`TimeConfig::legacy`], CLI
+/// `--legacy-depth-as-time`) is the legacy axis: each depth sample is also
+/// one 4 ms time sample (a constant 2000 m/s), bit for bit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimeConfig {
-    /// Convert the seismic chain to two-way time (PR B default: `true`;
-    /// `false` = today's legacy depth-as-time axis).
+    /// Convert the seismic chain to two-way time (default `true`; `false` =
+    /// the legacy depth-as-time axis).
     pub enabled: bool,
     /// Output sample interval (ms), 0.5–8.0. Drives the Ricker, the
     /// Butterworth design and the MDIO `digi` attribute in time mode.
@@ -297,20 +306,42 @@ pub struct TimeConfig {
     pub samples: Option<usize>,
     /// Resampling kernel (`sinc` default, `linear` fast option).
     pub kernel: synthoseis_seismic::TwtKernel,
+    /// Test hook: build every column's two-way time from this constant
+    /// velocity (m/s) instead of the voxel Vp (Zoeppritz still uses the
+    /// voxel properties). `Some(2000.0)` reproduces the legacy axis' implied
+    /// velocity, which pins time mode against the depth fuse (spec §5.2).
+    /// Not a CLI option.
+    #[doc(hidden)]
+    pub constant_twt_vp: Option<f64>,
 }
 
 impl Default for TimeConfig {
     fn default() -> Self {
         TimeConfig {
-            enabled: false,
+            enabled: true,
             dt_ms: TINY_DIGI,
             samples: None,
             kernel: synthoseis_seismic::TwtKernel::Sinc,
+            constant_twt_vp: None,
         }
     }
 }
 
+/// Lowest P velocity of a sediment cell (m/s): the shale trend at z = 0
+/// (`RPMExample.shale_vp(0)`). Drives the depth-staircase warning (spec
+/// §3.3, constraint 2); water has no internal interfaces and does not count.
+pub const VP_MIN_SEDIMENT: f64 = 1580.0;
+
 impl TimeConfig {
+    /// The legacy depth-as-time axis (`--legacy-depth-as-time`): every
+    /// output, label and MDIO attribute as on master before the conversion.
+    pub fn legacy() -> Self {
+        TimeConfig {
+            enabled: false,
+            ..TimeConfig::default()
+        }
+    }
+
     /// Output length for a depth model of `nz` cells of `dz` m: the explicit
     /// [`TimeConfig::samples`] or `nt₀`. A pure function of the config.
     pub fn output_samples(&self, nz: usize, dz: f64) -> usize {
@@ -341,8 +372,15 @@ impl TimeConfig {
             return Err(format!("dt-ms {} outside 0.5-8.0", self.dt_ms));
         }
         let nt = self.output_samples(nz, dz);
-        if nt < 16 || nt > 8 * nz {
-            return Err(format!("twt-samples {nt} outside 16..={} (8 x {nz} depth samples)", 8 * nz));
+        // The floor is 16 samples, or nt₀ when the default axis itself is
+        // shorter (tiny cubes, e.g. the 8³ CLI default), so the default
+        // never fails; an explicit `--twt-samples` below both is rejected.
+        let floor = 16.min(synthoseis_seismic::default_twt_samples(nz, dz, self.dt_ms)).max(2);
+        if nt < floor || nt > 8 * nz {
+            return Err(format!(
+                "twt-samples {nt} outside {floor}..={} (8 x {nz} depth samples)",
+                8 * nz
+            ));
         }
         let f_hi = Self::signal_max_hz(filters);
         if !synthoseis_seismic::output_nyquist_ok(f_hi, self.dt_ms) {
@@ -380,8 +418,25 @@ impl Default for E2eConfig {
             filters: FilterConfig::default(),
             rock_physics: RockPhysicsConfig::default(),
             geometry: ToyGeometry::default(),
+            time: TimeConfig::default(),
         }
     }
+}
+
+/// Resolved output time axis of a time-mode run ([`E2eConfig::time_axis`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimeAxis {
+    /// Output sample interval (ms).
+    pub dt_ms: f64,
+    /// Output samples per trace.
+    pub nt: usize,
+    /// Depth cell size (m), [`RockPhysicsConfig::depth_step_m`].
+    pub dz: f64,
+    /// Spike-insertion kernel.
+    pub kernel: synthoseis_seismic::TwtKernel,
+    /// [`TimeConfig::constant_twt_vp`] (test hook).
+    #[doc(hidden)]
+    pub constant_twt_vp: Option<f64>,
 }
 
 impl E2eConfig {
@@ -427,8 +482,69 @@ impl E2eConfig {
         }
     }
 
+    /// Depth-model shape `(ni, nj, nz)`: geometry, faults, closures, salt
+    /// and the elastic model always use it (never `nt`).
     pub fn shape(&self) -> [usize; 3] {
         [self.inline_count, self.crossline_count, self.samples]
+    }
+
+    /// `true` when the seismic chain runs in two-way time: [`TimeConfig::enabled`]
+    /// and a physical Vp (`--legacy-toy-depth` implies
+    /// `--legacy-depth-as-time`).
+    pub fn time_enabled(&self) -> bool {
+        self.time.enabled && !self.rock_physics.legacy_toy_depth
+    }
+
+    /// Output time axis in time mode (`None` on the legacy axis).
+    pub fn time_axis(&self) -> Option<TimeAxis> {
+        self.time_enabled().then(|| TimeAxis {
+            dt_ms: self.time.dt_ms,
+            nt: self.time.output_samples(self.samples, self.rock_physics.depth_step_m),
+            dz: self.rock_physics.depth_step_m,
+            kernel: self.time.kernel,
+            constant_twt_vp: self.time.constant_twt_vp,
+        })
+    }
+
+    /// Output samples per trace: `nt` in time mode, else the depth samples.
+    pub fn output_samples(&self) -> usize {
+        self.time_axis().map_or(self.samples, |t| t.nt)
+    }
+
+    /// Output (deliverable) shape `(ni, nj, nt)`: angle stacks and every
+    /// label cube written to MDIO. Equals [`E2eConfig::shape`] on the legacy
+    /// axis.
+    pub fn output_shape(&self) -> [usize; 3] {
+        [self.inline_count, self.crossline_count, self.output_samples()]
+    }
+
+    /// Output sample interval (ms): `dt` in time mode, else 4 ms. Drives the
+    /// Ricker, the Butterworth design, the noise mask and MDIO `digi`.
+    pub fn digi_ms(&self) -> f64 {
+        self.time_axis().map_or(TINY_DIGI, |t| t.dt_ms)
+    }
+
+    /// Validate the time settings (time mode only): see
+    /// [`TimeConfig::validate`].
+    pub fn validate_time(&self) -> Result<(), String> {
+        if self.time_enabled() {
+            self.time
+                .validate(self.samples, self.rock_physics.depth_step_m, &self.filters)?;
+        }
+        Ok(())
+    }
+
+    /// The depth-staircase warning for this run (time mode only), see
+    /// [`TimeConfig::staircase_warning`].
+    pub fn time_warning(&self) -> Option<String> {
+        self.time_enabled()
+            .then(|| self.time.staircase_warning(self.rock_physics.depth_step_m, VP_MIN_SEDIMENT))
+            .flatten()
+    }
+
+    /// The 40 Hz Ricker wavelet sampled at [`E2eConfig::digi_ms`].
+    pub fn ricker(&self) -> Vec<f64> {
+        ricker(RICKER_PEAK_HZ, self.digi_ms(), 1)
     }
 }
 
@@ -476,6 +592,10 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     // --- faults (optional; no-op when cfg.faults.count == 0) ---
     crate::pipeline_stream::apply_faults_to_labels(cfg, &maps, nh, &mut labels);
 
+    if cfg.time_enabled() {
+        return time_tiny_cube(cfg, &labels, [ni, nj, nk]);
+    }
+
     // --- RPM: elastic props (master toy trends or the rock-physics model) ---
     let mut vp = vec![0.0f32; ni * nj * nk];
     let mut vs = vec![0.0f32; ni * nj * nk];
@@ -509,7 +629,7 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
 
     // Short wavelet: higher frequency keeps support reasonable for tiny nk.
     // Skipped (empty wavelet = identity) when the bandpass replaces it.
-    let wavelet = ricker(40.0, TINY_DIGI, 1);
+    let wavelet = cfg.ricker();
     let wavelet = crate::pipeline_stream::effective_wavelet(cfg, &wavelet);
     let mut angle_stack = apply_wavelet_traces(&angle_cube, [ni, nj, nk], wavelet);
 
@@ -523,6 +643,40 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     }
 }
 
+/// Time-mode classic path: one full-volume tile through the same fused
+/// per-column chain as the chunked writers (props → T → depth Zoeppritz →
+/// insertion → noise → Ricker at `dt` → bandpass → lateral), so classic,
+/// chunked, strip and multiprocess outputs agree bit for bit (spec §5.4).
+fn time_tiny_cube(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> E2eVolumes {
+    let [ni, nj, _] = shape;
+    let model = crate::rock_physics::elastic_model(cfg, labels, shape);
+    let filters = crate::pipeline_stream::SeismicFilters::resolve(cfg, labels, shape)
+        .unwrap_or_else(|e| panic!("invalid FilterConfig: {e}"));
+    let oshape = cfg.output_shape();
+    let mut angle_stack = vec![0.0f32; oshape.iter().product()];
+    let mut stats = crate::pipeline_stream::WorkingSetStats::default();
+    crate::pipeline_stream::fuse_tile_filtered(
+        labels,
+        shape,
+        0,
+        ni,
+        0,
+        nj,
+        &model,
+        &cfg.ricker(),
+        crate::pipeline_stream::DEFAULT_INCIDENCE_DEG,
+        filters.as_ref(),
+        &mut angle_stack,
+        &mut stats,
+    );
+    let labels = crate::time_mode::generate_output_labels(cfg, labels, &model).labels;
+    E2eVolumes {
+        labels,
+        angle_stack,
+        shape: oshape,
+    }
+}
+
 /// Write labels + angle stack into an MDIO store (create or overwrite path).
 pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Result<(), String> {
     let [ni, nj, nk] = volumes.shape;
@@ -533,20 +687,21 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
             Dimension::sized("sample", nk),
         ],
         chunks: Some(crate::pipeline_stream::resolve_chunk_shape(cfg)),
-        digi: TINY_DIGI,
+        digi: cfg.digi_ms(),
         seed: cfg.seed,
         units: "ms".into(),
         name: "synthoseis-e2e".into(),
     };
     let store = MdioStore::create_empty(path, &create).map_err(|e| e.to_string())?;
+    crate::time_mode::write_time_attrs(&store, cfg)?;
     DeliverableWriter::write_volume(&store, &volumes.angle_stack).map_err(|e| e.to_string())?;
     DeliverableWriter::write_labels(&store, &volumes.labels).map_err(|e| e.to_string())?;
-    if let Some(mask) = crate::pipeline_stream::generate_fault_labels(cfg) {
+    if let Some(mask) = crate::time_mode::generate_fault_labels_output(cfg) {
         store
             .write_fault_labels_u8(&mask)
             .map_err(|e| e.to_string())?;
     }
-    if let Some(mask) = crate::salt::generate_salt_labels(cfg) {
+    if let Some(mask) = crate::time_mode::generate_salt_labels_output(cfg) {
         store.write_salt_labels_u8(&mask).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -554,6 +709,7 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
 
 /// Run the full e2e path: generate → (optional MDIO write) → second-pass parity.
 pub fn run_e2e(cfg: &E2eConfig) -> Result<E2eReport, String> {
+    cfg.validate_time()?;
     crate::pipeline_stream::SeismicFilters::from_config(cfg)?;
     let volumes = generate_tiny_cube(cfg);
     let second = generate_tiny_cube(cfg);

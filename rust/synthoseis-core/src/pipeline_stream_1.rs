@@ -12,7 +12,8 @@ fn fuse_tile_into_volume(
     angle_out: &mut [f32],
     stats: &mut WorkingSetStats,
 ) {
-    let [_ni, nj, nk] = shape;
+    let [_ni, nj, nz] = shape;
+    let nk = trends.output_nk(nz);
     let ti = i1 - i0;
     let tj = j1 - j0;
     let mut tile = vec![0.0f32; ti * tj * nk];
@@ -60,23 +61,26 @@ pub fn generate_chunked_at_angle(cfg: &E2eConfig, angle_deg: f64) -> (E2eVolumes
 /// Fuse an angle stack from already-generated labels (geometry amortization).
 ///
 /// Applies `cfg.filters` (post-convolution bandpass + lateral filter) when
-/// enabled; see [`fuse_tile_filtered`].
+/// enabled; see [`fuse_tile_filtered`]. `labels` are the depth labels
+/// ([`generate_labels`]); the returned volumes are in the output domain
+/// (`(ni, nj, nt)` angle stack and time-domain labels in time mode).
 pub fn generate_angle_stack_from_labels(
     cfg: &E2eConfig,
     labels: &[u8],
     shape: [usize; 3],
     angle_deg: f64,
 ) -> (E2eVolumes, WorkingSetStats) {
-    let [ni, nj, nk] = shape;
+    let oshape = cfg.output_shape();
+    let [ni, nj, nk] = oshape;
     let chunk = resolve_chunk_shape(cfg);
     let mut stats = WorkingSetStats {
         chunk_shape: chunk,
-        volume_shape: shape,
+        volume_shape: oshape,
         ..WorkingSetStats::default()
     };
 
     let trends = elastic_model(cfg, labels, shape);
-    let wavelet = ricker(40.0, TINY_DIGI, 1);
+    let wavelet = cfg.ricker();
     stats.observe(wavelet.len() * 8 + trends.model_bytes());
     let filters = SeismicFilters::resolve(cfg, labels, shape)
         .unwrap_or_else(|e| panic!("invalid FilterConfig: {e}"));
@@ -110,11 +114,16 @@ pub fn generate_angle_stack_from_labels(
         i0 = i1;
     }
 
+    let labels = if trends.time().is_some() {
+        crate::time_mode::generate_output_labels(cfg, labels, &trends).labels
+    } else {
+        labels.to_vec()
+    };
     (
         E2eVolumes {
-            labels: labels.to_vec(),
+            labels,
             angle_stack,
-            shape,
+            shape: oshape,
         },
         stats,
     )
@@ -135,24 +144,25 @@ pub fn write_e2e_mdio_chunked(
             Dimension::sized("sample", nk),
         ],
         chunks: Some(chunks),
-        digi: TINY_DIGI,
+        digi: cfg.digi_ms(),
         seed: cfg.seed,
         units: "ms".into(),
         name: "synthoseis-e2e".into(),
     };
     let store = MdioStore::create_empty(path, &create).map_err(|e| e.to_string())?;
+    crate::time_mode::write_time_attrs(&store, cfg)?;
     store
         .write_volume(&volumes.angle_stack)
         .map_err(|e| e.to_string())?;
     store
         .write_labels_u8(&volumes.labels)
         .map_err(|e| e.to_string())?;
-    if let Some(mask) = generate_fault_labels(cfg) {
+    if let Some(mask) = crate::time_mode::generate_fault_labels_output(cfg) {
         store
             .write_fault_labels_u8(&mask)
             .map_err(|e| e.to_string())?;
     }
-    if let Some(mask) = crate::salt::generate_salt_labels(cfg) {
+    if let Some(mask) = crate::time_mode::generate_salt_labels_output(cfg) {
         store.write_salt_labels_u8(&mask).map_err(|e| e.to_string())?;
     }
     Ok(chunks)

@@ -318,6 +318,7 @@ fn demo(salt: bool) -> E2eConfig {
             ..RockPhysicsConfig::default()
         },
         geometry: ToyGeometry::Layered,
+        time: synthoseis_core::TimeConfig::legacy(),
         ..E2eConfig::default()
     }
 }

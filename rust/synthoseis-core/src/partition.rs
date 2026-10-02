@@ -259,11 +259,28 @@ impl MultiWorkerRunner {
         rock_physics: &crate::RockPhysicsConfig,
         geometry: crate::ToyGeometry,
     ) -> Result<crate::pipeline::E2eReport, String> {
-        let part = JobPartition::single_worker(&self.config);
-        SingleWorkerRunner::new(self.config.clone(), part).run_e2e_with_geometry(
+        self.run_e2e_with_time(
             store,
             rock_physics,
             geometry,
+            &crate::pipeline::TimeConfig::default(),
+        )
+    }
+
+    /// [`Self::run_e2e_with_geometry`] with an explicit output axis.
+    pub fn run_e2e_with_time(
+        &self,
+        store: Option<std::path::PathBuf>,
+        rock_physics: &crate::RockPhysicsConfig,
+        geometry: crate::ToyGeometry,
+        time: &crate::pipeline::TimeConfig,
+    ) -> Result<crate::pipeline::E2eReport, String> {
+        let part = JobPartition::single_worker(&self.config);
+        SingleWorkerRunner::new(self.config.clone(), part).run_e2e_with_time(
+            store,
+            rock_physics,
+            geometry,
+            time,
         )
     }
 
@@ -318,7 +335,33 @@ impl MultiWorkerRunner {
         ),
         String,
     > {
+        self.run_e2e_strip_stitched_with_time(
+            store,
+            chunk_shape,
+            rock_physics,
+            geometry,
+            &crate::pipeline::TimeConfig::default(),
+        )
+    }
+
+    /// [`Self::run_e2e_strip_stitched_with_geometry`] with an explicit
+    /// output axis.
+    pub fn run_e2e_strip_stitched_with_time(
+        &self,
+        store: Option<std::path::PathBuf>,
+        chunk_shape: Option<[usize; 3]>,
+        rock_physics: &crate::RockPhysicsConfig,
+        geometry: crate::ToyGeometry,
+        time: &crate::pipeline::TimeConfig,
+    ) -> Result<
+        (
+            crate::pipeline::E2eReport,
+            crate::pipeline_stream::WorkingSetStats,
+        ),
+        String,
+    > {
         let cfg = crate::pipeline::E2eConfig {
+            time: time.clone(),
             faults: Default::default(),
             filters: Default::default(),
             rock_physics: rock_physics.clone(),

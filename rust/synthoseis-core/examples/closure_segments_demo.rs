@@ -50,6 +50,7 @@ fn config(
     thickness: f64,
 ) -> E2eConfig {
     E2eConfig {
+        time: Default::default(),
         geometry: ToyGeometry::Layered,
         seed,
         inline_count: shape[0],

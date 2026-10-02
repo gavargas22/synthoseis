@@ -99,14 +99,19 @@ fn noise_flags() {
 fn bandpass_trailing_sample_flag() {
     let dir = tempfile::tempdir().expect("tempdir");
     let read = |p: &std::path::Path| synthoseis_io::MdioStore::open(p).unwrap().read_volume().unwrap();
+    // The switch is a legacy-axis option (time mode always zeroes the dead
+    // last sample): compare on `--legacy-depth-as-time`.
     let fixed = dir.path().join("fixed.mdio");
-    let out = run(&["--bandpass", "4,30"], &fixed);
+    let out = run(&["--bandpass", "4,30", "--legacy-depth-as-time"], &fixed);
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("bandpass trace: first nk-1 samples, trailing sample 0"), "{stdout}");
 
     let old = dir.path().join("old.mdio");
-    let out = run(&["--bandpass", "4,30", "--bandpass-trailing-sample"], &old);
+    let out = run(
+        &["--bandpass", "4,30", "--bandpass-trailing-sample", "--legacy-depth-as-time"],
+        &old,
+    );
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("bandpass trace: all nk samples"), "{stdout}");
@@ -123,4 +128,8 @@ fn bandpass_trailing_sample_flag() {
     let out = run(&["--bandpass-trailing-sample"], &dir.path().join("bad.mdio"));
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("--bandpass-trailing-sample requires --bandpass"));
+    // Time mode (the default) rejects it (spec §2).
+    let out = run(&["--bandpass", "4,30", "--bandpass-trailing-sample"], &dir.path().join("bad.mdio"));
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("requires --legacy-depth-as-time"));
 }

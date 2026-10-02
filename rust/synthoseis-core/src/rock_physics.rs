@@ -712,6 +712,11 @@ pub struct RpmModel {
     /// Salt body (legacy lithology 2; salt properties override every other
     /// voxel kind). `None` without salt.
     pub salt: Option<crate::salt::SaltBody>,
+    /// Output time axis when the run converts to two-way time
+    /// ([`E2eConfig::time_axis`]); `None` on the legacy depth-as-time axis.
+    /// Every fuse path reads it from here, so the model, its depth and its
+    /// output axis always travel together.
+    pub time: Option<crate::pipeline::TimeAxis>,
 }
 
 /// Elastic properties used by every fuse path.
@@ -745,9 +750,9 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
         ..rp.clone()
     };
     let salt = crate::salt::salt_body(cfg);
-    ElasticModel::Rpm(Box::new(RpmModel::build_with_salt(
-        cfg.seed, &rp, &maps, nh, labels, shape, &sand, salt,
-    )))
+    let mut model = RpmModel::build_with_salt(cfg.seed, &rp, &maps, nh, labels, shape, &sand, salt);
+    model.time = cfg.time_axis();
+    ElasticModel::Rpm(Box::new(model))
 }
 
 impl RpmModel {
@@ -861,6 +866,7 @@ impl RpmModel {
             mixing: rp.mixing,
             zoeppritz: rp.zoeppritz_form(),
             salt,
+            time: None,
         }
     }
 
@@ -942,6 +948,21 @@ impl ElasticModel {
             ElasticModel::Rpm(m) => m.salt.as_ref(),
             ElasticModel::LegacyToy(_) => None,
         }
+    }
+
+    /// Output time axis (`None` on the legacy depth-as-time axis and for
+    /// the master toy model).
+    pub fn time(&self) -> Option<&crate::pipeline::TimeAxis> {
+        match self {
+            ElasticModel::Rpm(m) => m.time.as_ref(),
+            ElasticModel::LegacyToy(_) => None,
+        }
+    }
+
+    /// Output samples per trace for a depth model of `nk` samples: `nt` in
+    /// time mode, else `nk`.
+    pub fn output_nk(&self, nk: usize) -> usize {
+        self.time().map_or(nk, |t| t.nt)
     }
 
     /// `true` for the master toy model.
