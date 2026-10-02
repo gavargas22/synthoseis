@@ -1,6 +1,8 @@
 # End-to-end angle-stack parity against legacy Python
 
-Test-only hygiene. This adds no new feature and changes no output.
+Added in #35 as test-only hygiene. The trailing-sample follow-up (stacked on
+#35) fixes the one modelling gap it found; see
+[Trailing reflectivity sample](#trailing-reflectivity-sample-bandpass-edge-fixed).
 
 ## Why
 
@@ -59,14 +61,17 @@ elastic cubes through the Rust production chain:
 
 - `synthoseis_gpu::fuse_props_tile_cpu` with `NO_WAVELET` and the form that
   `--legacy-zoeppritz` selects;
-- then `apply_filters_to_volume` with the legacy model's own corners, order
-  and lateral size;
+- then the production default `apply_filters_to_volume` with the legacy
+  model's own corners, order and lateral size, on the full `nk`-sample fuse
+  output;
 - then `cumsum_traces_f32` and the 2–100 Hz bandpass (kernel only).
 
 Legacy reflectivity has `nk − 1` samples per trace. The Rust fuse writes `nk`
-samples with a trailing 0. The parity checks therefore run the Rust filters on
-the legacy `nk − 1` grid. The last test measures what the production `nk`
-convention does instead.
+samples with a trailing 0, and the default bandpass filters only the first
+`nk − 1` (the legacy trace) and leaves the trailing sample 0. The checks
+compare the first `nk − 1` output samples with legacy and assert the trailing
+sample is 0. The last test pins the fix against the old whole-trace bandpass
+(`--bandpass-trailing-sample`).
 
 ## Results
 
@@ -89,7 +94,7 @@ round-off residue of 1e-31 to 3e-16 there. The Rust complex path leaves a
 different residue, or exactly 0. That residue is why the whole-cube hashes
 differ at non-zero angles.
 
-### Noise-free stacks and cumsum (legacy `nk − 1` grid)
+### Noise-free stacks and cumsum (first `nk − 1` samples)
 
 | | bit-identical | max \|Δ\| | peak | rel. RMS |
 |---|---|---|---|---|
@@ -117,44 +122,68 @@ Both differences are at the f32 rounding level. They were isolated as follows:
 worst case is about 1 ulp(peak) over the full cube (cumsum 1.5e-8 against a peak of 0.176). A modelling error (wrong corner, order, padding,
 lateral size or Zoeppritz form) would be at least 1e-3.
 
-### Known discrepancy: the Rust trailing reflectivity sample moves the bandpass edge
+### Trailing reflectivity sample: bandpass edge (fixed)
 
-This PR **does not fix** the gap described here.
+Up to #35 the production pipeline bandpassed the whole `nk`-sample Rust
+trace, whose last sample is 0, while legacy filters its `nk − 1` samples. So
+`filtfilt`'s odd extension was taken about 0 instead of about the last
+reflectivity value, one sample deeper, and the deep part of every trace
+changed. The fix (a scoped parity bug fix) bandpasses only the first
+`nk − 1` samples when the bandpass replaces the Ricker, and writes the
+trailing sample as 0; legacy has no sample there (`rfc_raw` is `nk − 1`
+long, and augmentation crops to `cube_shape[2] + pad − 1`). The old output
+stays available, bit for bit, as `--bandpass-trailing-sample` /
+`FilterConfig::bandpass_trailing_sample`. Details in
+[`filters-port.md`](filters-port.md#trailing-sample-legacy-parity-bug-fix).
 
-With the bandpass on, the production pipeline filters the `nk`-sample Rust
-trace, whose last sample is 0. Legacy filters its `nk − 1` samples. So
-`filtfilt`'s odd extension is taken about 0 instead of about the last
-reflectivity value, one sample deeper. That changes the deep part of every
-trace. The table compares Rust production with legacy over the first
-`nk − 1` samples, full cube, all angles:
+Max |Rust − legacy| of the stack over the first `nk − 1` samples, full cube
+(all 256 traces), all five angles, by distance from the base:
 
-| samples above the base | seed 25 max \|Δ\| | seed 3 max \|Δ\| |
-|---|---|---|
-| 0–10 | 1.2–1.8e-2 | 1.4–1.6e-2 |
-| 10–25 | 3.1–4.9e-3 | 3.8–4.3e-3 |
-| 25–50 | 2.0–3.2e-3 | 2.5–3.0e-3 |
-| 50–100 | 0.74–1.2e-3 | 0.95–1.1e-3 |
-| 100–200 | 1.1–1.7e-4 | 2.6–3.0e-4 |
-| ≥ 200 | ≤ 9.0e-6 | ≤ 1.4e-5 |
-| whole cube, rel. RMS | 10.6–16.0 % | 5.3–6.3 % |
+| samples above the base | seed 25 before | seed 25 after | seed 3 before | seed 3 after |
+|---|---|---|---|---|
+| 0–10 | 1.2–1.8e-2 | ≤ 9.3e-10 | 1.4–1.6e-2 | ≤ 1.2e-10 |
+| 10–25 | 3.1–4.9e-3 | ≤ 1.2e-10 | 3.8–4.3e-3 | ≤ 2.3e-10 |
+| 25–50 | 2.0–3.2e-3 | ≤ 4.1e-10 | 2.5–3.0e-3 | ≤ 2.3e-10 |
+| 50–100 | 0.74–1.2e-3 | ≤ 2.3e-10 | 0.95–1.1e-3 | ≤ 4.7e-10 |
+| 100–200 | 1.1–1.7e-4 | ≤ 4.7e-10 | 2.6–3.0e-4 | ≤ 1.9e-9 |
+| ≥ 200 | ≤ 9.0e-6 | ≤ 1.9e-9 | ≤ 1.4e-5 | ≤ 3.7e-9 |
+| whole cube, rel. RMS | 10.6–16.0 % | ≤ 2.1e-9 | 5.3–6.3 % | ≤ 4.7e-9 |
+| whole cube, bit-identical | 7.2–9.9 % | 99.7 % | 4.3–5.3 % | 99.4–99.5 % |
 
-For scale, the stack peaks are 0.061–0.086 and the stack RMS is about 4e-3.
+For scale, the stack peaks are 0.061–0.086 and 8 ulp(peak) is 3–6e-8. After
+the fix the base of the trace is no different from the rest: the residual is
+the `lfilter_zi` / reflectivity-residue rounding described above, and the
+default output equals the whole-trace filter run on the legacy `nk − 1`
+grid bit for bit.
 
-- **Extent:** the reach follows the low-cut (3.9–4.4 Hz here). Lower corners
-  or longer traces change the depth extent, not the mechanism.
-- **Which paths:** every Rust path that bandpasses is affected: chunked,
-  streaming, strip, multi-process, geometry-once and classic. Paths without
-  the bandpass are unaffected: a Ricker "same" convolution treats the
-  trailing 0 as a no-op for the first `nk − 1` samples.
-- **Legacy is also edge-affected here:** the 10 legacy pad samples absorb
-  part of this in legacy, and legacy writes them out uncropped. The two
-  edges are simply different.
-- **Test:** `known_gap_trailing_sample_moves_bandpass_edge` pins the size
-  and depth extent of the gap, so a fix or a regression fails loudly. Update
-  that test and this section together.
-- **Possible fixes (not done here):** bandpass only the first `nk − 1`
-  samples and keep the trailing sample at 0, or drop it from the
-  deliverable. Either changes output.
+- **Which paths:** every Rust path that bandpasses with the Ricker skipped
+  (chunked, streaming, strip, multi-process, geometry-once, classic) uses the
+  same trace kernel. Paths without the bandpass, and `--keep-ricker`, are
+  unchanged: a Ricker-convolved trace has real signal in its last sample.
+- **Legacy is also edge-affected here:** its 10 pad samples absorb part of
+  the filtfilt edge, and legacy writes them out uncropped. Rust now has the
+  *same* edge; changing it (mirrored padding, a taper) is a later realism
+  item, not part of this fix.
+- **Dead trailing sample:** for parity the last sample of every bandpassed
+  trace is an exact 0, so the bottom depth slice of every stack is constant
+  0 (noise-free even with noise on). It carries no geology and a network
+  could learn to spot it. Crop or mask it for training; the edge-handling
+  realism item (mirrored padding or a taper) should remove it.
+- **Ricker path:** legacy has no Ricker → bandpass chain (its dormant
+  wavelet path convolves the `nk − 1` trace and applies only the lateral
+  filter), so `--keep-ricker` is unchanged. The Rust Ricker + lateral path
+  matches the forced legacy wavelet path to ≤ 3e-8 down to the base; see
+  [`filters-port.md`](filters-port.md#trailing-sample-legacy-parity-bug-fix).
+- **Test:** `trailing_sample_bandpass_edge_matches_legacy_to_the_base`
+  checks, per angle and model, that every depth band down to the last sample
+  is within 8 ulp(peak) of legacy on the sampled columns, that the default
+  equals the whole-trace filter on the `nk − 1` grid bit for bit over the
+  full cube, and that `--bandpass-trailing-sample` still shows the old gap.
+  Update that test and this section together.
+- **Figure (not committed):** `bandpass_trailing_sample_before_after.png`
+  from the PR, drawn from the full legacy cubes of `run_legacy` and the Rust
+  stacks: max |Δ| vs samples above the base, before and after, both models,
+  and the worst old trace against legacy.
 
 ## Regenerate
 

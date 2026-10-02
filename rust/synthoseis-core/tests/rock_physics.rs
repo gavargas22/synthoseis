@@ -419,6 +419,8 @@ fn legacy_toy_depth_switch_reproduces_master_10f4dcd() {
                 legacy_angle_weights: false,
                 legacy_seabed: false,
             },
+            // Golden from before the bandpass trailing-sample fix.
+            bandpass_trailing_sample: true,
             ..FilterConfig::legacy(4.0, 30.0, 3)
         },
         ..cfg(10, [24, 20, 64], [8, 5, 64], 3)

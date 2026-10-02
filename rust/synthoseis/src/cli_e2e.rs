@@ -344,6 +344,14 @@ fn print_filter_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         "filters: bandpass={bandpass}, lateral_size={}, wavelet={wavelet} (applied to data/angle_stack)",
         fc.lateral_size
     );
+    if fc.skips_ricker() {
+        let trace = if fc.bandpass_excludes_trailing_sample() {
+            "first nk-1 samples, trailing sample 0 (legacy parity)"
+        } else {
+            "all nk samples (--bandpass-trailing-sample, master before the fix)"
+        };
+        println!("bandpass trace: {trace}");
+    }
     if let Some(db) = fc.noise.snr_db {
         println!(
             "noise: snr={db} dB, seed={}, weights={}, data_std_cutoff={} (added to raw reflectivity before wavelet/bandpass)",
