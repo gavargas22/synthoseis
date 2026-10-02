@@ -41,6 +41,10 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
     let mut chunk_faults = Vec::new();
 
     let trends = elastic_model(cfg, &labels, shape);
+    if trends.salt().is_some() {
+        store.ensure_salt_labels_array().map_err(|e| e.to_string())?;
+    }
+    let mut chunk_salt = Vec::new();
     let wavelet = ricker(40.0, TINY_DIGI, 1);
     stats.observe(wavelet.len() * 8 + trends.model_bytes());
 
@@ -115,6 +119,12 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
                         .write_fault_labels_chunk([i_chunk, j_chunk, k_chunk], &chunk_faults)
                         .map_err(|e| e.to_string())?;
                 }
+                if let Some(s) = trends.salt() {
+                    crate::salt::salt_chunk(s, i0, i1, j0, j1, k0, k1, &mut chunk_salt);
+                    store
+                        .write_salt_labels_chunk([i_chunk, j_chunk, k_chunk], &chunk_salt)
+                        .map_err(|e| e.to_string())?;
+                }
                 stats_samples.extend_from_slice(&chunk_angles);
                 k0 = k1;
                 k_chunk += 1;
@@ -146,6 +156,8 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
             return Err("streaming fault_labels diverged from tile-wise reference".into());
         }
     }
+    crate::salt::verify_salt_labels(&opened, cfg)
+        .map_err(|e| format!("streaming salt_labels diverged from the salt body: {e}"))?;
     if !parity.passes_defaults() {
         return Err(format!(
             "streaming MDIO parity failed: iou={:.6} agr={:.6} mae={:.6e} maxabs={:.6e}",

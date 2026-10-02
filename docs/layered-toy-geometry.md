@@ -132,7 +132,8 @@ Figures (from `examples/layered_geometry_demo.rs` and
 
 ## Deferred
 
-- Onlaps, channels and salt bodies.
+- Onlaps and channels.
+- ~~Salt bodies.~~ Done: see [salt-bodies.md](salt-bodies.md).
 - Legacy Perlin thickness maps: fbm is used instead.
 - ~~Legacy sand-fraction lithology.~~ Done: it is now the default on the
   layered geometry, and `--toy-lithology alternating` keeps the even/odd

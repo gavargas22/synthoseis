@@ -55,18 +55,33 @@ pub fn run_e2e_streaming_overlapped(
     {
         let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
         store.ensure_labels_array().map_err(|e| e.to_string())?;
+        if cfg.effective_salt() {
+            store.ensure_salt_labels_array().map_err(|e| e.to_string())?;
+        }
     }
+    // Salt labels are rebuilt per chunk by the writer from the salt body.
+    let salt = crate::salt::salt_body(cfg);
+    let has_salt = salt.is_some();
 
     let (tx, rx) = sync_channel::<WriteChunk>(1);
     let (ack_tx, ack_rx) = sync_channel::<()>(0);
     let writer_path = path.clone();
     let writer = thread::spawn(move || -> Result<(), String> {
         let store = MdioStore::open(&writer_path).map_err(|e| e.to_string())?;
+        let mut chunk_salt = Vec::new();
         for (key, angles, chunk_labels) in rx {
             store.write_chunk(key, &angles).map_err(|e| e.to_string())?;
             store
                 .write_labels_chunk(key, &chunk_labels)
                 .map_err(|e| e.to_string())?;
+            if let Some(s) = &salt {
+                let [i0, j0, k0] = [key[0] * ci, key[1] * cj, key[2] * ck];
+                let (i1, j1, k1) = ((i0 + ci).min(ni), (j0 + cj).min(nj), (k0 + ck).min(nk));
+                crate::salt::salt_chunk(s, i0, i1, j0, j1, k0, k1, &mut chunk_salt);
+                store
+                    .write_salt_labels_chunk(key, &chunk_salt)
+                    .map_err(|e| e.to_string())?;
+            }
             ack_tx
                 .send(())
                 .map_err(|_| "overlap producer dropped acknowledgement channel".to_string())?;
@@ -85,7 +100,7 @@ pub fn run_e2e_streaming_overlapped(
         + wavelet.len() * 8
         + props_tile_bytes(&trends, ci * cj * nk);
     let tile_bytes = tile_angles.capacity() * 4;
-    let in_flight_bytes = ci * cj * ck * (4 + 1);
+    let in_flight_bytes = ci * cj * ck * (4 + 1 + has_salt as usize);
     stats.peak_temp_bytes = fixed_bytes + tile_bytes + in_flight_bytes;
 
     let mut pending_write = false;
@@ -177,6 +192,8 @@ pub fn run_e2e_streaming_overlapped(
         &reference.angle_stack,
         &back_angles,
     );
+    crate::salt::verify_salt_labels(&store, cfg)
+        .map_err(|e| format!("overlapped salt_labels diverged from the salt body: {e}"))?;
     if reference.labels != back_labels || reference.angle_stack != back_angles {
         return Err(format!(
             "overlapped MDIO exact parity failed: iou={:.6} agr={:.6} mae={:.6e} maxabs={:.6e}",

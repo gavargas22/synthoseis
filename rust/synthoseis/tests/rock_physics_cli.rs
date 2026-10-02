@@ -276,7 +276,7 @@ fn alternating_lithology_reproduces_master_after_30() {
         ("deep", DEEP, MASTER30_DEEP),
     ] {
         let alt = dir.path().join(format!("{name}-alt.mdio"));
-        let out = run(&with(base, &["--toy-lithology", "alternating"]), &alt);
+        let out = run(&with(base, &["--toy-lithology", "alternating", "--no-salt"]), &alt);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("toy lithology: alternating"), "{name}: {stdout}");
@@ -300,6 +300,8 @@ fn lithology_flags_reach_multiprocess_workers() {
         &["--toy-geometry", "planar"][..],
         &["--closures-per-layer"][..],
         &["--closures-unsegmented"][..],
+        &["--no-salt"][..],
+        &["--salt-legacy-top-offset"][..],
     ] {
         let single = dir.path().join("single.mdio");
         let out = run(&with(&MP[3..], flags), &single);
@@ -328,6 +330,10 @@ fn invalid_lithology_flags_exit_2() {
         (&["--closures-unsegmented", "--no-fluids"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids"),
         (&["--closures-unsegmented", "--closures-per-layer"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids or --closures-per-layer"),
         (&["--closures-unsegmented", "--toy-geometry", "planar"], "--closures-unsegmented has no effect with the planar geometry"),
+        (&["--no-salt", "--toy-geometry", "planar"], "--no-salt / --salt-legacy-top-offset have no effect with the planar geometry"),
+        (&["--no-salt", "--legacy-toy-depth"], "--no-salt / --salt-legacy-top-offset have no effect with the planar geometry or --legacy-toy-depth"),
+        (&["--salt-legacy-top-offset", "--toy-geometry", "planar"], "have no effect with the planar geometry"),
+        (&["--salt-legacy-top-offset", "--no-salt"], "--salt-legacy-top-offset has no effect with --no-salt"),
     ] {
         let out = run(&with(PLAIN, bad), &dir.path().join("bad.mdio"));
         assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
@@ -369,14 +375,14 @@ fn closures_per_layer_flag_reproduces_master_8b5988f() {
         ("sand", SAND, MASTER8B_SAND),
     ] {
         let pl = dir.path().join(format!("{name}-pl.mdio"));
-        let out = run(&with(base, &["--closures-per-layer"]), &pl);
+        let out = run(&with(base, &["--closures-per-layer", "--no-salt"]), &pl);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("closures: per sand layer (--closures-per-layer"), "{name}: {stdout}");
         assert_eq!(store_hash(&pl), master, "{name}: --closures-per-layer vs master 8b5988f");
     }
     let unit = dir.path().join("sand-unit.mdio");
-    let out = run(SAND, &unit);
+    let out = run(&with(SAND, &["--no-salt"]), &unit);
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -427,25 +433,74 @@ fn closures_unsegmented_flag_reproduces_master_ef2dc42() {
         ("faulted4", &with(FAULTED, &["--seed", "4"])[..], MASTEREF_FAULTED_4, false),
     ] {
         let un = dir.path().join(format!("{name}-un.mdio"));
-        let out = run(&with(base, &["--closures-unsegmented"]), &un);
+        let out = run(&with(base, &["--closures-unsegmented", "--no-salt"]), &un);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("unsegmented (--closures-unsegmented, master ef2dc42)"), "{name}: {stdout}");
         assert_eq!(store_hash(&un), master, "{name}: --closures-unsegmented vs master ef2dc42");
         let seg = dir.path().join(format!("{name}-seg.mdio"));
-        let out = run(base, &seg);
+        let out = run(&with(base, &["--no-salt"]), &seg);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(String::from_utf8_lossy(&out.stdout).contains("3D-segmented across faults"));
         assert_eq!(store_hash(&seg) == master, segmented_same, "{name}: segmented vs ef2dc42");
     }
     for (seed, want) in [("7", SEGMENTED_FAULTED_7), ("4", SEGMENTED_FAULTED_4)] {
         let p = dir.path().join(format!("seg{seed}.mdio"));
-        assert!(run(&with(FAULTED, &["--seed", seed]), &p).status.success());
+        assert!(run(&with(FAULTED, &["--seed", seed, "--no-salt"]), &p).status.success());
         assert_eq!(store_hash(&p), want, "segmented faulted seed {seed}");
         // Tiling does not change the segmented output.
         let q = dir.path().join(format!("seg{seed}-tiles.mdio"));
-        let tiled = with(&FAULTED[4..], &["--shape", "32,32,128", "--chunk-i", "3", "--chunk-j", "7", "--chunk-k", "16", "--seed", seed]);
+        let tiled = with(&FAULTED[4..], &["--shape", "32,32,128", "--chunk-i", "3", "--chunk-j", "7", "--chunk-k", "16", "--seed", seed, "--no-salt"]);
         assert!(run(&tiled, &q).status.success());
         assert_eq!(store_hash(&q), want, "segmented faulted seed {seed}, tiles");
+    }
+}
+
+// Angle-stack hashes of stores written by the master b4f4259 binary (no
+// salt) with the same flags; `--no-salt` stores are byte-identical there.
+const MASTERB4_PLAIN: u64 = 0x2205_9836_d641_6f98;
+const MASTERB4_RICH: u64 = 0x204c_83fa_48a4_befb;
+const MASTERB4_MP: u64 = 0x2841_1c79_845b_b9a5;
+const MASTERB4_DEEP: u64 = 0xd1a3_74bf_b795_15e5;
+const MASTERB4_SAND: u64 = 0xee90_356c_257c_d617;
+const MASTERB4_FAULTED_7: u64 = 0xd928_4752_66cc_e43e;
+// The same runs with the default salt body (this branch).
+const SALT_PLAIN: u64 = 0x90e7_47af_ef37_a8e5;
+const SALT_RICH: u64 = 0xc64a_edda_ee03_ff02;
+const SALT_MP: u64 = 0x5f5f_85af_e374_3e75;
+const SALT_DEEP: u64 = 0x3144_ba5f_39b5_5ee1;
+const SALT_SAND: u64 = 0x5d8a_0071_9fa0_731d;
+const SALT_FAULTED_7: u64 = 0x3980_7024_06ef_ee2a;
+
+/// `--no-salt` reproduces master b4f4259 bit for bit (no `salt_labels`
+/// array); the default adds the salt body, writes `data/salt_labels` equal
+/// to the library salt body, and changes the output.
+#[test]
+fn no_salt_flag_reproduces_master_b4f4259() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let faulted7 = with(FAULTED, &["--seed", "7"]);
+    for (name, base, master, salted, voxels) in [
+        ("plain", PLAIN, MASTERB4_PLAIN, SALT_PLAIN, 212),
+        ("rich", RICH, MASTERB4_RICH, SALT_RICH, 212),
+        ("mp", MP, MASTERB4_MP, SALT_MP, 0),
+        ("deep", DEEP, MASTERB4_DEEP, SALT_DEEP, 2996),
+        ("sand", SAND, MASTERB4_SAND, SALT_SAND, 4083),
+        ("faulted7", &faulted7[..], MASTERB4_FAULTED_7, SALT_FAULTED_7, 2336),
+    ] {
+        let off = dir.path().join(format!("{name}-off.mdio"));
+        let out = run(&with(base, &["--no-salt"]), &off);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("salt: off (--no-salt, master b4f4259)"));
+        assert_eq!(store_hash(&off), master, "{name}: --no-salt vs master b4f4259");
+        assert!(!off.join("data").join("salt_labels").exists(), "{name}: no salt_labels without salt");
+        let on = dir.path().join(format!("{name}-on.mdio"));
+        let out = run(base, &on);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(&format!("{voxels} voxels in")), "{name}: {stdout}");
+        assert_eq!(store_hash(&on), salted, "{name}: salt default");
+        assert_ne!(salted, master);
+        let mask = synthoseis_io::MdioStore::open(&on).unwrap().read_salt_labels_u8().unwrap();
+        assert_eq!(mask.iter().map(|&v| v as usize).sum::<usize>(), voxels, "{name}: salt_labels");
     }
 }

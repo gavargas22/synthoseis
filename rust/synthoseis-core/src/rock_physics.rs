@@ -140,6 +140,17 @@ pub struct RockPhysicsConfig {
     /// region rather than per 3D compartment. CLI `--closures-unsegmented`.
     /// See [`crate::closure_segments`].
     pub closures_unsegmented: bool,
+    /// Salt body (legacy `include_salt`, `true` in the shipped
+    /// `config/example.json`): one convex-hull salt body per model, horizon
+    /// drag against its flanks, salt properties and closure walls. Only the
+    /// layered geometry has salt ([`E2eConfig::effective_salt`]). CLI
+    /// `--no-salt` (`false`) reproduces master b4f4259. See [`crate::salt`].
+    pub salt: bool,
+    /// Legacy switch: absolute `U(150, 300)` sample top offset of the salt
+    /// below horizon 1, instead of the default scaled by
+    /// `min(nk / 1250, 1)`. CLI
+    /// `--salt-legacy-top-offset`.
+    pub salt_legacy_top_offset: bool,
 }
 
 impl Default for RockPhysicsConfig {
@@ -161,6 +172,8 @@ impl Default for RockPhysicsConfig {
             sand_layer_thickness: crate::lithology::SAND_LAYER_THICKNESS,
             closures_per_layer: false,
             closures_unsegmented: false,
+            salt: true,
+            salt_legacy_top_offset: false,
         }
     }
 }
@@ -499,6 +512,21 @@ pub fn sand_unit_fluids(
     max_column: f64,
     min_voxels: usize,
 ) -> Vec<(usize, LayerFluids)> {
+    sand_unit_fluids_salt(labels, shape, intervals, sand, seed, max_column, min_voxels, None)
+}
+
+/// [`sand_unit_fluids`] with legacy salt walls.
+#[allow(clippy::too_many_arguments)]
+pub fn sand_unit_fluids_salt(
+    labels: &[u8],
+    shape: [usize; 3],
+    intervals: &[usize],
+    sand: &[bool],
+    seed: u64,
+    max_column: f64,
+    min_voxels: usize,
+    salt: Option<&crate::salt::SaltBody>,
+) -> Vec<(usize, LayerFluids)> {
     let n = shape[0] * shape[1];
     let mut out = Vec::new();
     for (top, end) in crate::lithology::closure_units(sand) {
@@ -513,7 +541,7 @@ pub fn sand_unit_fluids(
         }
         members.sort_unstable();
         let ids: Vec<u8> = members.iter().map(|&(_, lab)| lab as u8).collect();
-        let f = unit_fluids(labels, shape, &ids, top, seed, max_column, min_voxels);
+        let f = unit_fluids_salt(labels, shape, &ids, top, seed, max_column, min_voxels, salt);
         for (k, &(_, lab)) in members.iter().enumerate() {
             let mut g = f.clone();
             if k > 0 {
@@ -551,6 +579,22 @@ pub fn unit_fluids(
     max_column: f64,
     min_voxels: usize,
 ) -> LayerFluids {
+    unit_fluids_salt(labels, shape, members, layer, seed, max_column, min_voxels, None)
+}
+
+/// [`unit_fluids`] with legacy salt walls
+/// ([`crate::salt::closure_fill_input`]); `None` is exactly [`unit_fluids`].
+#[allow(clippy::too_many_arguments)]
+pub fn unit_fluids_salt(
+    labels: &[u8],
+    shape: [usize; 3],
+    members: &[u8],
+    layer: usize,
+    seed: u64,
+    max_column: f64,
+    min_voxels: usize,
+    salt: Option<&crate::salt::SaltBody>,
+) -> LayerFluids {
     let [ni, nj, nk] = shape;
     let n = ni * nj;
     let mut unit = [false; 256];
@@ -575,9 +619,15 @@ pub fn unit_fluids(
     if ni < 3 || nj < 3 {
         return out;
     }
-    let filled = flood_fill_heap_2d(&top, [ni, nj], 1e30);
+    let (input, excluded) = crate::salt::closure_fill_input(&top, ni, nj, max_column, salt);
+    let filled = flood_fill_heap_2d(&input, [ni, nj], 1e30);
     let closed: Vec<bool> = (0..n)
-        .map(|c| top[c].is_finite() && filled[c].is_finite() && filled[c] > top[c])
+        .map(|c| {
+            top[c].is_finite()
+                && filled[c].is_finite()
+                && filled[c] > top[c]
+                && !excluded.get(c).copied().unwrap_or(false)
+        })
         .collect();
     let mut comp = vec![usize::MAX; n];
     let mut rank = 0u64;
@@ -659,6 +709,9 @@ pub struct RpmModel {
     pub mixing: MixingMethod,
     /// Zoeppritz expression used by every fuse path.
     pub zoeppritz: ZoeppritzForm,
+    /// Salt body (legacy lithology 2; salt properties override every other
+    /// voxel kind). `None` without salt.
+    pub salt: Option<crate::salt::SaltBody>,
 }
 
 /// Elastic properties used by every fuse path.
@@ -691,7 +744,10 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
         closures_per_layer: cfg.effective_closures_per_layer(),
         ..rp.clone()
     };
-    ElasticModel::Rpm(Box::new(RpmModel::build(cfg.seed, &rp, &maps, nh, labels, shape, &sand)))
+    let salt = crate::salt::salt_body(cfg);
+    ElasticModel::Rpm(Box::new(RpmModel::build_with_salt(
+        cfg.seed, &rp, &maps, nh, labels, shape, &sand, salt,
+    )))
 }
 
 impl RpmModel {
@@ -708,6 +764,22 @@ impl RpmModel {
         shape: [usize; 3],
         sand: &[bool],
     ) -> Self {
+        Self::build_with_salt(seed, rp, maps, nh, labels, shape, sand, None)
+    }
+
+    /// [`RpmModel::build`] with an optional salt body: salt voxels take the
+    /// legacy salt properties and closures are walled off around salt gaps.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_salt(
+        seed: u64,
+        rp: &RockPhysicsConfig,
+        maps: &[f64],
+        nh: usize,
+        labels: &[u8],
+        shape: [usize; 3],
+        sand: &[bool],
+        salt: Option<crate::salt::SaltBody>,
+    ) -> Self {
         let [ni, nj, nk] = shape;
         assert_eq!(maps.len(), ni * nj * nh);
         assert_eq!(labels.len(), ni * nj * nk);
@@ -717,9 +789,7 @@ impl RpmModel {
         let unit_fluid_maps = if rp.closures_per_layer || !rp.fluids {
             Vec::new()
         } else if rp.closures_unsegmented {
-            sand_unit_fluids(labels, shape, &intervals, sand, seed, max_column, rp.min_closure_voxels)
-        } else {
-            crate::closure_segments::segmented_sand_unit_fluids(
+            sand_unit_fluids_salt(
                 labels,
                 shape,
                 &intervals,
@@ -727,6 +797,18 @@ impl RpmModel {
                 seed,
                 max_column,
                 rp.min_closure_voxels,
+                salt.as_ref(),
+            )
+        } else {
+            crate::closure_segments::segmented_sand_unit_fluids_salt(
+                labels,
+                shape,
+                &intervals,
+                sand,
+                seed,
+                max_column,
+                rp.min_closure_voxels,
+                salt.as_ref(),
             )
             .0
         };
@@ -746,7 +828,16 @@ impl RpmModel {
                     },
                     fluids: (sand && rp.fluids && lab < 255).then(|| {
                         if rp.closures_per_layer {
-                            layer_fluids(labels, shape, lab as u8, h, seed, max_column, rp.min_closure_voxels)
+                            unit_fluids_salt(
+                                labels,
+                                shape,
+                                &[lab as u8],
+                                h,
+                                seed,
+                                max_column,
+                                rp.min_closure_voxels,
+                                salt.as_ref(),
+                            )
                         } else {
                             unit_fluid_maps
                                 .iter()
@@ -769,6 +860,7 @@ impl RpmModel {
             step,
             mixing: rp.mixing,
             zoeppritz: rp.zoeppritz_form(),
+            salt,
         }
     }
 
@@ -798,8 +890,11 @@ impl RpmModel {
         scratch.depth.resize(nk, 0.0);
         scratch.kinds.clear();
         let seabed = self.depth_trace(i, j, col, &mut scratch.depth);
+        let salt = self.salt.as_ref().filter(|s| s.runs[c].1 > s.runs[c].0);
         for (k, &lab) in col.iter().enumerate() {
-            let kind = if k < seabed {
+            let kind = if salt.is_some_and(|s| s.contains(c, k)) {
+                VoxelKind::Salt
+            } else if k < seabed {
                 VoxelKind::Water
             } else if let Some(l) = self.layers.get(lab as usize).filter(|_| lab != 255) {
                 let (ng, fluid) = if l.sand {
@@ -841,6 +936,14 @@ pub struct ColumnScratch {
 }
 
 impl ElasticModel {
+    /// Salt body of the model (`None` without salt).
+    pub fn salt(&self) -> Option<&crate::salt::SaltBody> {
+        match self {
+            ElasticModel::Rpm(m) => m.salt.as_ref(),
+            ElasticModel::LegacyToy(_) => None,
+        }
+    }
+
     /// `true` for the master toy model.
     pub fn is_legacy_toy(&self) -> bool {
         matches!(self, ElasticModel::LegacyToy(_))
@@ -867,6 +970,7 @@ impl ElasticModel {
                         })
                         .sum::<usize>()
                     + m.shifts.len() * std::mem::size_of::<LayerShifts>()
+                    + m.salt.as_ref().map_or(0, |s| s.runs.len() * 8)
             }
         }
     }

@@ -218,7 +218,9 @@ deeper than `wb_max`.
   `hockey_stick_deferred`, and the default throw range 5–29 avoids it.
 - Fault intersections volume and dilation; `fault_intersections` output.
 - Throw and azimuth volumes; `max_fault_throw` per horizon.
-- `improve_depth_maps` onlap and fan fixes; channel and salt interaction.
+- `improve_depth_maps` onlap and fan fixes; channel interaction. Salt is
+  ported (see [salt-bodies.md](salt-bodies.md)), but its drag is applied to
+  the unfaulted horizons and the salt body is not faulted.
 - Clustered modes: `self_branching`, `stairs`, `relay_ramps`, `horst_graben`.
 - Writing `fault_labels` on the `pipeline_overlap` path (its labels are
   already faulted). Forwarding `--faults` / `--shape` to CLI multi-worker,

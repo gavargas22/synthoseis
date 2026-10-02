@@ -1,7 +1,9 @@
 //! read_volume / read_live_mask
 use super::MdioStore;
 use crate::zarr::*;
-use crate::{err, Result, FAULT_LABELS_VARIABLE, LABELS_VARIABLE, PRIMARY_VARIABLE};
+use crate::{
+    err, Result, FAULT_LABELS_VARIABLE, LABELS_VARIABLE, PRIMARY_VARIABLE, SALT_LABELS_VARIABLE,
+};
 use std::fs;
 
 impl MdioStore {
@@ -81,6 +83,46 @@ impl MdioStore {
     /// Read the binary fault-label volume from `data/fault_labels`.
     pub fn read_fault_labels_u8(&self) -> Result<Vec<u8>> {
         self.read_u8_variable(FAULT_LABELS_VARIABLE, 0)
+    }
+
+    /// Read the binary salt-body volume from `data/salt_labels`.
+    pub fn read_salt_labels_u8(&self) -> Result<Vec<u8>> {
+        self.read_u8_variable(SALT_LABELS_VARIABLE, 0)
+    }
+
+    /// Read one `data/salt_labels` chunk (same indexing as
+    /// [`Self::write_salt_labels_chunk`], samples fastest); a chunk that was
+    /// never written reads as the fill value 0. Memory: one chunk.
+    pub fn read_salt_labels_chunk(&self, chunk_indices: [usize; 3]) -> Result<Vec<u8>> {
+        self.read_u8_variable_chunk(SALT_LABELS_VARIABLE, 0, chunk_indices)
+    }
+
+    fn read_u8_variable_chunk(&self, name: &str, fill: u8, idx: [usize; 3]) -> Result<Vec<u8>> {
+        let shape = self.shape();
+        let chunks = self.config.chunks_or_shape();
+        let array_dir = self.root.join("data").join(name);
+        if !array_dir.join(".zarray").is_file() {
+            return Err(err(format!("{name} array not present in store")));
+        }
+        let mut n = 1;
+        for d in 0..3 {
+            if idx[d] >= ceildiv(shape[d], chunks[d]) {
+                return Err(err(format!("{name} chunk {idx:?} out of range")));
+            }
+            n *= (idx[d] * chunks[d] + chunks[d]).min(shape[d]) - idx[d] * chunks[d];
+        }
+        let path = array_dir.join(chunk_key(&idx));
+        if !path.is_file() {
+            return Ok(vec![fill; n]);
+        }
+        let bytes = fs::read(&path)?;
+        if bytes.len() != n {
+            return Err(err(format!(
+                "{name} chunk {idx:?} size {}: expected {n}",
+                bytes.len()
+            )));
+        }
+        Ok(bytes)
     }
 
     fn read_u8_variable(&self, name: &str, fill: u8) -> Result<Vec<u8>> {

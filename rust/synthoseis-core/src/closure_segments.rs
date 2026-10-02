@@ -77,6 +77,20 @@ pub fn unit_closure_runs(
     layer: usize,
     max_column: f64,
 ) -> Vec<ClosureRun> {
+    unit_closure_runs_salt(labels, shape, members, layer, max_column, None)
+}
+
+/// [`unit_closure_runs`] with legacy salt walls
+/// ([`crate::salt::closure_fill_input`]); `None` is exactly
+/// [`unit_closure_runs`].
+pub fn unit_closure_runs_salt(
+    labels: &[u8],
+    shape: [usize; 3],
+    members: &[u8],
+    layer: usize,
+    max_column: f64,
+    salt: Option<&crate::salt::SaltBody>,
+) -> Vec<ClosureRun> {
     let [ni, nj, nk] = shape;
     let n = ni * nj;
     let mut unit = [false; 256];
@@ -97,9 +111,15 @@ pub fn unit_closure_runs(
     if ni < 3 || nj < 3 {
         return runs;
     }
-    let filled = flood_fill_heap_2d(&top, [ni, nj], 1e30);
+    let (input, excluded) = crate::salt::closure_fill_input(&top, ni, nj, max_column, salt);
+    let filled = flood_fill_heap_2d(&input, [ni, nj], 1e30);
     let closed: Vec<bool> = (0..n)
-        .map(|c| top[c].is_finite() && filled[c].is_finite() && filled[c] > top[c])
+        .map(|c| {
+            top[c].is_finite()
+                && filled[c].is_finite()
+                && filled[c] > top[c]
+                && !excluded.get(c).copied().unwrap_or(false)
+        })
         .collect();
     let mut seen = vec![false; n];
     let mut rank = 0u64;
@@ -265,6 +285,21 @@ pub fn segmented_sand_unit_fluids(
     max_column: f64,
     min_voxels: usize,
 ) -> (Vec<(usize, LayerFluids)>, Vec<Compartment>) {
+    segmented_sand_unit_fluids_salt(labels, shape, intervals, sand, seed, max_column, min_voxels, None)
+}
+
+/// [`segmented_sand_unit_fluids`] with legacy salt walls.
+#[allow(clippy::too_many_arguments)]
+pub fn segmented_sand_unit_fluids_salt(
+    labels: &[u8],
+    shape: [usize; 3],
+    intervals: &[usize],
+    sand: &[bool],
+    seed: u64,
+    max_column: f64,
+    min_voxels: usize,
+    salt: Option<&crate::salt::SaltBody>,
+) -> (Vec<(usize, LayerFluids)>, Vec<Compartment>) {
     let [ni, nj, _] = shape;
     let n = ni * nj;
     // Units with member labels, shallowest first.
@@ -284,7 +319,7 @@ pub fn segmented_sand_unit_fluids(
         members.sort_unstable();
         let ids: Vec<u8> = members.iter().map(|&(_, lab)| lab as u8).collect();
         let u = units.len();
-        for r in unit_closure_runs(labels, shape, &ids, top, max_column) {
+        for r in unit_closure_runs_salt(labels, shape, &ids, top, max_column, salt) {
             runs.push(r);
             run_unit.push(u);
         }

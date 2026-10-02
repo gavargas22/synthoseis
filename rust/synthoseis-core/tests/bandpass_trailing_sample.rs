@@ -15,7 +15,7 @@
 //! End-to-end parity against the real legacy generator is in
 //! `angle_stack_legacy_e2e.rs`.
 
-use synthoseis_core::pipeline::{generate_tiny_cube, E2eConfig, FaultConfig, FilterConfig, NoiseConfig};
+use synthoseis_core::pipeline::{generate_tiny_cube, E2eConfig, FaultConfig, FilterConfig, NoiseConfig, RockPhysicsConfig};
 use synthoseis_core::{generate_chunked, generate_reflectivity, run_e2e_chunked};
 
 fn angle_hash(v: &[f32]) -> u64 {
@@ -48,8 +48,18 @@ fn planar(filters: FilterConfig) -> E2eConfig {
     }
 }
 
-/// Default (folded) geometry with more faults.
+/// Default (folded) geometry with more faults, without the salt body
+/// (`--no-salt`), so these pins stay the pre-salt #36 values and show the
+/// bandpass fix is isolated from the salt change.
 fn rich(filters: FilterConfig) -> E2eConfig {
+    E2eConfig {
+        rock_physics: RockPhysicsConfig { salt: false, ..Default::default() },
+        ..rich_salt(filters)
+    }
+}
+
+/// [`rich`] with the default salt body (1472 salt voxels on this model).
+fn rich_salt(filters: FilterConfig) -> E2eConfig {
     E2eConfig {
         seed: 7,
         inline_count: 32,
@@ -156,6 +166,26 @@ fn ricker_paths_are_unchanged_under_both_flag_values() {
             assert!(!c.filters.bandpass_excludes_trailing_sample());
             check(&c, want, &format!("{name} (flag {on})"));
         }
+    }
+}
+
+/// The salt-default variant of the `rich` pins: the salt body changes the
+/// model (so every hash differs from the `--no-salt` pins above), and the
+/// bandpass modes behave the same way on top of it.
+#[test]
+fn salt_default_rich_is_pinned() {
+    assert!(rich_salt(FilterConfig::default()).effective_salt());
+    assert!(!rich(FilterConfig::default()).effective_salt());
+    let fixed = FilterConfig::legacy(4.0, 30.0, 3);
+    let cases: Vec<(&str, E2eConfig, u64)> = vec![
+        ("filters off", rich_salt(FilterConfig::default()), 0x0427bd22f58bb87e),
+        ("legacy 4-30 lateral 3 (fixed)", rich_salt(fixed.clone()), 0x5cac37c5c26d06e1),
+        ("legacy 4-30 lateral 3 --bandpass-trailing-sample", rich_salt(with_trailing(fixed, true)), 0xf47229efbffaa6c7),
+    ];
+    for (name, c, want) in cases {
+        check(&c, want, &format!("salt-default rich {name}"));
+        let no_salt = E2eConfig { rock_physics: RockPhysicsConfig { salt: false, ..c.rock_physics.clone() }, ..c.clone() };
+        assert_ne!(angle_hash(&generate_chunked(&no_salt).0.angle_stack), want, "{name}: salt changes the output");
     }
 }
 

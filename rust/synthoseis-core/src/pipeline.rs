@@ -319,6 +319,12 @@ impl E2eConfig {
         self.rock_physics.closures_per_layer || self.effective_geometry() == ToyGeometry::Planar
     }
 
+    /// Salt body present ([`RockPhysicsConfig::salt`]): layered geometry
+    /// only, so planar and `--legacy-toy-depth` keep their goldens.
+    pub fn effective_salt(&self) -> bool {
+        self.rock_physics.salt && self.effective_geometry() == ToyGeometry::Layered
+    }
+
     pub fn tiny(seed: u64) -> Self {
         Self {
             seed,
@@ -444,6 +450,9 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
         store
             .write_fault_labels_u8(&mask)
             .map_err(|e| e.to_string())?;
+    }
+    if let Some(mask) = crate::salt::generate_salt_labels(cfg) {
+        store.write_salt_labels_u8(&mask).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
