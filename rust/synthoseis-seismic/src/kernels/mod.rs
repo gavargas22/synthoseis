@@ -2,6 +2,7 @@
 
 mod filters;
 mod noise;
+mod twt;
 mod wavelets;
 mod zoeppritz;
 
@@ -19,4 +20,9 @@ pub use wavelets::{apply_wavelet_traces, convolve_same_1d, hanflat, ricker};
 pub use zoeppritz::{
     compute_rfc_volumes, compute_rfc_volumes_form, zoeppritz_pp, zoeppritz_pp_complex,
     zoeppritz_pp_exact, zoeppritz_pp_form, ZoeppritzForm,
+};
+pub use twt::{
+    default_twt_samples, depth_staircase_ok, insert_spikes, linear_split, output_nyquist_ok,
+    point_sample_labels, reflectivity_time_column, twt_column, KaiserSinc, TwtKernel, TwtScratch,
+    SINC_HALF_WIDTH, SINC_KAISER_BETA, SINC_PHASES, TWT_REFERENCE_VELOCITY_M_S,
 };

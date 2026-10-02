@@ -142,7 +142,9 @@ pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
     MultiWorkerRunner, SpatialStrip,
 };
-pub use pipeline::{FaultConfig, FilterConfig, NoiseConfig, NOISE_NORM_ANGLE_DEG};
+pub use pipeline::{
+    FaultConfig, FilterConfig, NoiseConfig, TimeConfig, NOISE_NORM_ANGLE_DEG, RICKER_PEAK_HZ,
+};
 pub use pipeline_geometry_many::{
     angle_store_path, angles_from_seismic_many, parse_angles_csv, run_e2e_geometry_once_as_report,
     run_e2e_geometry_once_seismic_many, AngleStackDeliverable, GeometryOnceReport,
