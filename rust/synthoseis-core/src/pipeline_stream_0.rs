@@ -133,6 +133,31 @@ pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
     }
 }
 
+/// Continuous (unrounded) counterpart of [`toy_horizon_maps`] for partial
+/// voxels (spec §3.1); `None` for the planar geometry, which is whole-voxel
+/// by construction. Layered: [`crate::toy_geometry::layered_horizon_maps_continuous`];
+/// with salt, the drag of the *rounded* maps without the final re-round (the
+/// drag is not re-derived from continuous maps, which would move labels).
+/// `round(continuous) == toy_horizon_maps(cfg)` exactly. Not wired into any
+/// pipeline path yet.
+pub fn toy_horizon_maps_continuous(cfg: &E2eConfig) -> Option<(Vec<f64>, usize)> {
+    match cfg.effective_geometry() {
+        crate::toy_geometry::ToyGeometry::Planar => None,
+        crate::toy_geometry::ToyGeometry::Layered => {
+            let (maps, nh) = crate::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape());
+            match crate::salt::salt_body_from_maps(cfg, &maps, nh) {
+                None => Some(crate::toy_geometry::layered_horizon_maps_continuous(cfg.seed, cfg.shape())),
+                Some(body) => {
+                    let [ni, nj, _] = cfg.shape();
+                    let mut dragged = crate::salt::drag_horizon_maps(&maps, [ni, nj, nh], &body);
+                    crate::toy_geometry::min_cascade(&mut dragged, nh);
+                    Some((dragged, nh))
+                }
+            }
+        }
+    }
+}
+
 /// Seed stream for fault parameter draws (independent of geology draws).
 const FAULT_SEED_SALT: u64 = 0xFA17_0000_0000_0001;
 

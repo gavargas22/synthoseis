@@ -17,7 +17,8 @@ mod kernels;
 mod tests_kernels;
 
 pub use kernels::{
-    arithmetic_mean, example_f32, forward_fill_zeros, harmonic_mean, legacy_column_properties,
+    arithmetic_mean, backus_mix, example_f32, forward_fill_zeros, harmonic_mean, legacy_column_properties,
+    slowness_sum, voigt_mix,
     mix_f32, sand_f32, shale_f32, shifted_index, voxel_properties, Elastic32, Fluid, LayerShifts,
     MixingMethod, VoxelKind, WATER,
     polyval, tagilsk_brine_sand_rho, tagilsk_brine_sand_vp, tagilsk_brine_sand_vs,
