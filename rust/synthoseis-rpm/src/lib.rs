@@ -20,7 +20,7 @@ pub use kernels::{
     arithmetic_mean, backus_mix, example_f32, forward_fill_zeros, harmonic_mean, legacy_column_properties,
     slowness_sum, voigt_mix,
     mix_f32, sand_f32, shale_f32, shifted_index, voxel_properties, Elastic32, Fluid, LayerShifts,
-    MixingMethod, VoxelKind, WATER,
+    MixingMethod, VoxelKind, SALT, WATER,
     polyval, tagilsk_brine_sand_rho, tagilsk_brine_sand_vp, tagilsk_brine_sand_vs,
     tagilsk_gas_sand_vp, tagilsk_gas_sand_vs, tagilsk_shale_rho, tagilsk_shale_vp,
     tagilsk_shale_vs, RpmExampleTrends, TagilskTrends,

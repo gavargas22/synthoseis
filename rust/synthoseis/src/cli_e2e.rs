@@ -285,6 +285,10 @@ pub fn run_e2e(
 /// keeping master's output): `dt`, `nt`, kernel, and the short / long
 /// column percentages with the worst shortfall / excess (spec §2).
 pub fn print_time_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
+    // Partial voxels (spec §3.6): one summary line, only when enabled.
+    if let Some(s) = synthoseis_core::partial_model::partial_voxel_summary(cfg) {
+        println!("{s}");
+    }
     let Some(axis) = cfg.time_axis() else {
         return;
     };

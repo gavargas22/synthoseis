@@ -1,4 +1,5 @@
-//! Partial-voxel kernels (PR A, nothing wired into the pipeline):
+//! Partial-voxel kernels (PR A; the pipeline wiring of PR B1 is tested in
+//! `partial_voxels_pipeline.rs`):
 //! validation of the fraction kernel, the Backus mixer and the sub-cell
 //! splitter against the partial-voxels spec §5.1, §5.2, §5.3, §5.5 (centre
 //! rule, label guard) §5.6 (chunk-edge invariance of the fractions) and
@@ -6,8 +7,9 @@
 //!
 //! Panels use the production end-members at 1 km (shale 2580/1139/2.277,
 //! gas sand 2472.38/1490.51/1.841, brine sand from the production trend,
-//! salt 4500/2600/2.16, water 1500/1000/1.0), a 40 Hz Ricker, dt = 1 ms and
-//! dz = 4 m. Three models of the same geometry are compared with the
+//! salt 4500/2250/2.17 and water 1500/1000/1.028 (the production constants
+//! `synthoseis_rpm::{SALT, WATER}`); the seabed is also run over mudline
+//! shale 1580/279/1.957), a 40 Hz Ricker, dt = 1 ms and dz = 4 m. Three models of the same geometry are compared with the
 //! analytic convolutional trace:
 //! * whole: today's whole voxels (centre rule);
 //! * S: sub-cell interfaces at exact ray times (`subcell_reflectivity`);
@@ -21,7 +23,9 @@ use synthoseis_core::pipeline::E2eConfig;
 use synthoseis_core::rock_physics::label_intervals;
 use synthoseis_core::salt::salt_body;
 use synthoseis_core::ToyGeometry;
-use synthoseis_rpm::{backus_mix, sand_f32, shale_f32, slowness_sum, Elastic32, Fluid};
+use synthoseis_rpm::{
+    backus_mix, sand_f32, shale_f32, slowness_sum, Elastic32, Fluid, SALT, WATER,
+};
 use synthoseis_seismic::{
     reflectivity_time_column, reflectivity_time_column_with_twt, subcell_column,
     subcell_reflectivity, SubLayer, SubcellColumn, TwtKernel, TwtScratch, ZoeppritzForm,
@@ -44,16 +48,10 @@ const GAS: Elastic32 = Elastic32 {
     vp: 2472.38,
     vs: 1490.51,
 };
-const SALT: Elastic32 = Elastic32 {
-    rho: 2.16,
-    vp: 4500.0,
-    vs: 2600.0,
-};
-const WATER: Elastic32 = Elastic32 {
-    rho: 1.0,
-    vp: 1500.0,
-    vs: 1000.0,
-};
+/// Mudline shale (TVDML 0), the real contrast under the seabed.
+fn mudline_shale() -> Elastic32 {
+    shale_f32(0.0, 0.0, 0.0)
+}
 
 fn ricker(t_ms: f64) -> f64 {
     let a = (std::f64::consts::PI * F_PEAK * t_ms / 1000.0).powi(2);
@@ -270,6 +268,7 @@ fn dipping_panel(pair: &str, mode: Mode) -> PanelStats {
         "shale/brine" => (shale(), brine()),
         "shale/salt" => (shale(), SALT),
         "water/shale" => (WATER, shale()),
+        "water/mudline" => (WATER, mudline_shale()),
         _ => unreachable!(),
     };
     let r = rpp(upper, lower);
@@ -281,7 +280,7 @@ fn dipping_panel(pair: &str, mode: Mode) -> PanelStats {
         // The boundary goes through the real kernel as the boundary kind of
         // the pair: horizon (sediments), seabed (water) or salt top.
         let (z, salt): (Vec<f64>, Option<(f64, f64)>) = match pair {
-            "water/shale" => (vec![zb, 1e9], None),
+            "water/shale" | "water/mudline" => (vec![zb, 1e9], None),
             "shale/salt" => (vec![0.0, 1e9], Some((zb - 0.5, 1e6))),
             _ => (vec![0.0, zb, 1e9], None),
         };
@@ -297,7 +296,7 @@ fn dipping_panel(pair: &str, mode: Mode) -> PanelStats {
         let props = |k: PartKind| match k {
             PartKind::Water => WATER,
             PartKind::Salt => SALT,
-            PartKind::Interval { h: 0, .. } if pair != "water/shale" => upper,
+            PartKind::Interval { h: 0, .. } if !pair.starts_with("water/") => upper,
             _ => lower,
         };
         let trace = model_trace(&parts, &props, mode);
@@ -339,7 +338,7 @@ fn dipping_panel(pair: &str, mode: Mode) -> PanelStats {
 /// 0.45 ms gate, which is why the gate applies to the slowness T.
 #[test]
 fn dipping_interface_staircase() {
-    for pair in ["shale/gas", "shale/brine", "shale/salt", "water/shale"] {
+    for pair in ["shale/gas", "shale/brine", "shale/salt", "water/shale", "water/mudline"] {
         let w = dipping_panel(pair, Mode::Whole);
         let s = dipping_panel(pair, Mode::Sub);
         let c = dipping_panel(pair, Mode::Cell);
@@ -356,7 +355,7 @@ fn dipping_interface_staircase() {
         );
         // Whole voxels: the error is uniform over ±½ cell.
         let half = 0.5 * 2000.0 * DZ
-            / if pair == "water/shale" {
+            / if pair.starts_with("water/") {
                 1500.0
             } else {
                 2580.0
@@ -373,7 +372,9 @@ fn dipping_interface_staircase() {
         assert!(s.energy <= 1e-4, "{pair} S E {}", s.energy);
         assert!(w.rms_ms / s.rms_ms >= 10.0, "{pair} S ratio");
         // C (Backus).
-        if pair == "water/shale" {
+        if pair.starts_with("water/") {
+            // Seabed gate (spec §5.1, slowness timing). Strata measured
+            // 0.260/0.381 ms over mudline shale, 0.060/0.114 over 1 km shale.
             assert!(
                 c.rms_ms <= 0.45 && c.max_resid <= 0.35,
                 "{pair} C rms {} resid {}",
@@ -392,7 +393,9 @@ fn dipping_interface_staircase() {
     }
 }
 
-/// Spec §5.3: thin bed (wedge), h = 0.08 … 12 m, top at a fractional cell.
+/// Spec §5.3: thin bed (wedge), h = 0.08 … 12 m, swept over several
+/// fractional top positions (Strata's 6 random tops: gas C ≤ 17.6 %, salt
+/// C ≤ 8.0 %; gate 20 %).
 #[test]
 fn thin_bed_wedge() {
     let sh = shale();
@@ -402,9 +405,9 @@ fn thin_bed_wedge() {
         let hs: Vec<f64> = (0..60)
             .map(|n| 0.08 * (12.0f64 / 0.08).powf(n as f64 / 59.0))
             .collect();
+        const TOPS: [f64; 7] = [30.0, 30.13, 30.37, 30.5, 30.62, 30.81, 30.97];
         let mut stats = [(0.0f64, 0.0f64); 3];
-        for &h in &hs {
-            let zt = 30.37;
+        for (&h, zt) in hs.iter().flat_map(|h| TOPS.iter().map(move |&t| (h, t))) {
             let zb = zt + h / DZ;
             let t1 = 2000.0 * zt * DZ / sh.vp as f64;
             let t2 = t1 + 2000.0 * h / thin.vp as f64;
@@ -435,7 +438,7 @@ fn thin_bed_wedge() {
                     .fold(0.0, f64::max)
                     / r_top.abs();
                 stats[m].0 = stats[m].0.max(e);
-                stats[m].1 += e / hs.len() as f64;
+                stats[m].1 += e / (hs.len() * TOPS.len()) as f64;
             }
         }
         println!(

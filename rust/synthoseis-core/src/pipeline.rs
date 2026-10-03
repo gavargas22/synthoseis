@@ -483,6 +483,23 @@ impl E2eConfig {
 
     /// Fault labels are masked by the salt body (`fault AND NOT salt`):
     /// salt present, faults enabled and no `--fault-labels-through-salt`.
+    /// Partial-voxel reflectivity actually used (`None` = whole voxels):
+    /// [`crate::partial_voxels::PartialVoxelConfig::enabled`] on the layered
+    /// geometry only (planar and `legacy_toy_depth` have no continuous
+    /// maps); the default reflectivity is `Subcell` in time mode and `Cell`
+    /// on the legacy axis, and `Subcell` never runs on the legacy axis.
+    pub fn effective_partial_voxels(&self) -> Option<crate::partial_voxels::PvReflectivity> {
+        use crate::partial_voxels::PvReflectivity;
+        let pv = &self.rock_physics.partial_voxels;
+        if !pv.enabled || self.effective_geometry() != ToyGeometry::Layered {
+            return None;
+        }
+        Some(match (self.time_enabled(), pv.reflectivity) {
+            (true, r) => r.unwrap_or(PvReflectivity::Subcell),
+            (false, _) => PvReflectivity::Cell,
+        })
+    }
+
     pub fn effective_fault_salt_mask(&self) -> bool {
         self.effective_salt() && self.faults.enabled() && !self.rock_physics.fault_labels_through_salt
     }
@@ -539,6 +556,13 @@ impl E2eConfig {
     /// Validate the time settings (time mode only): see
     /// [`TimeConfig::validate`].
     pub fn validate_time(&self) -> Result<(), String> {
+        let pv = &self.rock_physics.partial_voxels;
+        if pv.enabled
+            && !self.time_enabled()
+            && pv.reflectivity == Some(crate::partial_voxels::PvReflectivity::Subcell)
+        {
+            return Err("--partial-voxel-reflectivity subcell requires the time axis (not --legacy-depth-as-time / --legacy-toy-depth)".into());
+        }
         if self.time_enabled() {
             self.time
                 .validate(self.samples, self.rock_physics.depth_step_m, &self.filters)?;
@@ -707,6 +731,7 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
     };
     let store = MdioStore::create_empty(path, &create).map_err(|e| e.to_string())?;
     crate::time_mode::write_time_attrs(&store, cfg)?;
+    crate::partial_model::write_partial_voxel_attrs(&store, cfg)?;
     DeliverableWriter::write_volume(&store, &volumes.angle_stack).map_err(|e| e.to_string())?;
     DeliverableWriter::write_labels(&store, &volumes.labels).map_err(|e| e.to_string())?;
     if let Some(mask) = crate::time_mode::generate_fault_labels_output(cfg) {
