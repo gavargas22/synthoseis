@@ -42,6 +42,7 @@ pub use kernels::{
     point_sample_labels, reflectivity_time_column, reflectivity_time_column_with_twt, twt_column, KaiserSinc, TwtKernel, TwtScratch,
     SINC_HALF_WIDTH, SINC_KAISER_BETA, SINC_PHASES, TWT_REFERENCE_VELOCITY_M_S,
 };
+pub use kernels::{subcell_column, subcell_reflectivity, SubLayer, SubcellColumn};
 pub use kernels::{
     compute_rfc_volumes_form, zoeppritz_pp_complex, zoeppritz_pp_exact, zoeppritz_pp_form,
     ZoeppritzForm,

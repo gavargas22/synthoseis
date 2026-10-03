@@ -2,6 +2,7 @@
 
 mod filters;
 mod noise;
+mod subcell;
 mod twt;
 mod wavelets;
 mod zoeppritz;
@@ -21,6 +22,7 @@ pub use zoeppritz::{
     compute_rfc_volumes, compute_rfc_volumes_form, zoeppritz_pp, zoeppritz_pp_complex,
     zoeppritz_pp_exact, zoeppritz_pp_form, ZoeppritzForm,
 };
+pub use subcell::{subcell_column, subcell_reflectivity, SubLayer, SubcellColumn};
 pub use twt::{
     default_twt_samples, depth_staircase_ok, insert_spikes, linear_split, output_nyquist_ok,
     point_sample_labels, reflectivity_time_column, reflectivity_time_column_with_twt, twt_column, KaiserSinc, TwtKernel, TwtScratch,
