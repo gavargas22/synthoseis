@@ -394,11 +394,23 @@ fn print_fault_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
     let Some(model) = synthoseis_core::fault_model(cfg) else {
         return;
     };
-    let voxels: usize = synthoseis_core::generate_fault_labels(cfg)
-        .map(|m| m.iter().map(|&v| v as usize).sum())
-        .unwrap_or(0);
+    let count = |c: &synthoseis_core::pipeline::E2eConfig| -> usize {
+        synthoseis_core::generate_fault_labels(c)
+            .map(|m| m.iter().map(|&v| v as usize).sum())
+            .unwrap_or(0)
+    };
+    let voxels = count(cfg);
+    let salt = if cfg.effective_fault_salt_mask() {
+        let mut through = cfg.clone();
+        through.rock_physics.fault_labels_through_salt = true;
+        format!(", masked_in_salt={}", count(&through) - voxels)
+    } else if cfg.effective_salt() {
+        " (--fault-labels-through-salt)".to_string()
+    } else {
+        String::new()
+    };
     println!(
-        "faults: requested={}, inserted={}, skipped={}, fault_voxels={} (data/fault_labels)",
+        "faults: requested={}, inserted={}, skipped={}, fault_voxels={}{salt} (data/fault_labels)",
         cfg.faults.count,
         model.faults().len(),
         model.skipped().len(),

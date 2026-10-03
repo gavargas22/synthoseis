@@ -474,3 +474,76 @@ fn salt_labels_chunked_verify_catches_corruption() {
     let e = synthoseis_core::salt::verify_salt_labels(&store, &cfg).unwrap_err();
     assert!(e.contains(&format!("{idx:?}")), "{e}");
 }
+
+/// Fault labels are `fault AND NOT salt` by default (faults die out against
+/// salt; a fault label inside the salt has no seismic expression), and
+/// `fault_labels_through_salt` reproduces master 2b3850ba. Counts pinned on
+/// the demo cube (64x64x256, seed 7, 4 faults) and the seed-11 invariance
+/// case of `tests/rock_physics.rs`.
+#[test]
+fn fault_labels_exclude_salt() {
+    let demo_cube = E2eConfig {
+        seed: 7,
+        inline_count: 64,
+        crossline_count: 64,
+        samples: 256,
+        faults: FaultConfig::with_count(4),
+        geometry: ToyGeometry::Layered,
+        ..E2eConfig::default()
+    };
+    let seed11 = E2eConfig {
+        seed: 11,
+        inline_count: 24,
+        crossline_count: 24,
+        samples: 128,
+        faults: FaultConfig::with_count(4),
+        rock_physics: RockPhysicsConfig {
+            sand_layer_fraction: Some(0.4),
+            ..RockPhysicsConfig::default()
+        },
+        geometry: ToyGeometry::Layered,
+        ..E2eConfig::default()
+    };
+    // (fault voxels through salt, masked fault voxels, salt voxels)
+    for (cfg, through_n, masked_n, salt_n) in
+        [(demo_cube, 33_812, 32_193, 18_535), (seed11, 4_074, 3_919, 2_851)]
+    {
+        assert!(cfg.effective_fault_salt_mask());
+        let salt = synthoseis_core::salt::generate_salt_labels(&cfg).unwrap();
+        let masked = synthoseis_core::generate_fault_labels(&cfg).unwrap();
+        let mut through_cfg = cfg.clone();
+        through_cfg.rock_physics.fault_labels_through_salt = true;
+        assert!(!through_cfg.effective_fault_salt_mask());
+        let through = synthoseis_core::generate_fault_labels(&through_cfg).unwrap();
+        let count = |v: &[u8]| v.iter().map(|&x| x as usize).sum::<usize>();
+        let both = |f: &[u8]| f.iter().zip(&salt).filter(|(a, b)| **a == 1 && **b == 1).count();
+        assert_eq!(count(&salt), salt_n);
+        assert_eq!(count(&through), through_n);
+        assert_eq!(count(&masked), masked_n);
+        assert_eq!(both(&masked), 0, "no voxel is both fault and salt");
+        assert_eq!(both(&through), through_n - masked_n);
+        assert!(through_n > masked_n);
+        for v in 0..salt.len() {
+            assert_eq!(masked[v], through[v] & (1 - salt[v]), "voxel {v}");
+        }
+        // Tile level: mask and segment_id are cleared together, so
+        // `segment_id != 0 <=> mask == 1` still holds.
+        let model = synthoseis_core::fault_model(&cfg).unwrap();
+        let body = salt_body(&cfg).unwrap();
+        let [ni, nj, nk] = cfg.shape();
+        let mut t = model.compute_tile(0, ni, 0, nj);
+        let before = t.mask.clone();
+        synthoseis_core::salt::mask_fault_tile_salt(&mut t, &body);
+        for (l, (&m, &s)) in t.mask.iter().zip(&t.segment_id).enumerate() {
+            assert_eq!(m == 1, s != 0, "segment_id invariant at {l}");
+        }
+        for i in 0..ni {
+            for j in 0..nj {
+                let l = t.col_offset(i, j);
+                let g = (i * nj + j) * nk;
+                assert_eq!(t.mask[l..l + nk], masked[g..g + nk]);
+                assert_eq!(before[l..l + nk], through[g..g + nk]);
+            }
+        }
+    }
+}

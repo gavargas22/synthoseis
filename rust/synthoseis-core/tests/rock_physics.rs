@@ -524,6 +524,24 @@ fn salt_case(salt: bool) -> E2eConfig {
     }
 }
 
+/// Salt crossing chunk boundaries and cut by faults (seed 11, 24x24x128, 4
+/// faults): salt at inlines 6-16, crosslines 4-14, samples 58-127, with 155
+/// fault voxels inside it (inlines 7-13, crosslines 8-14, samples 82-98),
+/// across the inline chunk edges at 8 and 10, the crossline edges at 10 and
+/// 14 and the sample edge at 96 of 16-sample chunks. `through` keeps the
+/// fault labels inside the salt (`--fault-labels-through-salt`).
+fn fault_salt_case(through: bool) -> E2eConfig {
+    E2eConfig {
+        geometry: synthoseis_core::ToyGeometry::Layered,
+        rock_physics: RockPhysicsConfig {
+            sand_layer_fraction: Some(0.4),
+            fault_labels_through_salt: through,
+            ..RockPhysicsConfig::default()
+        },
+        ..cfg(11, [24, 24, 128], [8, 5, 128], 4)
+    }
+}
+
 /// Salt wall effect in `cfg`: (columns outside salt gaps whose closure
 /// contact differs from an unwalled fill of the same labels, walled closure
 /// columns), summed over the sand units.
@@ -638,6 +656,10 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
         segmented_case(false),
         // Salt body (tests/salt.rs).
         salt_case(true),
+        // Fault labels masked by salt crossing chunk boundaries, then with
+        // `--fault-labels-through-salt`.
+        fault_salt_case(false),
+        fault_salt_case(true),
     ]
     .into_iter()
         .enumerate()
@@ -751,31 +773,59 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
                 "default shifts active"
             );
         }
+        if n == 11 || n == 12 {
+            // The mask is active (n = 11) or switched off (n = 12), and the
+            // angle stack does not depend on it (label-only).
+            let salt = synthoseis_core::salt::generate_salt_labels(&base).unwrap();
+            let f = synthoseis_core::generate_fault_labels(&base).unwrap();
+            let both = f.iter().zip(&salt).filter(|(a, b)| **a == 1 && **b == 1).count();
+            assert_eq!(both, if n == 11 { 0 } else { 155 }, "case {n} fault and salt");
+            assert_eq!(base.effective_fault_salt_mask(), n == 11);
+            assert_eq!(
+                bits(&generate_chunked(&fault_salt_case(false)).0.angle_stack),
+                bits(&generate_chunked(&fault_salt_case(true)).0.angle_stack),
+                "fault-label mask is label-only"
+            );
+        }
         let (reference, _) = generate_chunked(&base);
         let want = bits(&reference.angle_stack);
+        // Fault labels: whole-cube reference, compared with every tiling and
+        // every MDIO path that writes `data/fault_labels`.
+        let want_faults = synthoseis_core::generate_fault_labels(&base);
+        let read_faults = |p: &std::path::Path| MdioStore::open(p).unwrap().read_fault_labels_u8().ok();
         for chunks in [[1, 1, base.samples], [5, 7, base.samples], [24, 20, base.samples], [3, 20, 16]] {
             let (v, _) = generate_chunked(&with(chunks, None));
             assert_eq!(bits(&v.angle_stack), want, "case {n} chunks {chunks:?}");
+            assert_eq!(
+                synthoseis_core::generate_fault_labels(&with(chunks, None)),
+                want_faults,
+                "case {n} fault labels chunks {chunks:?}"
+            );
         }
         assert_eq!(bits(&generate_tiny_cube(&base).angle_stack), want, "case {n} classic");
         for (k, chunks) in [[8, 5, 16], [5, 7, base.samples]].into_iter().enumerate() {
             let p = dir.path().join(format!("s{n}_{k}.mdio"));
             run_e2e_streaming(&with(chunks, Some(p.clone()))).unwrap();
             assert_eq!(read(&p), want, "case {n} streaming {chunks:?}");
+            assert_eq!(read_faults(&p), want_faults, "case {n} streaming fault labels {chunks:?}");
             let p = dir.path().join(format!("o{n}_{k}.mdio"));
             run_e2e_streaming_overlapped(&with(chunks, Some(p.clone()))).unwrap();
             assert_eq!(read(&p), want, "case {n} overlap {chunks:?}");
+            // The overlap path writes no fault labels.
+            assert_eq!(read_faults(&p), None, "case {n} overlap fault labels");
         }
         for workers in [2, 3, 4] {
             let p = dir.path().join(format!("t{n}_{workers}.mdio"));
             run_e2e_strip_stitched(&with([5, 7, base.samples], Some(p.clone())), workers).unwrap();
             assert_eq!(read(&p), want, "case {n} strip {workers}");
+            assert_eq!(read_faults(&p), want_faults, "case {n} strip fault labels {workers}");
         }
         for workers in [1, 2, 3] {
             let p = dir.path().join(format!("m{n}_{workers}.mdio"));
             let (r, _) = run_e2e_multiprocess(&with([8, 7, base.samples], Some(p.clone())), workers).unwrap();
             assert_eq!(bits(&r.volumes.angle_stack), want);
             assert_eq!(read(&p), want, "case {n} multiprocess {workers}");
+            assert_eq!(read_faults(&p), want_faults, "case {n} multiprocess fault labels {workers}");
         }
         let (geo, _) = run_e2e_geometry_once_seismic_many(&base, &[0.0, 15.0, 30.0]).unwrap();
         assert_eq!(geo.labels_generated, 1);
