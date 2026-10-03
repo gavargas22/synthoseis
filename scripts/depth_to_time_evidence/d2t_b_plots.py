@@ -134,6 +134,52 @@ def faults_fig(tag="seed7_nosalt_faults3"):
     fig.savefig(p, dpi=110); plt.close(fig)
     return p, dict(depth_voxels=int(df.sum()), time_voxels=int(tf.sum()), mismatches=mism, inline=i)
 
+def fault_salt_mask_fig(tag="seed7_faults3"):
+    """#38 salt mask on the time-mode fault labels (salt + 3 faults): the
+    same cube with --fault-labels-through-salt (before) and the default mask
+    (after). Checks masked == through AND NOT salt voxel by voxel, in depth,
+    on the legacy axis and in time."""
+    s = load(tag); m = s["meta"]; nz = m["depth_shape"][2]; nt = m["nt"]; dt = m["dt_ms"]; nj = m["depth_shape"][1]
+    cubes, counts = {}, {}
+    for dom, shape, salt in (("depth", s["labels"].shape, s["salt"]), ("legacy", s["legacy_labels"].shape, s["legacy_salt"]),
+                             ("time", s["time_labels"].shape, s["time_salt"])):
+        f = {}
+        for v, t in (("masked", tag), ("through", f"{tag}_through")):
+            f[v] = np.fromfile(f"{D}/{t}_{dom}_faults.u8", np.uint8).reshape(shape)
+        overlap = int((f["through"] & salt).sum())
+        removed = int(f["through"].sum()) - int(f["masked"].sum())
+        assert removed == overlap, (dom, removed, overlap)
+        assert ((f["through"] & (1 - salt)) == f["masked"]).all(), dom
+        cubes[dom] = f
+        counts[dom] = dict(through=int(f["through"].sum()), masked=int(f["masked"].sum()), removed=removed,
+                           fault_and_salt_after=int((f["masked"] & salt).sum()))
+    tt, tm, ts = cubes["time"]["through"], cubes["time"]["masked"], s["time_salt"]
+    gone = tt & ts
+    i = int(np.argmax(gone.sum(axis=(1, 2))))
+    fig, ax = plt.subplots(1, 3, figsize=(17, 7), constrained_layout=True)
+    vmax = np.percentile(np.abs(s["time_stack"][i]), 99)
+    ext = extent(nj, dt, nt)
+    red = ListedColormap([(0, 0, 0, 0), (1, 0, 0, 0.85)])
+    mag = ListedColormap([(0, 0, 0, 0), (1, 0, 1, 0.95)])
+    yy = (np.arange(nt) + 0.5) * dt
+    for c, (f, title) in enumerate(((tt, "before: --fault-labels-through-salt\n(fault labels run through the salt)"),
+                                    (tm, "after: default fault AND NOT salt\n(#38 mask, applied before the time resample)"),
+                                    (gone, "removed by the mask\n(= time fault_labels ∩ salt_labels of 'before')"))):
+        ax[c].imshow(s["time_stack"][i].T, cmap="gray_r", vmin=-vmax, vmax=vmax, aspect="auto", extent=ext)
+        ax[c].imshow(f[i].T, cmap=mag if c == 2 else red, vmin=0, vmax=1, aspect="auto", extent=ext, interpolation="nearest")
+        ax[c].contour(np.arange(nj) + 0.5, yy, ts[i].T, levels=[0.5], colors="cyan", linewidths=1.4)
+        n_in = int((f[i] & ts[i]).sum()) if c < 2 else int(f[i].sum())
+        ax[c].set_title(f"{title}\ninline {i}: {int(f[i].sum())} fault voxels, {n_in} inside salt", fontsize=10)
+        ax[c].set_xlabel("crossline"); ax[c].set_ylabel("TWT (ms)")
+    d, t, l = counts["depth"], counts["time"], counts["legacy"]
+    fig.suptitle(f"seed 7, 64x64x256, 3 faults, salt on, time output: stack + fault_labels (red), salt outline (cyan)\n"
+                 f"whole cube, time: {t['through']} -> {t['masked']} fault voxels, {t['removed']} removed = fault ∩ salt; "
+                 f"fault ∩ salt after: {t['fault_and_salt_after']}.  Depth model: {d['through']} -> {d['masked']} "
+                 f"({d['removed']} removed); legacy axis = depth", fontsize=11)
+    p = f"{OUT}/seed7_fault_salt_mask_time.png"
+    fig.savefig(p, dpi=110); plt.close(fig)
+    return p, dict(counts=counts, inline=i)
+
 def uniform2000_fig():
     js = json.load(open("/workspace/synthoseis-d2t/tests/fixtures/angle_stack_e2e.json"))
     fig, ax = plt.subplots(2, 2, figsize=(14, 9), constrained_layout=True)
@@ -163,6 +209,7 @@ if __name__ == "__main__":
     paths = [sections(s) for s in (1, 2, 3, 30)]
     p, rows = pullup_fig((7, 30, 1, 2, 3)); paths.append(p)
     p, finfo = faults_fig(); paths.append(p)
+    p, minfo = fault_salt_mask_fig(); paths.append(p)
     paths.append(uniform2000_fig())
-    json.dump(dict(pullup=rows, faults=finfo, pngs=paths), open(f"{OUT}/summary.json", "w"), indent=1)
-    print(json.dumps(finfo)); print("\n".join(paths))
+    json.dump(dict(pullup=rows, faults=finfo, fault_salt_mask=minfo, pngs=paths), open(f"{OUT}/summary.json", "w"), indent=1)
+    print(json.dumps(finfo)); print(json.dumps(minfo)); print("\n".join(paths))

@@ -1,5 +1,5 @@
 //! CLI depth-to-time flags (spec "depth-to-time conversion" §2, §4):
-//! `--legacy-depth-as-time` reproduces master 0eb937b5 stores bit for bit
+//! `--legacy-depth-as-time` reproduces master f3720fb2 stores bit for bit
 //! (single process and multi-process), time output is the default, the
 //! time flags reach multi-process workers, invalid combinations exit 2, and
 //! the MDIO attributes, summary and staircase warning are reported.
@@ -69,7 +69,8 @@ const MP: &[&str] = &[
 ];
 
 // Angle-stack hashes of stores written by the master 0eb937b5 binary with
-// the same flags (`RICH` there with `--bandpass-trailing-sample` too, the
+// the same flags (unchanged at master f3720fb2: #38 touches only
+// fault_labels, which `depth_to_time_pipeline.rs` pins) (`RICH` there with `--bandpass-trailing-sample` too, the
 // variant the legacy-axis option exists for, and without it). PLAIN,
 // RICH + trailing and MP equal the salt goldens of `rock_physics_cli.rs`
 // (`SALT_*`), which are master's default since #34.
@@ -83,7 +84,7 @@ const TIME_RICH: u64 = 0x02d9_a61d_29bb_4de2;
 const TIME_MP: u64 = 0x5f34_69f1_e77e_3494;
 
 #[test]
-fn legacy_depth_as_time_reproduces_master_0eb937b5() {
+fn legacy_depth_as_time_reproduces_master_f3720fb2() {
     let dir = tempfile::tempdir().expect("tempdir");
     let rich_trailing = with(RICH, &["--bandpass-trailing-sample"]);
     for (name, base, master, time) in [
@@ -96,7 +97,7 @@ fn legacy_depth_as_time_reproduces_master_0eb937b5() {
         let out = run(&with(base, &["--legacy-depth-as-time"]), &legacy);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(!stdout(&out).contains("time axis:"), "{name}: legacy prints no time summary");
-        assert_eq!(store_hash(&legacy), master, "{name}: --legacy-depth-as-time vs master 0eb937b5");
+        assert_eq!(store_hash(&legacy), master, "{name}: --legacy-depth-as-time vs master f3720fb2");
         // No new root attributes on the legacy axis; digi stays 4 ms.
         let s = synthoseis_io::MdioStore::open(&legacy).unwrap();
         let attrs = s.root_attrs().unwrap();
@@ -188,6 +189,11 @@ fn invalid_time_flags_exit_2() {
         (&["--twt-samples", "15"], "twt-samples 15 outside 16..=512"),
         (&["--twt-samples", "513"], "outside 16..=512"),
         (&["--twt-kernel", "nearest"], "--twt-kernel expects sinc or linear"),
+        // #38's fault-label switch keeps its exit-2 rules in time mode.
+        (&["--fault-labels-through-salt"], "--fault-labels-through-salt has no effect without --faults"),
+        (&["--fault-labels-through-salt", "--faults", "2", "--no-salt"], "--fault-labels-through-salt has no effect with --no-salt"),
+        (&["--fault-labels-through-salt", "--faults", "2", "--toy-geometry", "planar"], "has no effect with the planar geometry"),
+        (&["--fault-labels-through-salt", "--faults", "2", "--legacy-toy-depth"], "--legacy-toy-depth"),
     ] {
         let out = run(&with(PLAIN, bad), &dir.path().join("bad.mdio"));
         assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
@@ -198,10 +204,49 @@ fn invalid_time_flags_exit_2() {
         ["--legacy-depth-as-time", "--legacy-toy-depth"].as_slice(),
         &["--bandpass", "4,30", "--dt-ms", "8"],
         &["--legacy-depth-as-time", "--bandpass", "4,30", "--bandpass-trailing-sample"],
+        &["--fault-labels-through-salt", "--faults", "2"],
+        &["--legacy-depth-as-time", "--fault-labels-through-salt", "--faults", "2"],
     ] {
         let out = run(&with(PLAIN, ok), &dir.path().join("ok.mdio"));
         assert!(out.status.success(), "{ok:?}: {out:?}");
     }
+}
+
+/// Fault-label salt mask in time mode (#38 + #39, spec §8), seed 7 at
+/// 24 × 24 × 128 with 3 faults: the time-domain `fault_labels` are `fault
+/// AND NOT salt`, the mask removes exactly the 79 fault ∩ salt voxels of
+/// the `--fault-labels-through-salt` store (which the summary reports as
+/// `masked_in_salt=79`, counted on the time cube), the angle stack is
+/// unchanged. (The CLI takes `--faults` on the single-worker chunked path
+/// only; the library test `time_mode_fault_salt_mask_removed_count_every_path`
+/// covers the other writers.)
+#[test]
+fn fault_label_salt_mask_in_time_mode() {
+    const FAULTED7: &[&str] = &["--chunked", "--shape", "24,24,128", "--seed", "7", "--faults", "3", "--chunk-i", "5"];
+    let dir = tempfile::tempdir().expect("tempdir");
+    let read = |p: &Path| {
+        let s = synthoseis_io::MdioStore::open(p).unwrap();
+        (s.read_fault_labels_u8().unwrap(), s.read_salt_labels_u8().unwrap(), s.config().digi)
+    };
+    let masked_p = dir.path().join("masked.mdio");
+    let out = run(FAULTED7, &masked_p);
+    assert!(out.status.success(), "{out:?}");
+    assert!(stdout(&out).contains("masked_in_salt=79 "), "{}", stdout(&out));
+    let through_p = dir.path().join("through.mdio");
+    let out = run(&with(FAULTED7, &["--fault-labels-through-salt"]), &through_p);
+    assert!(out.status.success(), "{out:?}");
+    assert!(stdout(&out).contains("(--fault-labels-through-salt)"), "{}", stdout(&out));
+    let (masked, salt, digi) = read(&masked_p);
+    let (through, salt2, _) = read(&through_p);
+    assert_eq!(digi, 4.0);
+    assert_eq!(salt, salt2);
+    let overlap = through.iter().zip(&salt).filter(|(&f, &s)| f == 1 && s == 1).count();
+    let removed = through.iter().map(|&v| v as usize).sum::<usize>() - masked.iter().map(|&v| v as usize).sum::<usize>();
+    assert_eq!((removed, overlap), (79, 79));
+    for v in 0..masked.len() {
+        assert_eq!(masked[v] == 1, through[v] == 1 && salt[v] == 0, "voxel {v}");
+    }
+    assert_eq!(store_hash(&masked_p), store_hash(&through_p), "the mask is label-only");
 }
 
 /// The depth-staircase constraint is a warning, not an error (spec §3.3):

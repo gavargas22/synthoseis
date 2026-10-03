@@ -18,7 +18,7 @@ use crate::rock_physics::elastic_model;
 /// on the legacy axis the writer rebuilds salt chunks from the body.
 /// `faults` is `Some` in time mode with faulting on (output-domain
 /// `fault_labels`); the legacy axis writes no `fault_labels` here, exactly
-/// as master 0eb937b5.
+/// as master f3720fb2.
 type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
 
 /// Fuse tile N+1 on the caller while a dedicated std thread flushes tile N.
@@ -113,6 +113,7 @@ pub fn run_e2e_streaming_overlapped(
 
     let trends = elastic_model(cfg, &labels, shape);
     let wavelet = cfg.ricker();
+    let fault_salt = crate::salt::fault_label_salt(cfg, &trends);
     let mut tile_angles = vec![0.0f32; ci * cj * nk];
     // Elastic model + trace scratch + wavelet (+ tile Vp/Vs/rho for the
     // rock-physics model) + tile output + exactly one writer-owned chunk.
@@ -149,7 +150,12 @@ pub fn run_e2e_streaming_overlapped(
             );
             stats.tiles_processed += 1;
             // Time mode: output-domain labels/faults/salt for this tile.
-            let fault_tile = faults.as_ref().map(|m| m.compute_tile(i0, i1, j0, j1));
+            // Masked by the salt body (`fault AND NOT salt`, #38) before the
+            // point sampling onto the time axis.
+            let mut fault_tile = faults.as_ref().map(|m| m.compute_tile(i0, i1, j0, j1));
+            if let (Some(t), Some(s)) = (fault_tile.as_mut(), fault_salt) {
+                crate::salt::mask_fault_tile_salt(t, s);
+            }
             if let Some(t) = &fault_tile {
                 stats.observe(t.lookup.capacity() * 4 + t.mask.capacity() * 2);
             }

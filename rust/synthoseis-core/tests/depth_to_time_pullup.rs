@@ -1,6 +1,9 @@
-//! Salt pull-up measured on the time-mode deliverable at sub-sample
-//! resolution, against the pull-up the velocities predict (spec §5.3, demo
-//! part; Strata's review of PR B).
+//! Salt pull-up measured at sub-sample resolution on the wavelet-free
+//! time-mode reflectivity (the production time fuse with `NO_WAVELET`, not
+//! the Ricker / bandpass stack written to the store), against the pull-up
+//! the velocities predict (spec §5.3, demo part; Strata's review of PR B).
+//! Picks on the deliverable stack agree within 0.25 ms (evidence script and
+//! Strata's independent check), but this test does not use the stack.
 //!
 //! Seed 1, 32 × 32 × 128, default config, salt run vs `--no-salt` run.
 //!

@@ -256,6 +256,7 @@ pub fn generate_output_labels(cfg: &E2eConfig, labels: &[u8], model: &ElasticMod
     let nt = oshape[2];
     let faults = crate::pipeline_stream::fault_model(cfg);
     let [ci, cj] = crate::pipeline_stream::fault_tile(cfg);
+    let fault_salt = crate::salt::fault_label_salt(cfg, model);
     let mut out = OutputLabels {
         labels: vec![0u8; ni * nj * nt],
         faults: faults.as_ref().map(|_| vec![0u8; ni * nj * nt]),
@@ -266,7 +267,13 @@ pub fn generate_output_labels(cfg: &E2eConfig, labels: &[u8], model: &ElasticMod
         let i1 = (i0 + ci).min(ni);
         for j0 in (0..nj).step_by(cj) {
             let j1 = (j0 + cj).min(nj);
-            let ft = faults.as_ref().map(|m| m.compute_tile(i0, i1, j0, j1));
+            // `fault AND NOT salt` in depth (#38), before the point
+            // sampling: every cube then uses the same k(n), so the time
+            // labels keep fault ∧ salt = 0 exactly (spec §3.4, §8).
+            let mut ft = faults.as_ref().map(|m| m.compute_tile(i0, i1, j0, j1));
+            if let (Some(t), Some(s)) = (ft.as_mut(), fault_salt) {
+                crate::salt::mask_fault_tile_salt(t, s);
+            }
             let tile = output_label_tile(model, labels, shape, i0, i1, j0, j1, ft.as_ref(), model.salt());
             let tj = j1 - j0;
             for di in 0..i1 - i0 {

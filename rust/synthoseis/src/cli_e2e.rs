@@ -465,10 +465,20 @@ fn print_fault_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
     let Some(model) = synthoseis_core::fault_model(cfg) else {
         return;
     };
+    // Counts of the written cube: depth on the legacy axis, the
+    // output-domain (time) cube in time mode, where the mask is applied in
+    // depth before the point sampling (spec §3.4, §8).
+    let sum = |m: Option<Vec<u8>>| -> usize { m.map(|m| m.iter().map(|&v| v as usize).sum()).unwrap_or(0) };
+    let time = cfg.time_enabled().then(|| {
+        let (labels, shape) = synthoseis_core::generate_labels(cfg);
+        let model = synthoseis_core::elastic_model(cfg, &labels, shape);
+        (labels, model)
+    });
     let count = |c: &synthoseis_core::pipeline::E2eConfig| -> usize {
-        synthoseis_core::generate_fault_labels(c)
-            .map(|m| m.iter().map(|&v| v as usize).sum())
-            .unwrap_or(0)
+        match &time {
+            Some((labels, model)) => sum(synthoseis_core::generate_output_labels(c, labels, model).faults),
+            None => sum(synthoseis_core::generate_fault_labels(c)),
+        }
     };
     let voxels = count(cfg);
     let salt = if cfg.effective_fault_salt_mask() {

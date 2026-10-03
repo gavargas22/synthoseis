@@ -1,7 +1,7 @@
 //! Depth-to-time evidence dump (PR B figures).
 //!
 //! `cargo run --release -p synthoseis-core --example d2t_evidence -- OUT SEED
-//! NI NJ NZ [--no-salt] [--faults N]` writes, for that cube, the depth-domain
+//! NI NJ NZ [--no-salt] [--faults N] [--fault-labels-through-salt]` writes, for that cube, the depth-domain
 //! inputs and both deliverables:
 //!
 //! * `<tag>_depth_labels.u8`, `<tag>_depth_salt.u8`, `<tag>_depth_faults.u8`
@@ -11,7 +11,8 @@
 //! * `<tag>_{legacy,time}_{stack,labels,salt,faults}` (output shape);
 //! * `<tag>.json` with the shapes and the time axis.
 //!
-//! `<tag>` is `seed<S>[_nosalt][_faults<N>]`. Missing label cubes are skipped.
+//! `<tag>` is `seed<S>[_nosalt][_faults<N>][_through]` (`_through`: fault
+//! labels without the #38 salt mask). Missing label cubes are skipped.
 
 use std::path::{Path, PathBuf};
 
@@ -46,10 +47,13 @@ fn main() {
         ..E2eConfig::default()
     };
     base.rock_physics.salt = !no_salt;
+    let through = a.iter().any(|x| x == "--fault-labels-through-salt");
+    base.rock_physics.fault_labels_through_salt = through;
     let tag = format!(
-        "seed{seed}{}{}",
+        "seed{seed}{}{}{}",
         if no_salt { "_nosalt" } else { "" },
-        if faults > 0 { format!("_faults{faults}") } else { String::new() }
+        if faults > 0 { format!("_faults{faults}") } else { String::new() },
+        if through { "_through" } else { "" }
     );
 
     // Depth-domain inputs.

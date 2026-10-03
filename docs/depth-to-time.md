@@ -7,7 +7,8 @@ Spec: [Spec: depth-to-time conversion (Strata)](https://app.notion.com/p/3eb0272
   the analytic tests, with no output change.
 - **PR B** wires the conversion into every pipeline path and **makes two-way
   time the default output**. `--legacy-depth-as-time` (library:
-  `TimeConfig::legacy()`) reproduces master 0eb937b5 byte for byte. See
+  `TimeConfig::legacy()`) reproduces master f3720fb2 (#37 + the #38
+  fault-label salt mask) byte for byte. See
   [PR B: time output by default](#pr-b-time-output-by-default).
 
 ## Why
@@ -143,7 +144,23 @@ dominates both sides (about 85 % of the tile). The prefix sum plus the
 - **Overlapped streaming `fault_labels`**: this path never wrote
   `fault_labels` on master. In time mode it now writes the output-domain cube
   and verifies it. On the legacy axis it still omits it, exactly as master
-  0eb937b5, so legacy stores stay byte-identical.
+  f3720fb2, so legacy stores stay byte-identical.
+- **Fault-label salt mask (#38) in time mode**: `fault_labels` are `fault AND
+  NOT salt` by default. The mask (`salt::mask_fault_tile_salt`) is applied to
+  the depth fault tile, after the drag and the seabed clamp and before the
+  point sampling, at all four time-mode tile sites:
+  `time_mode::generate_output_labels` (classic, chunked, geometry-once and
+  every output-domain read-back), `pipeline_stream_3` (streaming),
+  `pipeline_stream_6` (strip and multi-process workers) and
+  `pipeline_overlap` (overlapped streaming). Every cube then goes through the
+  same `k(n)`, so fault ∧ salt = 0 holds on every output sample, and the
+  removed count is exactly the time-domain fault ∩ salt overlap of the
+  unmasked cube. The legacy fallback goes through
+  `pipeline_stream::generate_fault_labels`, which #38 masks.
+  `--fault-labels-through-salt` turns the mask off in time mode too, with
+  #38's exit-2 rules (no salt, no faults, planar / `--legacy-toy-depth`). In
+  time mode the summary's `fault_voxels` and `masked_in_salt` count the
+  written time cube (seed 7 at 24×24×128: `masked_in_salt=79`).
 - **`RICKER_PEAK_HZ`** (40 Hz) feeds every Ricker call site through
   `E2eConfig::ricker()`, sampled at `E2eConfig::digi_ms()`: `dt` in time mode,
   4 ms (`TINY_DIGI`) on the legacy axis.
@@ -157,7 +174,7 @@ dominates both sides (about 85 % of the tile). The prefix sum plus the
 
 | Flag | Meaning |
 |---|---|
-| `--legacy-depth-as-time` | Master 0eb937b5's axis (one 4 m cell = one 4 ms sample, i.e. a constant 2000 m/s), byte for byte. `--legacy-toy-depth` implies it. |
+| `--legacy-depth-as-time` | Master f3720fb2's axis (one 4 m cell = one 4 ms sample, i.e. a constant 2000 m/s), byte for byte. `--legacy-toy-depth` implies it. |
 | `--dt-ms DT` | Output sample interval, 0.5–8.0 ms (default 4). |
 | `--twt-samples N` | Output trace length. The default is `nt₀ = round(nz·2dz/2000/dt)`, which equals NK at the defaults. Range `min(16, nt₀) ≤ N ≤ 8·NK`. |
 | `--twt-kernel sinc\|linear` | Spike insertion: Kaiser-windowed sinc (default) or the 2-tap linear split (fast; aliases above about 0.4 f_N). |
@@ -195,8 +212,9 @@ at `nt − 1`.
 - `rock_physics_cli.rs` `run()` appends `--legacy-depth-as-time`, so every CLI
   golden is unchanged. A `run_time()` helper covers the default.
 - `synthoseis/tests/depth_to_time_cli.rs` pins:
-  - `MASTERD2T_{PLAIN,RICH,RICH_TRAILING,MP}`, hashes of stores written by the
-    master 0eb937b5 binary;
+  - `MASTERD2T_{PLAIN,RICH,RICH_TRAILING,MP}`, angle-stack hashes of stores
+    written by the master 0eb937b5 binary, unchanged at f3720fb2 (#38 changes
+    only `fault_labels`);
   - the new defaults `TIME_{PLAIN,RICH,MP}`.
 
 ### Tests owned by PR B
@@ -206,13 +224,14 @@ at `nt − 1`.
 | Spec | Test | What it checks |
 |---|---|---|
 | 5.4 | `time_mode_tiling_invariance_rich` | RICH flags (3 faults, 4–30 Hz bandpass, 12.5 dB noise, salt), seeds 30 and 11, nt = nz and nz + 37. Chunk shapes `[1,1,nt]`, `[5,7,nt]`, `[3,20,16]`, `[8,5,16]`. The classic, chunked, streaming, overlapped streaming, strip 2/3/4, multiprocess 1/2/3 and geometry-once (its store) paths produce bit-identical angle stacks, labels, fault labels and salt labels. At nt = nz the columns are both short and long. |
-| 5.4 | `time_mode_tiling_invariance_faults_and_salt_across_chunk_edges` | Faults and salt at 24×24×128 (seed 4, RICH flags). The 150 fault ∩ salt output voxels span 6, 8 and 4 chunks of `[5,7,nt]`, `[8,5,16]` and `[3,20,32]`. Same path matrix, bit-identical. |
+| 5.4, §8 | `time_mode_tiling_invariance_faults_and_salt_across_chunk_edges` | Faults and salt at 24×24×128 (seed 4, RICH flags). Without the mask the output cubes have 150 fault ∩ salt voxels in total; the mask removes exactly those. 30, 30 and 36 of them touch a chunk face of `[5,7,nt]`, `[8,5,16]` and `[3,20,32]` (a removed neighbour in the next chunk across an i, j or k face), and they span 6, 8 and 4 chunks. Same path matrix, bit-identical with the mask on. |
+| §8 | `time_mode_fault_salt_mask_removed_count_every_path` | RICH flags at 24×24×128. The in-memory output cubes and the stores of the classic, streaming, overlapped streaming, strip 3 and multiprocess 2 writers have `fault_labels == through AND NOT salt` voxel by voxel against the `--fault-labels-through-salt` run, so the removed count equals the time fault ∩ salt overlap: **0** for seed 30 (its faults never reach the salt; the mask must change nothing) and **79** for seed 7, on every path. |
 | 5.4, §3.3 | `dt_2ms_invariance_and_staircase_warning` | dt = 2 ms at dz = 2 m is tiling invariant with no warning. dt = 2 ms at dz = 4 m fires the staircase warning. |
-| 5.5 | `label_round_trip` | Depth → time → depth: each cell reads the output sample nearest its centre time. Every cell with half-thickness ≥ dt/2 is recovered exactly, for labels, fault and salt labels and fault ∧ salt. The recovered fraction of all cells is 99.73 % (seed 30) and 99.47 % (seed 11, nt = nz + 37); the misses are thin, fast salt cells. No class is invented. Seabed is exact: an output sample is 255 if and only if `t_n < T_sb`. |
+| 5.5 | `label_round_trip` | Mask on and off (`--fault-labels-through-salt`). **Asserted:** every output sample of labels, fault and salt labels equals the depth cell containing `t_n`, `k(n) = max{k : T_k ≤ t_n}` from the column's T, so fault ∧ salt in time equals fault ∧ salt at k(n) on every sample (0 everywhere with the mask; seed 11 without it: 15 time samples from 32 depth cells). No class is invented. Seabed is exact: 255 if and only if `t_n < T_sb`. **Reported, not gated:** back to depth (each cell reads the output sample nearest its centre time) recovers 99.73 % (seed 30) and 99.52 % / 99.47 % (seed 11, nt = nz + 37, mask on / off) of cells, and 0 / 2889 and 10 / 2097 layer runs thinner than dt are dropped. Under point sampling every cell ≥ dt thick is recovered by construction, so the fraction measures run thickness against dt. |
 | §3.7, 5.8 | `dead_last_sample` | `nt − 1` is exactly 0 and is the only sample the zeroing touches (sinc and linear, nt = nz and nz + 37, plus the chunked path). |
 | §4, 5.2 | `uniform_2000_time_reflectivity_is_the_depth_fuse_one_sample_down` | At a uniform 2000 m/s, the production time fuse equals the production depth fuse one sample down, bit for bit. |
 | §6 | `time_mode_fuse_tile_cost_within_1_3x` | Time fuse tile ≤ 1.3× the depth fuse tile. Measured **1.06–1.07×** (release, 32×32×256). |
-| 5.7 | `legacy_depth_as_time_reproduces_master_0eb937b5` | Library angle stack, labels and fault labels on the demo cube (plain, bandpass + noise, 3 faults, both) equal master 0eb937b5's hashes. |
+| 5.7 | `legacy_depth_as_time_reproduces_master_f3720fb2` | Library angle stack, labels and fault labels on the demo cube (plain, bandpass + noise, 3 faults, both, and 3 faults with `--fault-labels-through-salt`) equal master f3720fb2's hashes. |
 
 Other PR B tests:
 
@@ -239,13 +258,18 @@ Other PR B tests:
   - the legacy store hashes;
   - time-mode attributes and summary;
   - the flags reach multi-process workers bit for bit;
-  - the exit-2 matrix;
+  - the exit-2 matrix, including #38's `--fault-labels-through-salt` rules in
+    time mode;
+  - `fault_label_salt_mask_in_time_mode`: the CLI time store's
+    `fault_labels` are `through AND NOT salt` (79 removed for seed 7 at
+    24×24×128), the summary reports `masked_in_salt=79`, and the angle stack
+    is unchanged;
   - the staircase warning and the GPU fallback log.
 
 ### Byte identity of the legacy switch
 
-The CLI stores of master 0eb937b5 and this branch with
-`--legacy-depth-as-time` are byte-identical in all 16 cases checked, after
+The CLI stores of master f3720fb2 and this branch with
+`--legacy-depth-as-time` are byte-identical in all 19 cases checked, after
 normalising only the `created` timestamp attribute, and stdout is identical:
 
 - demo 64×64×256 seed 7;
@@ -254,12 +278,15 @@ normalising only the `created` timestamp attribute, and stdout is identical:
 - bandpass trailing sample;
 - multiprocess 3 workers, and multiprocess 2 workers seed 30;
 - strip 3, classic, classic planar, overlap, angles;
-- plain, rich, deep salt, toy.
+- plain, rich, deep salt, toy;
+- seed 4 24×24×128 with 3 faults (fault ∩ salt present, masked);
+- demo 3 faults and deep salt with `--fault-labels-through-salt`.
 
 ### Evidence
 
 Images are in [`img/depth-to-time/`](../img/depth-to-time/). Before is
-`--legacy-depth-as-time`, which is master 0eb937b5 and so #35's stack-parity
+`--legacy-depth-as-time`, which is master f3720fb2 (stacks identical to
+0eb937b5) and so #35's stack-parity
 baseline. After is the time default. All cubes are 64×64×256 at the default
 config.
 
@@ -271,6 +298,11 @@ config.
   time `fault_labels` equal an independent numpy resample of the depth fault
   labels through T(Vp), with 0 mismatching voxels (33 812 depth fault voxels
   become 33 290 time fault voxels).
+- `seed7_fault_salt_mask_time.png`: seed 7, 3 faults, salt on, time output,
+  `--fault-labels-through-salt` (before) against the default mask (after),
+  and the removed voxels. Whole cube in time: 32 464 → 31 754 fault voxels,
+  710 removed = the time fault ∩ salt overlap, 0 left inside salt. In the
+  depth model: 33 812 → 32 193 (1 619 removed); the legacy axis equals depth.
 - `uniform2000_time_vs_pr35_baseline.png`: #35's legacy Python stack against
   the time output at uniform 2000 m/s.
 
@@ -362,8 +394,9 @@ so the measurement uses the seismic event instead.
   pin.
 - The time summary lines print in time mode only, so legacy stdout stays
   master's.
-- Fault ∧ salt overlap is inherited from depth: the depth cubes overlap on
-  master. The time resample preserves the overlap per voxel, so the separate
-  fault-label salt-mask fix carries over unchanged.
+- Fault ∧ salt: the mask is applied in depth before the point sampling, so
+  fault ∧ salt = 0 on every output sample; with
+  `--fault-labels-through-salt` the time overlap is the depth overlap at
+  k(n), sample for sample.
 - `TimeConfig::constant_twt_vp` is a doc-hidden test hook (T from one constant
   velocity) for the uniform-2000 tests.
