@@ -32,6 +32,14 @@ pub fn fuse_tile_local(
                 labels, shape, i0, i1, j0, j1, t, wavelet, angle_deg, tile_out,
             );
         }
+        ElasticModel::Rpm(m) if crate::time_mode::partial_time_path(trends).is_some() => {
+            // Partial voxels in time mode: per-column fused path (spec §1.5).
+            let n = (i1 - i0) * (j1 - j0) * nk;
+            stats.observe(
+                synthoseis_gpu::fuse_tile_scratch_bytes(nk) + 3 * nk * 4 + (nk + 1) * 8 + m.time.map_or(0, |a| a.nt * 16) + n,
+            );
+            crate::time_mode::fuse_tile_time_partial(m, labels, shape, i0, i1, j0, j1, wavelet, angle_deg, tile_out);
+        }
         ElasticModel::Rpm(m) => {
             let n = (i1 - i0) * (j1 - j0) * nk;
             let (mut vp, mut vs, mut rho) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
