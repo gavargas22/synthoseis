@@ -245,6 +245,11 @@ pub struct FaultConfig {
     /// legacy seabed taper succeeds, otherwise sigma is fitted to the
     /// sub-seabed column and fault labels are clamped below the seabed.
     pub legacy_reach: bool,
+    /// Legacy switch (library only): the overlapped writer
+    /// ([`crate::run_e2e_streaming_overlapped`]) writes no `data/fault_labels`,
+    /// reproducing master f3720fb2 bit for bit. Default `false`: it writes
+    /// them like every other MDIO path (see `crate::pipeline_overlap_faults`).
+    pub overlap_legacy_no_fault_labels: bool,
 }
 
 impl Default for FaultConfig {
@@ -254,6 +259,7 @@ impl Default for FaultConfig {
             throw_min: 5.0,
             throw_max: 29.0,
             legacy_reach: false,
+            overlap_legacy_no_fault_labels: false,
         }
     }
 }
@@ -498,7 +504,8 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     for i in 0..ni {
         for j in 0..nj {
             for k in 0..zm1 {
-                let src = ((0 * ni + i) * nj + j) * zm1 + k;
+                // Angle index 0 of the (1, ni, nj, nk - 1) RFC volume.
+                let src = (i * nj + j) * zm1 + k;
                 let dst = (i * nj + j) * nk + k;
                 angle_cube[dst] = rfc[src];
             }

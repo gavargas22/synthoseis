@@ -180,6 +180,10 @@ pub fn run_e2e_streaming_overlapped(
     writer_result?;
 
     let store = MdioStore::open(&path).map_err(|e| e.to_string())?;
+    // Depth-axis fault labels (none on master f3720fb2; see the module).
+    crate::pipeline_overlap_faults::write_overlap_fault_labels(
+        &store, cfg, &trends, shape, chunks, &mut stats,
+    )?;
     store
         .finalize_after_chunked_write(&[])
         .map_err(|e| e.to_string())?;

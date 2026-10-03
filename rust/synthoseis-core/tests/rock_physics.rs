@@ -811,8 +811,7 @@ fn default_model_invariant_to_tiling_workers_and_paths() {
             let p = dir.path().join(format!("o{n}_{k}.mdio"));
             run_e2e_streaming_overlapped(&with(chunks, Some(p.clone()))).unwrap();
             assert_eq!(read(&p), want, "case {n} overlap {chunks:?}");
-            // The overlap path writes no fault labels.
-            assert_eq!(read_faults(&p), None, "case {n} overlap fault labels");
+            assert_eq!(read_faults(&p), want_faults, "case {n} overlap fault labels {chunks:?}");
         }
         for workers in [2, 3, 4] {
             let p = dir.path().join(format!("t{n}_{workers}.mdio"));

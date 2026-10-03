@@ -220,6 +220,21 @@ expression. The sediment displacement is unchanged.
 `--fault-labels-through-salt` reproduces master 2b3850ba. See
 [salt-bodies.md](salt-bodies.md#fault-labels-and-salt).
 
+## Overlapped writer
+
+Up to master f3720fb2, the overlapped writer (`run_e2e_streaming_overlapped`)
+wrote no `data/fault_labels`. This affected the library only, because the CLI
+rejects `--faults` with `--overlap`. It now writes them on the depth-sample
+axis after flushing the angle-stack and label chunks, one fault tile per
+chunk footprint (`pipeline_overlap_faults.rs`). The tiles are salt-masked
+like every other path, or unmasked with `fault_labels_through_salt`, and
+checked against `generate_fault_labels`.
+
+`FaultConfig::overlap_legacy_no_fault_labels` (library only) skips this
+step. Its stores are byte-identical to those written by a master f3720fb2
+build, except the creation timestamp. Time mode (PR #39) writes its own
+output-domain fault labels in the same writer.
+
 ## Deferred (follow-ups)
 
 - Hockey-stick drag zone (throw ≥ 29.75). Faults are flagged
