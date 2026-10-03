@@ -370,9 +370,10 @@ Tests:
   invariant `segment_id != 0 <=> mask == 1`.
 - The invariance matrix (`tests/rock_physics.rs`) has the seed-11 case
   masked and with the switch. Its fault labels are identical across 4 chunk
-  shapes, streaming ×2, strip-stitch 2/3/4 and multi-process 1/2/3 (the
-  overlap path writes no fault labels). The mask does not change the angle
-  stack.
+  shapes, streaming ×2, overlap ×2, strip-stitch 2/3/4 and multi-process
+  1/2/3. The overlap path writes fault labels only since the overlap
+  fault-label fix (see faults-port.md, "Overlapped writer"). The mask does
+  not change the angle stack.
 - `rock_physics_cli.rs::fault_labels_through_salt_flag_reproduces_master_2b3850ba`
   pins the fault-label hashes of b4f4259 (`--no-salt`), 2b3850ba (switch)
   and the new default, plus the exit-2 cases.

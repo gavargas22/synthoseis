@@ -106,6 +106,9 @@ pub fn validate(sand_fraction: f64, sand_thickness: f64) -> Result<(), String> {
 /// numpy `Generator.choice([0, 1], p=row)` for a given unit draw `u`:
 /// `cdf = cumsum(p); cdf /= cdf[-1]; searchsorted(cdf, u, side="right")`.
 #[inline]
+// `total / total` is numpy's `cdf /= cdf[-1]` on the last entry (1.0, or NaN
+// for a zero / non-finite row), kept as written for parity.
+#[allow(clippy::eq_op)]
 pub fn legacy_choice(row: [f64; 2], u: f64) -> u8 {
     let total = row[0] + row[1];
     let c0 = row[0] / total;
