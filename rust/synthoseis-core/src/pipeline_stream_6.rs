@@ -6,7 +6,8 @@
 /// lock — there is no shared Mutex. Safe for multi-process writers on a shared FS.
 ///
 /// When `faults` is set, the partition also writes its `data/fault_labels`
-/// chunks, evaluating the fault model tile by tile. When `filters` is set,
+/// chunks, evaluating the fault model tile by tile (masked by `fault_salt`,
+/// see [`crate::salt::fault_label_salt`]). When `filters` is set,
 /// each tile is fused with a lateral halo and filtered (see
 /// [`fuse_tile_filtered`]); neighbouring strips are never read.
 #[allow(clippy::too_many_arguments)]
@@ -19,6 +20,7 @@ pub fn write_strip_partition(
     trends: &ElasticModel,
     wavelet: &[f64],
     faults: Option<&FaultModel>,
+    fault_salt: Option<&crate::salt::SaltBody>,
     filters: Option<&SeismicFilters>,
 ) -> Result<(WorkingSetStats, Vec<f32>), String> {
     // `shape` is the depth shape; chunks and writes are on the output axis
@@ -76,7 +78,12 @@ pub fn write_strip_partition(
             );
             stats.tiles_processed += 1;
             // Fault labels for this tile only (analytic halo, no neighbours).
-            let fault_tile = faults.map(|m| m.compute_tile(i0, i1, j0, j1));
+            // Masked by the salt body when `fault_salt` is set (`fault AND
+            // NOT salt`, see [`crate::salt::fault_label_salt`]).
+            let mut fault_tile = faults.map(|m| m.compute_tile(i0, i1, j0, j1));
+            if let (Some(t), Some(s)) = (fault_tile.as_mut(), fault_salt) {
+                crate::salt::mask_fault_tile_salt(t, s);
+            }
             // Output-domain label cubes of this tile (point-sampled onto the
             // time axis through the tile's own T in time mode).
             let out_labels = crate::time_mode::output_label_tile(

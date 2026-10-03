@@ -25,6 +25,17 @@ fn run_time(args: &[&str], store: &Path) -> Output {
         .expect("spawn synthoseis")
 }
 
+/// FNV-1a over the `data/fault_labels` u8 bytes.
+fn fault_labels_hash(p: &Path) -> u64 {
+    let v = synthoseis_io::MdioStore::open(p).unwrap().read_fault_labels_u8().unwrap();
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for b in v {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
 /// FNV-1a over the f32 bits of the stored angle stack.
 fn store_hash(p: &Path) -> u64 {
     let v = synthoseis_io::MdioStore::open(p).unwrap().read_volume().unwrap();
@@ -343,6 +354,11 @@ fn invalid_lithology_flags_exit_2() {
         (&["--no-salt", "--legacy-toy-depth"], "--no-salt / --salt-legacy-top-offset have no effect with the planar geometry or --legacy-toy-depth"),
         (&["--salt-legacy-top-offset", "--toy-geometry", "planar"], "have no effect with the planar geometry"),
         (&["--salt-legacy-top-offset", "--no-salt"], "--salt-legacy-top-offset has no effect with --no-salt"),
+        (&["--fault-labels-through-salt", "--faults", "2", "--toy-geometry", "planar"], "--fault-labels-through-salt has no effect with the planar geometry"),
+        (&["--fault-labels-through-salt", "--faults", "2", "--legacy-toy-depth"], "--fault-labels-through-salt has no effect with the planar geometry or --legacy-toy-depth"),
+        (&["--fault-labels-through-salt", "--faults", "2", "--no-salt"], "--fault-labels-through-salt has no effect with --no-salt"),
+        (&["--fault-labels-through-salt"], "--fault-labels-through-salt has no effect without --faults"),
+        (&["--fault-labels-through-salt", "--faults", "0"], "--fault-labels-through-salt has no effect without --faults"),
     ] {
         let out = run(&with(PLAIN, bad), &dir.path().join("bad.mdio"));
         assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
@@ -511,5 +527,78 @@ fn no_salt_flag_reproduces_master_b4f4259() {
         assert_ne!(salted, master);
         let mask = synthoseis_io::MdioStore::open(&on).unwrap().read_salt_labels_u8().unwrap();
         assert_eq!(mask.iter().map(|&v| v as usize).sum::<usize>(), voxels, "{name}: salt_labels");
+    }
+}
+
+// `data/fault_labels` hashes (`fault_labels_hash`). RICH runs without
+// `--bandpass-trailing-sample` on b4f4259 (fault labels do not depend on it).
+// * b4f4259 binary (no salt):
+const MASTERB4_FAULTLABELS_RICH: u64 = 0x308e_493b_ecf1_8a69;
+const MASTERB4_FAULTLABELS_FAULTED_7: u64 = 0xa9e3_75f6_0583_105a;
+const MASTERB4_FAULTLABELS_FAULTED_4: u64 = 0x49af_e59b_ac75_27a9;
+// * master 2b3850ba binary (#34 salt, fault labels through the salt):
+const SALT34_FAULTLABELS_RICH: u64 = 0x308e_493b_ecf1_8a69;
+const SALT34_FAULTLABELS_FAULTED_7: u64 = 0xa9e3_75f6_0583_105a;
+const SALT34_FAULTLABELS_FAULTED_4: u64 = 0x6f3c_1595_e1c7_cc9e;
+// * this default (fault AND NOT salt). RICH: no fault voxel in the salt.
+const SALTMASK_FAULTLABELS_RICH: u64 = 0x308e_493b_ecf1_8a69;
+const SALTMASK_FAULTLABELS_FAULTED_7: u64 = 0x040c_4656_e7d7_a3a9;
+const SALTMASK_FAULTLABELS_FAULTED_4: u64 = 0x637e_543d_457a_8b56;
+/// Angle-stack hash of `FAULTED --seed 4` with salt (master 2b3850ba).
+const SALT_FAULTED_4: u64 = 0x344b_1c52_2ed3_0a7a;
+
+/// Fault labels are `fault AND NOT salt` by default; the angle stack is
+/// unchanged (label-only). `--fault-labels-through-salt` reproduces master
+/// 2b3850ba (fault labels and angle stack), and `--no-salt` keeps the
+/// b4f4259 fault labels.
+#[test]
+fn fault_labels_through_salt_flag_reproduces_master_2b3850ba() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let faulted7 = with(FAULTED, &["--seed", "7"]);
+    let faulted4 = with(FAULTED, &["--seed", "4"]);
+    for (name, base, angles, b4, salt34, masked, in_salt) in [
+        ("rich", RICH, SALT_RICH, MASTERB4_FAULTLABELS_RICH, SALT34_FAULTLABELS_RICH, SALTMASK_FAULTLABELS_RICH, 0),
+        (
+            "faulted7",
+            &faulted7[..],
+            SALT_FAULTED_7,
+            MASTERB4_FAULTLABELS_FAULTED_7,
+            SALT34_FAULTLABELS_FAULTED_7,
+            SALTMASK_FAULTLABELS_FAULTED_7,
+            423,
+        ),
+        (
+            "faulted4",
+            &faulted4[..],
+            SALT_FAULTED_4,
+            MASTERB4_FAULTLABELS_FAULTED_4,
+            SALT34_FAULTLABELS_FAULTED_4,
+            SALTMASK_FAULTLABELS_FAULTED_4,
+            710,
+        ),
+    ] {
+        let p = dir.path().join(format!("{name}-default.mdio"));
+        let out = run(base, &p);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(&format!("masked_in_salt={in_salt} ")), "{name}: {stdout}");
+        assert_eq!(fault_labels_hash(&p), masked, "{name}: masked default");
+        assert_eq!(store_hash(&p), angles, "{name}: angle stack unchanged by the mask");
+        let store = synthoseis_io::MdioStore::open(&p).unwrap();
+        let f = store.read_fault_labels_u8().unwrap();
+        let s = store.read_salt_labels_u8().unwrap();
+        assert!(f.iter().zip(&s).all(|(a, b)| a & b == 0), "{name}: fault and salt");
+
+        let p = dir.path().join(format!("{name}-through.mdio"));
+        let out = run(&with(base, &["--fault-labels-through-salt"]), &p);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("(--fault-labels-through-salt)"));
+        assert_eq!(fault_labels_hash(&p), salt34, "{name}: --fault-labels-through-salt vs master 2b3850ba");
+        assert_eq!(store_hash(&p), angles, "{name}: --fault-labels-through-salt angle stack");
+        assert_eq!(masked == salt34, in_salt == 0, "{name}");
+
+        let p = dir.path().join(format!("{name}-off.mdio"));
+        assert!(run(&with(base, &["--no-salt"]), &p).status.success());
+        assert_eq!(fault_labels_hash(&p), b4, "{name}: --no-salt fault labels vs master b4f4259");
     }
 }

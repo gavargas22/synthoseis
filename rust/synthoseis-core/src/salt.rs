@@ -731,3 +731,36 @@ pub fn verify_salt_labels(store: &synthoseis_io::MdioStore, cfg: &E2eConfig) -> 
     }
     Ok(())
 }
+
+/// `fault AND NOT salt` on one fault tile: zeroes the tile's `mask` and
+/// `segment_id` on every salt voxel (the salt run of each column, clipped to
+/// the cube's `nk`, so the `SALT_PAD` samples are left out). Keeps the tile
+/// invariant `segment_id != 0 <=> mask == 1`. Per column, no halo: every
+/// tiling sees the same masked labels. The fault displacement (`lookup`) is
+/// untouched, so sediment next to and above the salt is still faulted.
+pub fn mask_fault_tile_salt(t: &mut synthoseis_geo::faults::FaultTile, salt: &SaltBody) {
+    for i in t.i0..t.i1 {
+        for j in t.j0..t.j1 {
+            let (a, b) = salt.runs[i * salt.grid[1] + j];
+            let (a, b) = ((a as usize).min(t.nk), (b as usize).min(t.nk));
+            if a < b {
+                let l = t.col_offset(i, j);
+                t.mask[l + a..l + b].fill(0);
+                t.segment_id[l + a..l + b].fill(0);
+            }
+        }
+    }
+}
+
+/// Salt body that masks fault labels for `cfg`, from the elastic model
+/// (`None` when [`E2eConfig::effective_fault_salt_mask`] is off).
+pub fn fault_label_salt<'a>(
+    cfg: &E2eConfig,
+    trends: &'a crate::rock_physics::ElasticModel,
+) -> Option<&'a SaltBody> {
+    if cfg.effective_fault_salt_mask() {
+        trends.salt()
+    } else {
+        None
+    }
+}

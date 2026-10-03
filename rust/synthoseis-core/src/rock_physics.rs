@@ -151,6 +151,12 @@ pub struct RockPhysicsConfig {
     /// `min(nk / 1250, 1)`. CLI
     /// `--salt-legacy-top-offset`.
     pub salt_legacy_top_offset: bool,
+    /// Legacy switch: keep fault labels inside the salt body (master
+    /// 2b3850ba). By default `data/fault_labels` is `fault AND NOT salt`
+    /// ([`E2eConfig::effective_fault_salt_mask`]): faults die out against
+    /// salt and have no seismic expression inside it. CLI
+    /// `--fault-labels-through-salt`. See `docs/salt-bodies.md`.
+    pub fault_labels_through_salt: bool,
 }
 
 impl Default for RockPhysicsConfig {
@@ -174,6 +180,7 @@ impl Default for RockPhysicsConfig {
             closures_unsegmented: false,
             salt: true,
             salt_legacy_top_offset: false,
+            fault_labels_through_salt: false,
         }
     }
 }
