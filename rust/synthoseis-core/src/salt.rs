@@ -101,6 +101,11 @@ impl SaltBody {
         let a = (a as usize).min(b);
         out[a..b].fill(1);
     }
+
+    /// Continuous per-column hull bounds, see [`hull_bounds`].
+    pub fn hull_bounds(&self) -> Vec<Option<(f64, f64)>> {
+        hull_bounds(&self.points, self.grid)
+    }
 }
 
 /// numpy `Generator.uniform(lo, hi)` from the unit draw `u`.
@@ -391,6 +396,24 @@ pub fn hull_planes(pts: &[[f64; 3]]) -> Option<Vec<([f64; 3], f64)>> {
 /// `find_simplex` tolerance (`100 * eps` in barycentric coordinates).
 const HULL_TOL: f64 = 1e-9;
 
+/// Continuous hull bounds `(lo, hi)` (samples) of the vertical line
+/// `(x, y)` against the hull `planes` (`None` when the line misses the hull).
+/// Sample `k` is inside iff `lo <= k <= hi` (with [`HULL_TOL`] folded in).
+fn column_hull_bounds(planes: &[([f64; 3], f64)], x: f64, y: f64) -> Option<(f64, f64)> {
+    let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
+    for &(u, d) in planes {
+        let rhs = d - u[0] * x - u[1] * y;
+        if u[2] > 0.0 {
+            hi = hi.min((rhs + HULL_TOL) / u[2]);
+        } else if u[2] < 0.0 {
+            lo = lo.max((rhs + HULL_TOL) / u[2]);
+        } else if rhs < -HULL_TOL {
+            return None;
+        }
+    }
+    (lo <= hi).then_some((lo, hi))
+}
+
 /// Voxels `(i, j, k)` of `grid` inside the convex hull of `pts` (legacy
 /// `util.is_it_in_hull`), as one `[k0, k1)` run per column.
 pub fn hull_runs(pts: &[[f64; 3]], grid: [usize; 3]) -> Vec<(u32, u32)> {
@@ -401,23 +424,9 @@ pub fn hull_runs(pts: &[[f64; 3]], grid: [usize; 3]) -> Vec<(u32, u32)> {
     };
     for i in 0..ni {
         for j in 0..nj {
-            let (x, y) = (i as f64, j as f64);
-            let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
-            let mut empty = false;
-            for &(u, d) in &planes {
-                let rhs = d - u[0] * x - u[1] * y;
-                if u[2] > 0.0 {
-                    hi = hi.min((rhs + HULL_TOL) / u[2]);
-                } else if u[2] < 0.0 {
-                    lo = lo.max((rhs + HULL_TOL) / u[2]);
-                } else if rhs < -HULL_TOL {
-                    empty = true;
-                    break;
-                }
-            }
-            if empty || lo > hi {
+            let Some((lo, hi)) = column_hull_bounds(&planes, i as f64, j as f64) else {
                 continue;
-            }
+            };
             let k0 = lo.ceil().max(0.0);
             let k1 = (hi.floor() + 1.0).min(nkp as f64);
             if k1 > k0 {
@@ -426,6 +435,25 @@ pub fn hull_runs(pts: &[[f64; 3]], grid: [usize; 3]) -> Vec<(u32, u32)> {
         }
     }
     runs
+}
+
+/// Continuous per-column hull bounds `(lo, hi)` (samples, unclipped) of the
+/// convex hull of `pts` on `grid`: the values [`hull_runs`] rasterises with
+/// `ceil(lo)` / `floor(hi) + 1`. With cell-top coordinates (cell k is
+/// `[k, k+1)`) salt occupies `ζ ∈ [lo + ½, hi + ½]` (partial-voxels spec
+/// §1.1, §3.1). `None` where the column misses the hull.
+pub fn hull_bounds(pts: &[[f64; 3]], grid: [usize; 3]) -> Vec<Option<(f64, f64)>> {
+    let [ni, nj, _] = grid;
+    let mut out = vec![None; ni * nj];
+    let Some(planes) = hull_planes(pts) else {
+        return out;
+    };
+    for i in 0..ni {
+        for j in 0..nj {
+            out[i * nj + j] = column_hull_bounds(&planes, i as f64, j as f64);
+        }
+    }
+    out
 }
 
 /// Half-kernel of scipy `gaussian_filter(sigma = 3)` (truncate 4, radius

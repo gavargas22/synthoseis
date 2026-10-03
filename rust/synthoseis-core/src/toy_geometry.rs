@@ -147,8 +147,8 @@ pub fn layer_thickness(seed: u64, layer: usize) -> f64 {
     THICKNESS_LOC + g
 }
 
-/// Horizon maps `(ni, nj, nh)` in samples, shallow first (horizon 0 = seabed).
-pub fn layered_horizon_maps(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
+/// Unrounded horizon stack of [`layered_horizon_maps`], deepest first.
+fn layered_stack(seed: u64, shape: [usize; 3]) -> Vec<Vec<f64>> {
     let [ni, nj, _nk] = shape;
     let n = ni * nj;
     let p = LayeredParams::new(seed, shape);
@@ -194,6 +194,14 @@ pub fn layered_horizon_maps(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
         stack.push(next.clone());
         z = next;
     }
+    stack
+}
+
+/// Horizon maps `(ni, nj, nh)` in samples, shallow first (horizon 0 = seabed).
+pub fn layered_horizon_maps(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
+    let [ni, nj, _nk] = shape;
+    let n = ni * nj;
+    let mut stack = layered_stack(seed, shape);
     stack.reverse();
     let nh = stack.len();
     let mut maps = vec![0.0f64; n * nh];
@@ -207,6 +215,38 @@ pub fn layered_horizon_maps(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
     }
     enforce_nonnegative_thicknesses(&mut maps, [ni, nj, nh]);
     (maps, nh)
+}
+
+/// Continuous (unrounded) counterpart of [`layered_horizon_maps`]
+/// (partial-voxels spec §3.1): the same f64 stack before `.round()`, with the
+/// non-negative-thickness push applied as `z_{i-1} = min(z_{i-1}, z_i)` for
+/// `i = nh-1 … 2` (the same cascade as `enforce_nonnegative_thicknesses`
+/// without its `deep − (deep − shallow)` rounding). Rounding is monotone, so
+/// `round(continuous) == layered_horizon_maps` exactly.
+pub fn layered_horizon_maps_continuous(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
+    let [ni, nj, _nk] = shape;
+    let n = ni * nj;
+    let mut stack = layered_stack(seed, shape);
+    stack.reverse();
+    let nh = stack.len();
+    let mut maps = vec![0.0f64; n * nh];
+    for (h, m) in stack.iter().enumerate() {
+        for c in 0..n {
+            maps[c * nh + h] = m[c];
+        }
+    }
+    min_cascade(&mut maps, nh);
+    (maps, nh)
+}
+
+/// `z_{i-1} = min(z_{i-1}, z_i)` for `i = nh-1 … 2` per column: the order
+/// `enforce_nonnegative_thicknesses` imposes, exact in floating point.
+pub(crate) fn min_cascade(maps: &mut [f64], nh: usize) {
+    for col in maps.chunks_exact_mut(nh.max(1)) {
+        for i in (2..nh).rev() {
+            col[i - 1] = col[i - 1].min(col[i]);
+        }
+    }
 }
 
 /// Master planar geometry: two seed-dependent dipping planes + flat base.

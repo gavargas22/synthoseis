@@ -139,6 +139,7 @@ impl SingleWorkerRunner {
 }
 
 pub mod parity;
+pub mod partial_voxels;
 pub mod partition;
 pub mod pipeline;
 pub mod pipeline_geometry_many;
