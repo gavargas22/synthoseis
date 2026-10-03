@@ -79,15 +79,24 @@ jobs:
           cargo run -p synthoseis -- run --e2e --chunked --gpu --seed 30 --shape 24,20,128 --sand-layer-fraction 0.4 --store /tmp/sb-gpu.mdio
           cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 4 --chunk-j 4 --store /tmp/sb-mp.mdio
           cargo run -p synthoseis -- run --e2e --chunked --overlap --store /tmp/sb-ov.mdio
-      - name: fault labels masked by salt smoke (default, --fault-labels-through-salt, gpu)
+      - name: fault labels masked by salt smoke (default, --fault-labels-through-salt, gpu; time and legacy axis)
         run: |
           set -euo pipefail
-          cargo run -p synthoseis -- run --e2e --chunked --seed 11 --shape 24,24,128 --faults 4 --sand-layer-fraction 0.4 --store /tmp/fm.mdio | tee /tmp/fm.txt
+          FM="--e2e --chunked --seed 11 --shape 24,24,128 --faults 4 --sand-layer-fraction 0.4"
+          # Legacy axis: #38's depth counts (master f3720fb2).
+          cargo run -p synthoseis -- run $FM --legacy-depth-as-time --store /tmp/fm.mdio | tee /tmp/fm.txt
           grep -q "fault_voxels=3919, masked_in_salt=155 " /tmp/fm.txt
-          cargo run -p synthoseis -- run --e2e --chunked --seed 11 --shape 24,24,128 --faults 4 --sand-layer-fraction 0.4 --fault-labels-through-salt --store /tmp/fm-through.mdio | tee /tmp/fm-through.txt
+          cargo run -p synthoseis -- run $FM --legacy-depth-as-time --fault-labels-through-salt --store /tmp/fm-through.mdio | tee /tmp/fm-through.txt
           grep -q "fault_voxels=4074 (--fault-labels-through-salt)" /tmp/fm-through.txt
-          cargo run -p synthoseis -- run --e2e --chunked --gpu --seed 11 --shape 24,24,128 --faults 4 --sand-layer-fraction 0.4 --chunk-i 5 --chunk-j 7 --store /tmp/fm-gpu.mdio | tee /tmp/fm-gpu.txt
+          cargo run -p synthoseis -- run $FM --legacy-depth-as-time --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fm-gpu.mdio | tee /tmp/fm-gpu.txt
           grep -q "masked_in_salt=155 " /tmp/fm-gpu.txt
+          # Time output (default): counts of the written time cube.
+          cargo run -p synthoseis -- run $FM --store /tmp/fmt.mdio | tee /tmp/fmt.txt
+          grep -q "fault_voxels=3870, masked_in_salt=63 " /tmp/fmt.txt
+          cargo run -p synthoseis -- run $FM --fault-labels-through-salt --store /tmp/fmt-through.mdio | tee /tmp/fmt-through.txt
+          grep -q "fault_voxels=3933 (--fault-labels-through-salt)" /tmp/fmt-through.txt
+          cargo run -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
+          grep -q "masked_in_salt=63 " /tmp/fmt-gpu.txt
 
   msrv:
     name: MSRV (Rust 1.83)
