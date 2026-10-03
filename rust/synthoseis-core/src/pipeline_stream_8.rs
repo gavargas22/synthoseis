@@ -15,6 +15,11 @@ pub struct SeismicFilters {
     pub exclude_trailing_sample: bool,
     /// Additive noise before the wavelet / bandpass (`None` = off).
     pub noise: Option<SeismicNoise>,
+    /// Test hook for the dead-last-sample check (spec §3.7): `false` skips
+    /// the final zero write of the trailing sample (the bandpass still
+    /// reads only the first `nk - 1` samples). Always `true` in production.
+    #[doc(hidden)]
+    pub zero_trailing_sample: bool,
 }
 
 /// Resolved noise stage (see [`crate::pipeline::NoiseConfig`]).
@@ -51,26 +56,37 @@ impl SeismicNoise {
 impl SeismicFilters {
     /// Validate `cfg.filters` and design the bandpass (`Ok(None)` when the
     /// filters are disabled).
+    ///
+    /// Also validates the time settings ([`E2eConfig::validate_time`]), so
+    /// every `run_*` entry point rejects an invalid time axis. In time mode
+    /// the bandpass is designed at `dt` and runs on the `nt`-sample traces.
     pub fn from_config(cfg: &E2eConfig) -> Result<Option<Self>, String> {
+        cfg.validate_time()?;
         let fc = &cfg.filters;
+        if cfg.time_enabled() && fc.bandpass_trailing_sample {
+            return Err(
+                "bandpass_trailing_sample (--bandpass-trailing-sample) reproduces the pre-#36 legacy axis and requires --legacy-depth-as-time".into(),
+            );
+        }
         if !fc.enabled() {
             return Ok(None);
         }
+        let nk_out = cfg.output_samples();
         let bandpass = match fc.bandpass_hz {
             Some([low, high]) => {
                 let f = synthoseis_seismic::butterworth_bandpass(
                     low,
                     high,
-                    synthoseis_seismic::legacy_digitisation_ms(TINY_DIGI),
+                    synthoseis_seismic::legacy_digitisation_ms(cfg.digi_ms()),
                     fc.bandpass_order,
                 )
                 .map_err(|e| format!("bandpass {low}-{high} Hz: {e}"))?;
                 // Samples the bandpass actually sees (legacy parity mode
                 // excludes the trailing reflectivity sample).
                 let filtered = if fc.bandpass_excludes_trailing_sample() {
-                    cfg.samples.saturating_sub(1)
+                    nk_out.saturating_sub(1)
                 } else {
-                    cfg.samples
+                    nk_out
                 };
                 if filtered <= f.padlen() {
                     return Err(format!(
@@ -78,7 +94,7 @@ impl SeismicFilters {
                         fc.bandpass_order,
                         f.padlen(),
                         filtered,
-                        cfg.samples
+                        nk_out
                     ));
                 }
                 Some(f)
@@ -103,6 +119,7 @@ impl SeismicFilters {
             skip_wavelet: fc.skips_ricker(),
             exclude_trailing_sample: fc.bandpass_excludes_trailing_sample(),
             noise,
+            zero_trailing_sample: true,
         }))
     }
 
@@ -146,7 +163,9 @@ impl SeismicFilters {
                 let (body, last) = trace.split_at_mut(nk - 1);
                 f.filtfilt_f32(body, &mut scratch)
                     .expect("trace length validated in SeismicFilters::from_config");
-                last[0] = 0.0;
+                if self.zero_trailing_sample {
+                    last[0] = 0.0;
+                }
             }
         } else {
             f.filtfilt_traces_f32(src, nk)
@@ -176,9 +195,16 @@ pub fn seismic_filters(cfg: &E2eConfig) -> Option<SeismicFilters> {
 /// `nj x nk` row) and reduced with Welford in fixed global `(i, j, k)` order,
 /// so the value is independent of chunk shape and worker count; every
 /// worker / process recomputes the same bits.
+///
+/// In time mode (spec §3.6) the statistic is taken over the first `nt - 1`
+/// samples of the time-domain raw reflectivity, and the per-column cutoff is
+/// the seabed **time** sample `T_sb / dt` (T interpolated at the seabed
+/// depth), fed through the same threshold formula at `digi = dt`.
 pub fn noise_signal_std(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> f64 {
-    let [ni, nj, nk] = shape;
+    let [ni, nj, nz] = shape;
     let trends = elastic_model(cfg, labels, shape);
+    let nk = trends.output_nk(nz);
+    let digi = cfg.digi_ms();
     let seabed = fault_seabed(cfg);
     let noise = &cfg.filters.noise;
     let mut row = vec![0.0f32; nj * nk];
@@ -198,8 +224,18 @@ pub fn noise_signal_std(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> f6
             &mut row,
             &mut ws,
         );
+        let twt = trends
+            .time()
+            .map(|a| crate::time_mode::tile_twt(&trends, labels, shape, i, i + 1, 0, nj, &a));
         for j in 0..nj {
-            let thr = noise.mask_threshold(seabed[i * nj + j], TINY_DIGI);
+            let sb = seabed[i * nj + j];
+            let sb = match (&twt, trends.time()) {
+                (Some(t), Some(a)) => {
+                    crate::time_mode::twt_at(&t[j * (nz + 1)..(j + 1) * (nz + 1)], sb) / a.dt_ms
+                }
+                _ => sb,
+            };
+            let thr = noise.mask_threshold(sb, digi);
             for (k, &v) in row[j * nk..(j + 1) * nk - 1].iter().enumerate() {
                 if k as f64 >= thr {
                     acc.push(v as f64);
@@ -219,9 +255,11 @@ pub fn generate_noise(cfg: &E2eConfig, angle_deg: f64) -> Option<Vec<f32>> {
     let f = SeismicFilters::resolve(cfg, &labels, shape)
         .unwrap_or_else(|e| panic!("invalid FilterConfig: {e}"))?;
     let noise = f.noise?.at_angle(angle_deg);
-    let [ni, nj, nk] = shape;
+    let _ = shape;
+    let oshape = cfg.output_shape();
+    let [ni, nj, nk] = oshape;
     let mut out = vec![0.0f32; ni * nj * nk];
-    noise.add_to_tile(&mut out, (0, ni), (0, nj), shape);
+    noise.add_to_tile(&mut out, (0, ni), (0, nj), oshape);
     Some(out)
 }
 
@@ -255,10 +293,13 @@ pub fn effective_wavelet<'a>(cfg: &E2eConfig, wavelet: &'a [f64]) -> &'a [f64] {
 /// Zoeppritz with no wavelet and no filters (the legacy `rfc_raw` angle
 /// cube). This is the input the legacy `postprocess_rfc_cubes` bandpasses;
 /// used for parity checks and QC. Memory is the full `(ni, nj, nk)` output.
+///
+/// In time mode this is the time-domain raw reflectivity `(ni, nj, nt)`.
 pub fn generate_reflectivity(cfg: &E2eConfig, angle_deg: f64) -> Vec<f32> {
     let (labels, shape) = generate_labels(cfg);
-    let [ni, nj, nk] = shape;
+    let [ni, nj, _] = shape;
     let trends = elastic_model(cfg, &labels, shape);
+    let nk = cfg.output_samples();
     let mut out = vec![0.0f32; ni * nj * nk];
     let mut stats = WorkingSetStats::default();
     fuse_tile_local(
@@ -285,7 +326,7 @@ pub fn apply_filters_to_volume(cfg: &E2eConfig, volume: &mut [f32]) {
     let Some(f) = seismic_filters(cfg) else {
         return;
     };
-    let shape = cfg.shape();
+    let shape = cfg.output_shape();
     f.bandpass_traces(volume, shape[2]);
     if f.lateral_size > 1 {
         let out = synthoseis_seismic::lateral_uniform_volume(volume, shape, f.lateral_size);
@@ -324,7 +365,11 @@ pub fn fuse_tile_filtered(
     tile_out: &mut [f32],
     stats: &mut WorkingSetStats,
 ) {
-    let [ni, nj, nk] = shape;
+    let [ni, nj, nz] = shape;
+    // Output samples per trace (`nt` in time mode) and the output shape the
+    // noise keys, the bandpass and the lateral filter run on.
+    let nk = trends.output_nk(nz);
+    let oshape = [ni, nj, nk];
     let n_out = (i1 - i0) * (j1 - j0) * nk;
     let tile_out = &mut tile_out[..n_out];
     let Some(f) = filters else {
@@ -362,7 +407,7 @@ pub fn fuse_tile_filtered(
             );
             noise
                 .at_angle(angle_deg)
-                .add_to_tile(&mut src, (si0, si1), (sj0, sj1), shape);
+                .add_to_tile(&mut src, (si0, si1), (sj0, sj1), oshape);
             if !wavelet.is_empty() {
                 convolve_traces_in_place(&mut src, nk, wavelet);
             }
@@ -373,7 +418,7 @@ pub fn fuse_tile_filtered(
         &src,
         (si0, si1),
         (sj0, sj1),
-        shape,
+        oshape,
         (i0, i1),
         (j0, j1),
         f.lateral_size,

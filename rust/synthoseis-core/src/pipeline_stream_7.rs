@@ -44,6 +44,7 @@ mod tests {
     #[test]
     fn larger_cube_chunked_parity_and_bound() {
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
@@ -80,6 +81,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("stream.mdio");
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
@@ -109,6 +111,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("strip.mdio");
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
@@ -138,6 +141,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("strip16.mdio");
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
@@ -162,6 +166,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("one.mdio");
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),

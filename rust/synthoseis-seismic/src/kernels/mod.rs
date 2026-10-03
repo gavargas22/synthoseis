@@ -23,6 +23,6 @@ pub use zoeppritz::{
 };
 pub use twt::{
     default_twt_samples, depth_staircase_ok, insert_spikes, linear_split, output_nyquist_ok,
-    point_sample_labels, reflectivity_time_column, twt_column, KaiserSinc, TwtKernel, TwtScratch,
+    point_sample_labels, reflectivity_time_column, reflectivity_time_column_with_twt, twt_column, KaiserSinc, TwtKernel, TwtScratch,
     SINC_HALF_WIDTH, SINC_KAISER_BETA, SINC_PHASES, TWT_REFERENCE_VELOCITY_M_S,
 };

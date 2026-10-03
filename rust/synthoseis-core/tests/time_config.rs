@@ -1,15 +1,24 @@
-//! `TimeConfig` (depth-to-time PR A): library only, disabled by default,
-//! validation per the spec §2 / §3.3. No pipeline path reads it yet; the
-//! existing golden-hash tests prove the output is unchanged.
+//! `TimeConfig` (depth-to-time): enabled by default since PR B (time
+//! output), `TimeConfig::legacy()` / `--legacy-depth-as-time` is master's
+//! depth-as-time axis; validation per the spec §2 / §3.3.
 
 use synthoseis_core::pipeline::E2eConfig;
 use synthoseis_core::{FilterConfig, TimeConfig};
 use synthoseis_seismic::TwtKernel;
 
 #[test]
-fn defaults_are_disabled_and_keep_the_cube_shape() {
+fn defaults_are_time_mode_and_keep_the_cube_shape() {
     let tc = TimeConfig::default();
-    assert!(!tc.enabled);
+    assert!(tc.enabled);
+    assert_eq!(TimeConfig::legacy(), TimeConfig { enabled: false, ..TimeConfig::default() });
+    let cfg = E2eConfig::default();
+    assert!(cfg.time_enabled());
+    assert_eq!(cfg.output_shape(), cfg.shape());
+    // `--legacy-toy-depth` implies the legacy axis.
+    let toy = E2eConfig { rock_physics: synthoseis_core::RockPhysicsConfig::legacy_toy(), ..E2eConfig::default() };
+    assert!(!toy.time_enabled());
+    assert_eq!(toy.time_axis(), None);
+    assert_eq!(toy.digi_ms(), 4.0);
     assert_eq!((tc.dt_ms, tc.samples, tc.kernel), (4.0, None, TwtKernel::Sinc));
     let cfg = E2eConfig::default();
     let dz = cfg.rock_physics.depth_step_m;

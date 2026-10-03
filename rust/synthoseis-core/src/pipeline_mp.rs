@@ -7,12 +7,11 @@
 use std::path::Path;
 
 use synthoseis_io::{CreateConfig, Dimension, MdioStore};
-use synthoseis_seismic::ricker;
 
 use crate::parity;
-use crate::pipeline::{E2eConfig, E2eReport, TINY_DIGI};
+use crate::pipeline::{E2eConfig, E2eReport};
 use crate::pipeline_stream::{
-    fault_model, generate_chunked, generate_fault_labels, generate_labels,
+    fault_model, generate_chunked, generate_labels,
     resolve_chunk_shape, write_strip_partition, SeismicFilters, WorkingSetStats,
 };
 use crate::rock_physics::elastic_model;
@@ -73,7 +72,7 @@ pub fn prepare_multiprocess_store(
         cfg.chunk_shape = Some(c);
     }
 
-    let (_labels, shape) = generate_labels(&cfg);
+    let shape = cfg.output_shape();
     let [ni, nj, nk] = shape;
     let chunks = resolve_chunk_shape(&cfg);
     let [ci, _cj, _ck] = chunks;
@@ -94,7 +93,7 @@ pub fn prepare_multiprocess_store(
             Dimension::sized("sample", nk),
         ],
         chunks: Some(chunks),
-        digi: TINY_DIGI,
+        digi: cfg.digi_ms(),
         seed: cfg.seed,
         units: "ms".into(),
         name: "synthoseis-e2e".into(),
@@ -103,6 +102,7 @@ pub fn prepare_multiprocess_store(
         std::fs::remove_dir_all(&path).map_err(|e| format!("remove existing store: {e}"))?;
     }
     let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
+    crate::time_mode::write_time_attrs(&store, &cfg)?;
     store.ensure_labels_array().map_err(|e| e.to_string())?;
     if cfg.faults.enabled() {
         store
@@ -162,7 +162,7 @@ pub fn run_worker_partition(
     let (labels, shape) = generate_labels(cfg);
     let chunks = resolve_chunk_shape(cfg);
     let trends = elastic_model(cfg, &labels, shape);
-    let wavelet = ricker(40.0, TINY_DIGI, 1);
+    let wavelet = cfg.ricker();
 
     // Each worker rebuilds the (deterministic) fault model and evaluates only
     // its own tiles.
@@ -213,7 +213,7 @@ pub fn finalize_multiprocess_e2e(
     store_path: &Path,
 ) -> Result<(E2eReport, WorkingSetStats), String> {
     let chunks = resolve_chunk_shape(cfg);
-    let shape = cfg.shape();
+    let shape = cfg.output_shape();
     let side = multiprocess_sidecar_dir(store_path);
 
     let mut stats = WorkingSetStats {
@@ -268,7 +268,7 @@ pub fn finalize_multiprocess_e2e(
         &reference.angle_stack,
         &back_angles,
     );
-    if let Some(reference) = generate_fault_labels(cfg) {
+    if let Some(reference) = crate::time_mode::generate_fault_labels_output(cfg) {
         let back = opened.read_fault_labels_u8().map_err(|e| e.to_string())?;
         if back != reference {
             return Err("multiprocess fault_labels diverged from single-pass reference".into());
@@ -320,6 +320,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("mp.mdio");
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),

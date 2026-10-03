@@ -31,6 +31,7 @@ fn angle_hash(v: &[f32]) -> u64 {
 
 fn cfg(seed: u64, shape: [usize; 3], chunks: [usize; 3], faults: usize) -> E2eConfig {
     E2eConfig {
+        time: synthoseis_core::TimeConfig::legacy(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed,
         inline_count: shape[0],

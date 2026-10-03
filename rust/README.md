@@ -129,6 +129,15 @@ cargo run -p synthoseis -- run --e2e --store /tmp/e2e.mdio
 `synthoseis-core::pipeline::{generate_tiny_cube, run_e2e}` is the library entry;
 CLI `--e2e` is the CI-friendly smoke; `--chunked` selects the fused memory-bounded path.
 
+**Output axis: two-way time (default).** The seismic deliverable and its label
+cubes are in two-way time built from the voxel Vp (`dt = 4 ms`, `nt = NK` by
+default). Geology and rock physics stay in depth. `--legacy-depth-as-time`
+restores master f3720fb2's depth-as-time axis (one 4 m cell = one 4 ms
+sample) byte for byte, and `--legacy-toy-depth` implies it. Use `--dt-ms`,
+`--twt-samples` and `--twt-kernel sinc|linear` to tune the time axis. Time
+stores carry the `time_conversion = "vp-twt"`, `depth_step_m` and
+`twt_kernel` attributes. See [`docs/depth-to-time.md`](../docs/depth-to-time.md).
+
 
 ## Multi-worker job partition (local)
 

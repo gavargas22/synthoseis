@@ -230,10 +230,16 @@ chunk footprint (`pipeline_overlap_faults.rs`). The tiles are salt-masked
 like every other path, or unmasked with `fault_labels_through_salt`, and
 checked against `generate_fault_labels`.
 
+This depth pass runs only on the legacy depth axis (`TimeConfig::legacy()`,
+`--legacy-depth-as-time`). In time mode, the default since PR #39, the
+overlapped writer already writes masked output-domain (time) fault labels in
+its producer loop. The depth pass is guarded with `if !time_mode`, because
+its depth tiles would otherwise overwrite them.
+
 `FaultConfig::overlap_legacy_no_fault_labels` (library only) skips this
-step. Its stores are byte-identical to those written by a master f3720fb2
-build, except the creation timestamp. Time mode (PR #39) writes its own
-output-domain fault labels in the same writer.
+step. Its depth-axis stores are byte-identical to those written by a master
+f3720fb2 or d51ab237 build, except the creation timestamp. In time mode the
+switch has no effect, and the store equals d51ab237 either way.
 
 ## Deferred (follow-ups)
 

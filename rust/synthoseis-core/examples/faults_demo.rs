@@ -48,6 +48,7 @@ fn main() {
     std::fs::create_dir_all(&out).expect("create out dir");
 
     let base = E2eConfig {
+        time: Default::default(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed,
         inline_count: ni,

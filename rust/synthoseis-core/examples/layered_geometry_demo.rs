@@ -62,6 +62,7 @@ fn main() {
     let nk: usize = arg(&args, 5, 256);
     std::fs::create_dir_all(&out).expect("create out dir");
     let layered = E2eConfig {
+        time: Default::default(),
         geometry: ToyGeometry::Layered,
         seed,
         inline_count: ni,

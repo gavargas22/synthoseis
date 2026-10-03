@@ -699,6 +699,17 @@ pub fn verify_salt_labels(store: &synthoseis_io::MdioStore, cfg: &E2eConfig) -> 
     let Some(body) = salt_body(cfg) else {
         return Ok(());
     };
+    if cfg.time_enabled() {
+        // Output-domain read-back (#34 review rule (c)): the time-domain
+        // salt labels, point-sampled through each column's T.
+        let want = crate::time_mode::generate_salt_labels_output(cfg).unwrap_or_default();
+        let got = store.read_salt_labels_u8().map_err(|e| e.to_string())?;
+        return if got == want {
+            Ok(())
+        } else {
+            Err("time-domain salt_labels differ from the resampled salt body".into())
+        };
+    }
     let shape = store.shape();
     let chunks = store.config().chunks_or_shape();
     let n = |d: usize| shape[d].div_ceil(chunks[d]);

@@ -40,6 +40,7 @@ fn f32_bytes(v: &[f32]) -> Vec<u8> {
 
 fn config(seed: u64, faults: usize, shape: [usize; 3], salt: bool) -> E2eConfig {
     E2eConfig {
+        time: Default::default(),
         geometry: ToyGeometry::Layered,
         seed,
         inline_count: shape[0],

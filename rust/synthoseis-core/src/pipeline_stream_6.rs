@@ -23,11 +23,14 @@ pub fn write_strip_partition(
     fault_salt: Option<&crate::salt::SaltBody>,
     filters: Option<&SeismicFilters>,
 ) -> Result<(WorkingSetStats, Vec<f32>), String> {
-    let [ni, nj, nk] = shape;
+    // `shape` is the depth shape; chunks and writes are on the output axis
+    // (`nt` samples in time mode).
+    let [ni, nj, nz] = shape;
+    let nk = trends.output_nk(nz);
     let [ci, cj, ck] = chunks;
     let mut stats = WorkingSetStats {
         chunk_shape: chunks,
-        volume_shape: shape,
+        volume_shape: [ni, nj, nk],
         ..WorkingSetStats::default()
     };
     stats.observe(wavelet.len() * 8 + trends.model_bytes());
@@ -81,6 +84,19 @@ pub fn write_strip_partition(
             if let (Some(t), Some(s)) = (fault_tile.as_mut(), fault_salt) {
                 crate::salt::mask_fault_tile_salt(t, s);
             }
+            // Output-domain label cubes of this tile (point-sampled onto the
+            // time axis through the tile's own T in time mode).
+            let out_labels = crate::time_mode::output_label_tile(
+                trends,
+                labels,
+                shape,
+                i0,
+                i1,
+                j0,
+                j1,
+                fault_tile.as_ref(),
+                trends.salt(),
+            );
 
             let mut k0 = 0usize;
             let mut k_chunk = 0usize;
@@ -89,21 +105,17 @@ pub fn write_strip_partition(
                 let tk = k1 - k0;
                 let n = ti * tj * tk;
                 chunk_angles.resize(n, 0.0);
-                chunk_labels.resize(n, 0);
                 let mut bi = 0;
                 for di in 0..ti {
                     for dj in 0..tj {
                         for dk in 0..tk {
                             let local = (di * tj + dj) * nk + (k0 + dk);
                             chunk_angles[bi] = tile_angles[local];
-                            let gi = i0 + di;
-                            let gj = j0 + dj;
-                            let gk = k0 + dk;
-                            chunk_labels[bi] = labels[(gi * nj + gj) * nk + gk];
                             bi += 1;
                         }
                     }
                 }
+                out_labels.chunk(&out_labels.labels, k0, k1, &mut chunk_labels);
                 let key = [i_chunk, j_chunk, k_chunk];
                 store
                     .write_chunk(key, &chunk_angles)
@@ -111,14 +123,14 @@ pub fn write_strip_partition(
                 store
                     .write_labels_chunk(key, &chunk_labels)
                     .map_err(|e| e.to_string())?;
-                if let Some(t) = &fault_tile {
-                    fault_tile_chunk(t, k0, k1, &mut chunk_faults);
+                if let Some(t) = &out_labels.faults {
+                    out_labels.chunk(t, k0, k1, &mut chunk_faults);
                     store
                         .write_fault_labels_chunk(key, &chunk_faults)
                         .map_err(|e| e.to_string())?;
                 }
-                if let Some(s) = trends.salt() {
-                    crate::salt::salt_chunk(s, i0, i1, j0, j1, k0, k1, &mut chunk_salt);
+                if let Some(t) = &out_labels.salt {
+                    out_labels.chunk(t, k0, k1, &mut chunk_salt);
                     store
                         .write_salt_labels_chunk(key, &chunk_salt)
                         .map_err(|e| e.to_string())?;

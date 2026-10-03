@@ -28,6 +28,7 @@ fn ah(v: &[f32]) -> u64 {
 
 fn demo(seed: u64, shape: [usize; 3], faults: usize) -> E2eConfig {
     E2eConfig {
+        time: synthoseis_core::TimeConfig::legacy(),
         seed,
         inline_count: shape[0],
         crossline_count: shape[1],

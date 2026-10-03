@@ -1,5 +1,9 @@
 /// Fuse one spatial tile: elastic props → Zoeppritz RFC → wavelet convolution.
 ///
+/// `shape` is the depth shape; `tile_out` holds `(ti, tj, nk_out)` samples,
+/// `nk_out` = [`ElasticModel::output_nk`] (`nt` in time mode, where the
+/// reflectivity is inserted on the two-way-time axis before the wavelet).
+///
 /// `trends` is the [`ElasticModel`]: the master toy trends go through the
 /// label kernel unchanged (bit-identical to master); the default rock-physics
 /// model fills tile-scale Vp / Vs / rho buffers first and fuses those.
@@ -28,14 +32,28 @@ pub fn fuse_tile_local(
                 labels, shape, i0, i1, j0, j1, t, wavelet, angle_deg, tile_out,
             );
         }
-        ElasticModel::Rpm(_) => {
+        ElasticModel::Rpm(m) => {
             let n = (i1 - i0) * (j1 - j0) * nk;
             let (mut vp, mut vs, mut rho) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
             stats.observe(synthoseis_gpu::fuse_tile_scratch_bytes(nk) + 3 * n * 4);
             trends.tile_properties(labels, shape, i0, i1, j0, j1, &mut vp, &mut vs, &mut rho);
-            let _backend = synthoseis_gpu::fuse_props_tile_dispatch(
-                &vp, &vs, &rho, nk, wavelet, angle_deg, trends.zoeppritz_form(), tile_out,
-            );
+            match &m.time {
+                // Time mode: `(ti, tj, nt)` output (CPU only, see
+                // `time_mode::fuse_props_tile_time`). T + time trace scratch.
+                Some(axis) => {
+                    stats.observe(
+                        synthoseis_gpu::fuse_tile_scratch_bytes(nk) + 3 * n * 4 + (nk + 1) * 8 + axis.nt * 16,
+                    );
+                    crate::time_mode::fuse_props_tile_time(
+                        &vp, &vs, &rho, nk, axis, wavelet, angle_deg, trends.zoeppritz_form(), tile_out,
+                    );
+                }
+                None => {
+                    let _backend = synthoseis_gpu::fuse_props_tile_dispatch(
+                        &vp, &vs, &rho, nk, wavelet, angle_deg, trends.zoeppritz_form(), tile_out,
+                    );
+                }
+            }
         }
     }
 }
