@@ -44,6 +44,7 @@ fn planar(filters: FilterConfig) -> E2eConfig {
         chunk_shape: Some([8, 5, 64]),
         faults: FaultConfig::with_count(3),
         filters,
+        time: synthoseis_core::TimeConfig::legacy(),
         ..E2eConfig::default()
     }
 }
@@ -68,6 +69,7 @@ fn rich_salt(filters: FilterConfig) -> E2eConfig {
         chunk_shape: Some([8, 8, 96]),
         faults: FaultConfig::with_count(4),
         filters,
+        time: synthoseis_core::TimeConfig::legacy(),
         ..E2eConfig::default()
     }
 }

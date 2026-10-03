@@ -296,6 +296,7 @@ fn chain_is_prefix_stable_deterministic_and_validated() {
 
 fn layered(seed: u64, shape: [usize; 3], rp: RockPhysicsConfig) -> E2eConfig {
     E2eConfig {
+        time: synthoseis_core::TimeConfig::legacy(),
         seed,
         inline_count: shape[0],
         crossline_count: shape[1],

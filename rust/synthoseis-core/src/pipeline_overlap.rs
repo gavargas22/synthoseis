@@ -4,17 +4,22 @@ use std::sync::mpsc::sync_channel;
 use std::thread;
 
 use synthoseis_io::{CreateConfig, Dimension, MdioStore};
-use synthoseis_seismic::ricker;
 
 use crate::parity;
-use crate::pipeline::{E2eConfig, E2eReport, TINY_DIGI};
+use crate::pipeline::{E2eConfig, E2eReport};
 use crate::pipeline_stream::{
-    fuse_tile_filtered, generate_chunked, generate_labels, resolve_chunk_shape,
+    fault_model, fuse_tile_filtered, generate_chunked, generate_labels, resolve_chunk_shape,
     SeismicFilters, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
 };
 use crate::rock_physics::elastic_model;
 
-type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>);
+/// `(key, angles, labels, salt, faults)`. `salt` is `Some` in time mode (the
+/// producer point-samples the output-domain salt labels with the tile's T);
+/// on the legacy axis the writer rebuilds salt chunks from the body.
+/// `faults` is `Some` in time mode with faulting on (output-domain
+/// `fault_labels`); the legacy axis writes no `fault_labels` here, exactly
+/// as master f3720fb2.
+type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
 
 /// Fuse tile N+1 on the caller while a dedicated std thread flushes tile N.
 ///
@@ -31,12 +36,13 @@ pub fn run_e2e_streaming_overlapped(
     SeismicFilters::from_config(cfg)?;
     let (labels, shape) = generate_labels(cfg);
     let filters = SeismicFilters::resolve(cfg, &labels, shape)?;
-    let [ni, nj, nk] = shape;
+    let oshape = cfg.output_shape();
+    let [ni, nj, nk] = oshape;
     let chunks = resolve_chunk_shape(cfg);
     let [ci, cj, ck] = chunks;
     let mut stats = WorkingSetStats {
         chunk_shape: chunks,
-        volume_shape: shape,
+        volume_shape: oshape,
         ..WorkingSetStats::default()
     };
 
@@ -47,21 +53,28 @@ pub fn run_e2e_streaming_overlapped(
             Dimension::sized("sample", nk),
         ],
         chunks: Some(chunks),
-        digi: TINY_DIGI,
+        digi: cfg.digi_ms(),
         seed: cfg.seed,
         units: "ms".into(),
         name: "synthoseis-e2e".into(),
     };
     {
         let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
+        crate::time_mode::write_time_attrs(&store, cfg)?;
         store.ensure_labels_array().map_err(|e| e.to_string())?;
         if cfg.effective_salt() {
             store.ensure_salt_labels_array().map_err(|e| e.to_string())?;
+        }
+        if cfg.time_enabled() && cfg.faults.enabled() {
+            store.ensure_fault_labels_array().map_err(|e| e.to_string())?;
         }
     }
     // Salt labels are rebuilt per chunk by the writer from the salt body.
     let salt = crate::salt::salt_body(cfg);
     let has_salt = salt.is_some();
+    let time_mode = cfg.time_enabled();
+    // Time mode: fault model for output-domain fault_labels (see WriteChunk).
+    let faults = if time_mode { fault_model(cfg) } else { None };
 
     let (tx, rx) = sync_channel::<WriteChunk>(1);
     let (ack_tx, ack_rx) = sync_channel::<()>(0);
@@ -69,12 +82,21 @@ pub fn run_e2e_streaming_overlapped(
     let writer = thread::spawn(move || -> Result<(), String> {
         let store = MdioStore::open(&writer_path).map_err(|e| e.to_string())?;
         let mut chunk_salt = Vec::new();
-        for (key, angles, chunk_labels) in rx {
+        for (key, angles, chunk_labels, out_salt, out_faults) in rx {
             store.write_chunk(key, &angles).map_err(|e| e.to_string())?;
             store
                 .write_labels_chunk(key, &chunk_labels)
                 .map_err(|e| e.to_string())?;
-            if let Some(s) = &salt {
+            if let Some(f) = out_faults {
+                store
+                    .write_fault_labels_chunk(key, &f)
+                    .map_err(|e| e.to_string())?;
+            }
+            if let Some(t) = out_salt {
+                store
+                    .write_salt_labels_chunk(key, &t)
+                    .map_err(|e| e.to_string())?;
+            } else if let Some(s) = &salt {
                 let [i0, j0, k0] = [key[0] * ci, key[1] * cj, key[2] * ck];
                 let (i1, j1, k1) = ((i0 + ci).min(ni), (j0 + cj).min(nj), (k0 + ck).min(nk));
                 crate::salt::salt_chunk(s, i0, i1, j0, j1, k0, k1, &mut chunk_salt);
@@ -90,7 +112,8 @@ pub fn run_e2e_streaming_overlapped(
     });
 
     let trends = elastic_model(cfg, &labels, shape);
-    let wavelet = ricker(40.0, TINY_DIGI, 1);
+    let wavelet = cfg.ricker();
+    let fault_salt = crate::salt::fault_label_salt(cfg, &trends);
     let mut tile_angles = vec![0.0f32; ci * cj * nk];
     // Elastic model + trace scratch + wavelet (+ tile Vp/Vs/rho for the
     // rock-physics model) + tile output + exactly one writer-owned chunk.
@@ -100,7 +123,7 @@ pub fn run_e2e_streaming_overlapped(
         + wavelet.len() * 8
         + props_tile_bytes(&trends, ci * cj * nk);
     let tile_bytes = tile_angles.capacity() * 4;
-    let in_flight_bytes = ci * cj * ck * (4 + 1 + has_salt as usize);
+    let in_flight_bytes = ci * cj * ck * (4 + 1 + has_salt as usize + faults.is_some() as usize);
     stats.peak_temp_bytes = fixed_bytes + tile_bytes + in_flight_bytes;
 
     let mut pending_write = false;
@@ -126,6 +149,29 @@ pub fn run_e2e_streaming_overlapped(
                 &mut stats,
             );
             stats.tiles_processed += 1;
+            // Time mode: output-domain labels/faults/salt for this tile.
+            // Masked by the salt body (`fault AND NOT salt`, #38) before the
+            // point sampling onto the time axis.
+            let mut fault_tile = faults.as_ref().map(|m| m.compute_tile(i0, i1, j0, j1));
+            if let (Some(t), Some(s)) = (fault_tile.as_mut(), fault_salt) {
+                crate::salt::mask_fault_tile_salt(t, s);
+            }
+            if let Some(t) = &fault_tile {
+                stats.observe(t.lookup.capacity() * 4 + t.mask.capacity() * 2);
+            }
+            let out_labels = time_mode.then(|| {
+                crate::time_mode::output_label_tile(
+                    &trends,
+                    &labels,
+                    shape,
+                    i0,
+                    i1,
+                    j0,
+                    j1,
+                    fault_tile.as_ref(),
+                    trends.salt(),
+                )
+            });
 
             for (k_chunk, k0) in (0..nk).step_by(ck).enumerate() {
                 // Tile fusion above overlaps the previous flush. Wait only at handoff,
@@ -144,16 +190,39 @@ pub fn run_e2e_streaming_overlapped(
                 let n = ti * tj * tk;
                 let mut chunk_angles = Vec::with_capacity(n);
                 let mut chunk_labels = Vec::with_capacity(n);
-                for di in 0..ti {
-                    for dj in 0..tj {
-                        for k in k0..k1 {
-                            chunk_angles.push(tile_angles[(di * tj + dj) * nk + k]);
-                            chunk_labels.push(labels[((i0 + di) * nj + (j0 + dj)) * nk + k]);
+                let mut chunk_salt = None;
+                let mut chunk_faults = None;
+                if let Some(t) = &out_labels {
+                    for di in 0..ti {
+                        for dj in 0..tj {
+                            for k in k0..k1 {
+                                chunk_angles.push(tile_angles[(di * tj + dj) * nk + k]);
+                            }
+                        }
+                    }
+                    t.chunk(&t.labels, k0, k1, &mut chunk_labels);
+                    if let Some(sc) = &t.salt {
+                        let mut v = Vec::with_capacity(n);
+                        t.chunk(sc, k0, k1, &mut v);
+                        chunk_salt = Some(v);
+                    }
+                    if let Some(fc) = &t.faults {
+                        let mut v = Vec::with_capacity(n);
+                        t.chunk(fc, k0, k1, &mut v);
+                        chunk_faults = Some(v);
+                    }
+                } else {
+                    for di in 0..ti {
+                        for dj in 0..tj {
+                            for k in k0..k1 {
+                                chunk_angles.push(tile_angles[(di * tj + dj) * nk + k]);
+                                chunk_labels.push(labels[((i0 + di) * nj + (j0 + dj)) * nk + k]);
+                            }
                         }
                     }
                 }
                 if tx
-                    .send(([i_chunk, j_chunk, k_chunk], chunk_angles, chunk_labels))
+                    .send(([i_chunk, j_chunk, k_chunk], chunk_angles, chunk_labels, chunk_salt, chunk_faults))
                     .is_err()
                 {
                     producer_error = Some("overlap writer stopped while sending chunk".to_string());
@@ -180,6 +249,10 @@ pub fn run_e2e_streaming_overlapped(
     writer_result?;
 
     let store = MdioStore::open(&path).map_err(|e| e.to_string())?;
+    // Depth-axis overlap fault_labels (PR #40's
+    // `pipeline_overlap_faults::write_overlap_fault_labels`) belong here,
+    // guarded with `if !time_mode { ... }`: time mode already wrote its own
+    // masked output-domain fault_labels in the producer loop above.
     store
         .finalize_after_chunked_write(&[])
         .map_err(|e| e.to_string())?;
@@ -194,6 +267,14 @@ pub fn run_e2e_streaming_overlapped(
     );
     crate::salt::verify_salt_labels(&store, cfg)
         .map_err(|e| format!("overlapped salt_labels diverged from the salt body: {e}"))?;
+    if time_mode {
+        if let Some(reference) = crate::time_mode::generate_fault_labels_output(cfg) {
+            let back = store.read_fault_labels_u8().map_err(|e| e.to_string())?;
+            if back != reference {
+                return Err("overlapped fault_labels diverged from the output-domain reference".into());
+            }
+        }
+    }
     if reference.labels != back_labels || reference.angle_stack != back_angles {
         return Err(format!(
             "overlapped MDIO exact parity failed: iou={:.6} agr={:.6} mae={:.6e} maxabs={:.6e}",
@@ -229,6 +310,7 @@ mod tests {
     fn assert_overlap(shape: [usize; 3], chunks: [usize; 3], seed: u64) {
         let dir = tempdir().unwrap();
         let cfg = E2eConfig {
+            time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
             filters: Default::default(),
@@ -254,7 +336,7 @@ mod tests {
             + props_tile_bytes(&model, chunks[0] * chunks[1] * shape[2])
             + 4 * shape[2] * 4
             + shape[2] * 8
-            + ricker(40.0, TINY_DIGI, 1).len() * 8
+            + cfg.ricker().len() * 8
             + chunks[0] * chunks[1] * shape[2] * 4
             + chunks.iter().product::<usize>() * 5;
         assert_eq!(stats.peak_temp_bytes, expected_peak);

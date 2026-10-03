@@ -5,6 +5,7 @@ use synthoseis_core::ToyGeometry;
 
 fn layered(seed: u64, shape: [usize; 3], rp: RockPhysicsConfig) -> E2eConfig {
     E2eConfig {
+        time: Default::default(),
         seed,
         inline_count: shape[0],
         crossline_count: shape[1],

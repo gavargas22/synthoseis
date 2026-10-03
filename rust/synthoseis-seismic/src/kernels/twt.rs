@@ -330,6 +330,30 @@ pub fn reflectivity_time_column(
     assert!(nz >= 1 && vs.len() == nz && rho.len() == nz);
     scratch.t.resize(nz + 1, 0.0);
     twt_column(vp, dz, &mut scratch.t);
+    let t = std::mem::take(&mut scratch.t);
+    reflectivity_time_column_with_twt(vp, vs, rho, &t, angle_deg, form, dt_ms, kernel, scratch, x);
+    scratch.t = t;
+}
+
+/// [`reflectivity_time_column`] with the column's times `t` (`T_0 … T_nz`,
+/// ms) given instead of computed from `vp` (`scratch.t` is not used). The
+/// pipeline's constant-velocity test hook builds `t` from a fixed velocity
+/// while Zoeppritz still sees the voxel properties.
+#[allow(clippy::too_many_arguments)]
+pub fn reflectivity_time_column_with_twt(
+    vp: &[f32],
+    vs: &[f32],
+    rho: &[f32],
+    t: &[f64],
+    angle_deg: f64,
+    form: ZoeppritzForm,
+    dt_ms: f64,
+    kernel: TwtKernel,
+    scratch: &mut TwtScratch,
+    x: &mut [f64],
+) {
+    let nz = vp.len();
+    assert!(nz >= 1 && vs.len() == nz && rho.len() == nz && t.len() == nz + 1);
     scratch.r.clear();
     for k in 0..nz.saturating_sub(1) {
         scratch.r.push(zoeppritz_pp_form(
@@ -345,7 +369,7 @@ pub fn reflectivity_time_column(
     }
     x.iter_mut().for_each(|v| *v = 0.0);
     let n_if = scratch.r.len();
-    insert_spikes(&scratch.r, &scratch.t[1..1 + n_if], dt_ms, kernel, x);
+    insert_spikes(&scratch.r, &t[1..1 + n_if], dt_ms, kernel, x);
 }
 
 /// Output-Nyquist check (spec §3.3, constraint 1): the highest signal

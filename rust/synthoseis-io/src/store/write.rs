@@ -295,6 +295,25 @@ impl MdioStore {
         )
     }
 
+    /// Merge extra root attributes into `.zattrs` (for example the
+    /// depth-to-time attributes `time_conversion`, `depth_step_m`,
+    /// `twt_kernel`) and refresh the consolidated metadata. Existing keys
+    /// are overwritten; every other key is kept.
+    pub fn set_root_attrs(&self, attrs: &[(&str, Value)]) -> Result<()> {
+        let path = self.root.join(".zattrs");
+        let mut root: Value = read_json(path.clone())?;
+        for (k, v) in attrs {
+            root[*k] = v.clone();
+        }
+        write_json(path, &root)?;
+        write_consolidated_metadata(&self.root)
+    }
+
+    /// The root `.zattrs` object.
+    pub fn root_attrs(&self) -> Result<Value> {
+        read_json(self.root.join(".zattrs"))
+    }
+
     /// Mark all traces live and refresh root stats after chunked primary writes.
     ///
     /// Call once after streaming [`Self::write_chunk`] / [`Self::write_labels_chunk`].

@@ -274,6 +274,7 @@ fn split_compartment_fluid_uniform_and_independent() {
 
 fn faulted_sandy(seed: u64, unsegmented: bool) -> E2eConfig {
     E2eConfig {
+        time: Default::default(),
         seed,
         inline_count: 24,
         crossline_count: 20,

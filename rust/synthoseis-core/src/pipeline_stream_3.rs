@@ -12,11 +12,14 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
     SeismicFilters::from_config(cfg)?;
     let (labels, shape) = generate_labels(cfg);
     let filters = SeismicFilters::resolve(cfg, &labels, shape)?;
-    let [ni, nj, nk] = shape;
+    // Output shape: `(ni, nj, nt)` in time mode (labels are point-sampled
+    // per tile onto the time axis), the depth shape on the legacy axis.
+    let oshape = cfg.output_shape();
+    let [ni, nj, nk] = oshape;
     let chunks = resolve_chunk_shape(cfg);
     let mut stats = WorkingSetStats {
         chunk_shape: chunks,
-        volume_shape: shape,
+        volume_shape: oshape,
         ..WorkingSetStats::default()
     };
 
@@ -27,12 +30,13 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
             Dimension::sized("sample", nk),
         ],
         chunks: Some(chunks),
-        digi: TINY_DIGI,
+        digi: cfg.digi_ms(),
         seed: cfg.seed,
         units: "ms".into(),
         name: "synthoseis-e2e".into(),
     };
     let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
+    crate::time_mode::write_time_attrs(&store, cfg)?;
     store.ensure_labels_array().map_err(|e| e.to_string())?;
     let faults = fault_model(cfg);
     if faults.is_some() {
@@ -45,7 +49,7 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
         store.ensure_salt_labels_array().map_err(|e| e.to_string())?;
     }
     let mut chunk_salt = Vec::new();
-    let wavelet = ricker(40.0, TINY_DIGI, 1);
+    let wavelet = cfg.ricker();
     stats.observe(wavelet.len() * 8 + trends.model_bytes());
 
     let [ci, cj, ck] = chunks;
@@ -88,6 +92,19 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
             if let Some(t) = &fault_tile {
                 stats.observe(t.lookup.capacity() * 4 + t.mask.capacity() * 2);
             }
+            // Output-domain label cubes of this tile (time mode: point
+            // sampled through the tile's own T; legacy: the depth values).
+            let out_labels = crate::time_mode::output_label_tile(
+                &trends,
+                &labels,
+                shape,
+                i0,
+                i1,
+                j0,
+                j1,
+                fault_tile.as_ref(),
+                trends.salt(),
+            );
 
             let mut k0 = 0usize;
             let mut k_chunk = 0usize;
@@ -96,35 +113,31 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
                 let tk = k1 - k0;
                 let n = ti * tj * tk;
                 chunk_angles.resize(n, 0.0);
-                chunk_labels.resize(n, 0);
                 let mut bi = 0;
                 for di in 0..ti {
                     for dj in 0..tj {
                         for dk in 0..tk {
                             let local = (di * tj + dj) * nk + (k0 + dk);
                             chunk_angles[bi] = tile_angles[local];
-                            let gi = i0 + di;
-                            let gj = j0 + dj;
-                            let gk = k0 + dk;
-                            chunk_labels[bi] = labels[(gi * nj + gj) * nk + gk];
                             bi += 1;
                         }
                     }
                 }
+                out_labels.chunk(&out_labels.labels, k0, k1, &mut chunk_labels);
                 store
                     .write_chunk([i_chunk, j_chunk, k_chunk], &chunk_angles)
                     .map_err(|e| e.to_string())?;
                 store
                     .write_labels_chunk([i_chunk, j_chunk, k_chunk], &chunk_labels)
                     .map_err(|e| e.to_string())?;
-                if let Some(t) = &fault_tile {
-                    fault_tile_chunk(t, k0, k1, &mut chunk_faults);
+                if let Some(t) = &out_labels.faults {
+                    out_labels.chunk(t, k0, k1, &mut chunk_faults);
                     store
                         .write_fault_labels_chunk([i_chunk, j_chunk, k_chunk], &chunk_faults)
                         .map_err(|e| e.to_string())?;
                 }
-                if let Some(s) = trends.salt() {
-                    crate::salt::salt_chunk(s, i0, i1, j0, j1, k0, k1, &mut chunk_salt);
+                if let Some(t) = &out_labels.salt {
+                    out_labels.chunk(t, k0, k1, &mut chunk_salt);
                     store
                         .write_salt_labels_chunk([i_chunk, j_chunk, k_chunk], &chunk_salt)
                         .map_err(|e| e.to_string())?;
@@ -154,7 +167,7 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
         &second.angle_stack,
         &back_angles,
     );
-    if let Some(reference) = generate_fault_labels(cfg) {
+    if let Some(reference) = crate::time_mode::generate_fault_labels_output(cfg) {
         let back = opened.read_fault_labels_u8().map_err(|e| e.to_string())?;
         if back != reference {
             return Err("streaming fault_labels diverged from tile-wise reference".into());

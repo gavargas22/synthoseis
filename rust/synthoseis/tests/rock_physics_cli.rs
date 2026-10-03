@@ -6,7 +6,16 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// Every golden set below runs on the legacy depth-as-time axis
+/// (`--legacy-depth-as-time`, depth-to-time spec §4): the pinned hashes are
+/// stores written by master binaries before the time conversion, and must
+/// pass unchanged. Time-mode runs use [`run_time`].
 fn run(args: &[&str], store: &Path) -> Output {
+    run_time(&with(args, &["--legacy-depth-as-time"]), store)
+}
+
+/// [`run`] without the legacy axis switch: the default time output.
+fn run_time(args: &[&str], store: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_synthoseis"))
         .args(["run", "--e2e", "--chunked"])
         .args(args)

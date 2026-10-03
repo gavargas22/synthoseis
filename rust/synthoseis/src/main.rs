@@ -116,6 +116,9 @@ enum Commands {
         /// reflectivity sample, reproducing master before the trailing-sample
         /// fix bit for bit. Default: bandpass the first NK-1 samples, exactly
         /// the trace legacy filters, and write the trailing sample as 0.
+        /// Legacy axis only (`--legacy-depth-as-time`): in time mode, when the
+        /// bandpass replaces the Ricker, the dead last sample NT-1 is always
+        /// 0; with the Ricker on there is no dead sample.
         #[arg(long, default_value_t = false)]
         bandpass_trailing_sample: bool,
         /// Add deterministic random noise at this signal-to-noise ratio (dB)
@@ -206,12 +209,76 @@ enum Commands {
         /// scaled by min(samples / 1250, 1).
         #[arg(long, default_value_t = false)]
         salt_legacy_top_offset: bool,
+        /// Legacy switch: write the depth-sampled seismic as time (each depth
+        /// sample = one 4 ms sample, an implied constant 2000 m/s), master
+        /// f3720fb2 bit for bit. Default: convert to two-way time from the
+        /// voxel Vp. `--legacy-toy-depth` implies it. See
+        /// docs/depth-to-time.md.
+        #[arg(long, default_value_t = false)]
+        legacy_depth_as_time: bool,
+        /// Output sample interval in ms (0.5-8.0, default 4). Time mode only.
+        #[arg(long)]
+        dt_ms: Option<f64>,
+        /// Output trace length in time samples (default: nz * 2 dz / 2000 m/s
+        /// / dt, = NK at the defaults; 16 <= N <= 8 x NK). Time mode only.
+        #[arg(long)]
+        twt_samples: Option<usize>,
+        /// Reflectivity insertion kernel: `sinc` (default, Kaiser-windowed)
+        /// or `linear` (fast 2-tap split; aliases above ~0.4 f_N, so best
+        /// with the bandpass-only chain). Time mode only.
+        #[arg(long)]
+        twt_kernel: Option<String>,
         /// Legacy switch: keep fault labels inside the salt body (master
         /// 2b3850ba). By default data/fault_labels is fault AND NOT salt.
         /// See docs/salt-bodies.md.
         #[arg(long, default_value_t = false)]
         fault_labels_through_salt: bool,
     },
+}
+
+/// `--legacy-depth-as-time` / `--dt-ms` / `--twt-samples` / `--twt-kernel`
+/// (spec §2). The time options are rejected with either legacy switch
+/// (`--legacy-toy-depth` implies the legacy axis), and
+/// `--bandpass-trailing-sample` is legacy-axis only: in time mode the dead
+/// last sample `nt - 1` is zeroed whenever the bandpass replaces the Ricker
+/// (spec §3.7), and there is no dead sample when the Ricker is on.
+fn parse_time(
+    legacy_depth_as_time: bool,
+    legacy_toy_depth: bool,
+    dt_ms: Option<f64>,
+    twt_samples: Option<usize>,
+    twt_kernel: Option<&str>,
+    bandpass_trailing_sample: bool,
+) -> Result<synthoseis_core::TimeConfig, String> {
+    let time_opts = dt_ms.is_some() || twt_samples.is_some() || twt_kernel.is_some();
+    if (legacy_depth_as_time || legacy_toy_depth) && time_opts {
+        return Err(
+            "--dt-ms / --twt-samples / --twt-kernel have no effect with --legacy-depth-as-time or --legacy-toy-depth"
+                .into(),
+        );
+    }
+    if legacy_depth_as_time || legacy_toy_depth {
+        return Ok(synthoseis_core::TimeConfig::legacy());
+    }
+    if bandpass_trailing_sample {
+        return Err(
+            "--bandpass-trailing-sample requires --legacy-depth-as-time (in time mode the dead last sample nt-1 is zeroed whenever the bandpass replaces the Ricker)"
+                .into(),
+        );
+    }
+    let mut t = synthoseis_core::TimeConfig::default();
+    if let Some(dt) = dt_ms {
+        if !dt.is_finite() {
+            return Err(format!("--dt-ms must be finite, got {dt}"));
+        }
+        t.dt_ms = dt;
+    }
+    t.samples = twt_samples;
+    if let Some(k) = twt_kernel {
+        t.kernel = synthoseis_core::TwtKernel::parse(k)
+            .ok_or_else(|| format!("--twt-kernel expects sinc or linear, got {k:?}"))?;
+    }
+    Ok(t)
 }
 
 fn resolve_chunk_shape_cli(
@@ -527,6 +594,10 @@ fn main() {
             closures_unsegmented,
             no_salt,
             salt_legacy_top_offset,
+            legacy_depth_as_time,
+            dt_ms,
+            twt_samples,
+            twt_kernel,
             fault_labels_through_salt,
         }) => {
             let workers = workers.max(1);
@@ -648,6 +719,40 @@ fn main() {
             } else {
                 (2, 2, 4)
             };
+            let time = parse_time(
+                legacy_depth_as_time,
+                legacy_toy_depth,
+                dt_ms,
+                twt_samples,
+                twt_kernel.as_deref(),
+                bandpass_trailing_sample,
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(2);
+            });
+            // Validate the output axis against the depth model and filters
+            // (dt range, nt range, output Nyquist) before any work: exit 2.
+            let probe = synthoseis_core::pipeline::E2eConfig {
+                seed,
+                inline_count,
+                crossline_count,
+                samples,
+                filters: filters.clone(),
+                rock_physics: rock.clone(),
+                geometry,
+                time: time.clone(),
+                ..Default::default()
+            };
+            if e2e {
+                if let Err(e) = probe.validate_time() {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                }
+            }
+            // Output samples per trace (`nt` in time mode): the default
+            // `--chunk-k` and every chunk clamp are along the output axis.
+            let out_samples = probe.output_samples();
             let config = RunConfig {
                 seed,
                 workers,
@@ -659,7 +764,7 @@ fn main() {
                 seed,
                 inline_count,
                 crossline_count,
-                samples,
+                out_samples,
                 chunk_i,
                 chunk_j,
                 chunk_k,
@@ -679,6 +784,7 @@ fn main() {
                 chunk_shape,
                 &rock,
                 geometry,
+                &time,
             ) {
                 return;
             }
@@ -695,6 +801,7 @@ fn main() {
                 crossline_count,
                 samples,
                 chunk_shape,
+                &time,
             );
 
             if cli_jobs::maybe_run_multiprocess(
@@ -711,6 +818,7 @@ fn main() {
                 chunk_shape,
                 &rock,
                 geometry,
+                &time,
             ) {
                 return;
             }
@@ -734,6 +842,7 @@ fn main() {
                     filters,
                     rock,
                     geometry,
+                    time,
                 );
             } else if workers == 1 {
                 cli_e2e::run_single_worker_placeholder(&config, store, seed);
