@@ -249,10 +249,15 @@ pub fn run_e2e_streaming_overlapped(
     writer_result?;
 
     let store = MdioStore::open(&path).map_err(|e| e.to_string())?;
-    // Depth-axis overlap fault_labels (PR #40's
-    // `pipeline_overlap_faults::write_overlap_fault_labels`) belong here,
-    // guarded with `if !time_mode { ... }`: time mode already wrote its own
-    // masked output-domain fault_labels in the producer loop above.
+    // Depth-axis fault labels (none on master f3720fb2 / d51ab237 depth mode;
+    // see `pipeline_overlap_faults`). Guarded: time mode already wrote its own
+    // masked output-domain fault_labels in the producer loop above, and depth
+    // tiles here would overwrite them.
+    if !time_mode {
+        crate::pipeline_overlap_faults::write_overlap_fault_labels(
+            &store, cfg, &trends, shape, chunks, &mut stats,
+        )?;
+    }
     store
         .finalize_after_chunked_write(&[])
         .map_err(|e| e.to_string())?;

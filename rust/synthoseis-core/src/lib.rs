@@ -144,6 +144,7 @@ pub mod pipeline;
 pub mod pipeline_geometry_many;
 pub mod pipeline_mp;
 pub mod pipeline_overlap;
+mod pipeline_overlap_faults;
 pub mod pipeline_stream;
 pub mod rock_physics;
 pub mod salt;
