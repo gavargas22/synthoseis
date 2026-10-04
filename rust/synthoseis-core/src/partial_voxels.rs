@@ -1,8 +1,8 @@
 //! Partial voxels: exact 1D vertical overlap fractions per depth cell
 //! (partial-voxels spec §1.1–§1.2, §1.6, §3.1–§3.2, §3.7).
 //!
-//! PR A ships the kernel only: nothing here is wired into the pipeline, and
-//! no output changes. Fractions are recomputed per column from the
+//! The kernels are wired into the pipeline by [`crate::partial_model`]
+//! behind `--partial-voxel-reflectivity` (off by default in PR B1). Fractions are recomputed per column from the
 //! continuous (pre-rounding) geometry, so nothing new is stored per voxel.
 //!
 //! # Coordinates
@@ -36,6 +36,58 @@
 //! within `EPS_FRAC` of the previous kept breakpoint is dropped, so no part
 //! has `f < EPS_FRAC`, fractions of a cell sum to 1 and integer boundaries
 //! give pure cells.
+
+/// Reflectivity of mixed cells (spec §1.5): sub-cell interfaces at exact
+/// ray times (`Subcell`, time mode only) or Backus voxels with the
+/// cell-to-cell reflectivity (`Cell`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PvReflectivity {
+    #[default]
+    Subcell,
+    Cell,
+}
+
+impl PvReflectivity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PvReflectivity::Subcell => "subcell",
+            PvReflectivity::Cell => "cell",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "subcell" => Ok(PvReflectivity::Subcell),
+            "cell" => Ok(PvReflectivity::Cell),
+            other => Err(format!("--partial-voxel-reflectivity expects subcell or cell, got {other:?}")),
+        }
+    }
+}
+
+/// Partial-voxel switch (spec §2), in [`crate::RockPhysicsConfig`].
+/// `enabled = false` (the library default, and the CLI default until PR B2)
+/// is whole-voxel rasterisation, byte for byte as before. The planar
+/// geometry and `legacy_toy_depth` are always whole-voxel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PartialVoxelConfig {
+    pub enabled: bool,
+    /// `None`: `Subcell` in time mode, `Cell` on the legacy axis.
+    /// `Some(Subcell)` on the legacy axis is rejected by
+    /// [`crate::pipeline::E2eConfig::validate_time`].
+    pub reflectivity: Option<PvReflectivity>,
+}
+
+impl PartialVoxelConfig {
+    /// Partial voxels on with the default reflectivity for the axis.
+    pub fn on() -> Self {
+        Self { enabled: true, reflectivity: None }
+    }
+
+    /// Partial voxels on with an explicit reflectivity.
+    pub fn with(reflectivity: PvReflectivity) -> Self {
+        Self { enabled: true, reflectivity: Some(reflectivity) }
+    }
+}
 
 /// Parts with `f < EPS_FRAC` are not formed (spec §2): boundaries within
 /// `EPS_FRAC` cells of a cell edge or of the previous breakpoint are merged.
@@ -264,6 +316,135 @@ fn push_part(parts: &mut Vec<Part>, start: usize, kind: PartKind, frac: f64) {
     parts.push(Part { kind, frac });
 }
 
+/// Source interval `[σ⁻, σ⁺)` (unfaulted samples) of every output cell of a
+/// faulted column (spec §3.3). `lookup[k]` is the fault tile's continuous
+/// source position of cell k (labels take `round(lookup[k])`), so the
+/// source position of the cell centre is `σ_k = lookup[k] + ½`. `brk[k]`
+/// (`nz + 1` entries) flags a break between cells k−1 and k; breaks are
+/// also added where the lookup is clamped (`0` or `nz − 1`), on a jump
+/// (`σ_k − σ_{k−1} > 1.5`) or a fold (`σ_k ≤ σ_{k−1}`), and at both column
+/// ends. Compression (`0 < σ_k − σ_{k−1} < ½`) keeps midpoint edges.
+/// Interior edges are midpoints between neighbouring centres; at a break
+/// the edge is `σ_k ∓ g/2` with `g` the spacing on the unbroken side (1 if
+/// broken on both sides).
+pub fn source_intervals(lookup: &[f32], brk: &mut [bool], out: &mut Vec<(f64, f64)>) {
+    let nz = lookup.len();
+    assert_eq!(brk.len(), nz + 1);
+    out.clear();
+    if nz == 0 {
+        return;
+    }
+    let top = (nz - 1) as f32;
+    let sigma = |k: usize| lookup[k] as f64 + 0.5;
+    brk[0] = true;
+    brk[nz] = true;
+    for k in 1..nz {
+        let clamped = |v: f32| v <= 0.0 || v >= top;
+        // Safety break on a jump (Δσ > 1.5) or a fold (Δσ ≤ 0). A smooth
+        // compression (0 < Δσ < ½, fault drag) keeps midpoint edges: the
+        // spec's symmetric |Δσ − 1| > ½ would give those cells a unit-width
+        // source window around a nearly constant σ, mixing units the labels
+        // do not have over many cells (2-sample time-label moves).
+        let d = sigma(k) - sigma(k - 1);
+        brk[k] |= clamped(lookup[k]) || clamped(lookup[k - 1]) || d > 1.5 || d <= 0.0;
+    }
+    for k in 0..nz {
+        let s = sigma(k);
+        let below = if !brk[k + 1] { Some(sigma(k + 1) - s) } else { None };
+        let above = if !brk[k] { Some(s - sigma(k - 1)) } else { None };
+        let lo = match above {
+            Some(_) => 0.5 * (sigma(k - 1) + s),
+            None => s - 0.5 * below.unwrap_or(1.0),
+        };
+        let hi = match below {
+            Some(_) => 0.5 * (s + sigma(k + 1)),
+            None => s + 0.5 * above.unwrap_or(1.0),
+        };
+        out.push((lo, hi));
+    }
+}
+
+impl ColumnGeometry<'_> {
+    /// Kind at output depth `zeta` whose unfaulted (source) depth is `src`:
+    /// salt and contacts in output coordinates, horizons in source
+    /// coordinates (spec §3.3).
+    fn classify_mapped(&self, zeta: f64, src: f64) -> PartKind {
+        if let Some((lo, hi)) = self.salt {
+            if lo + 0.5 <= zeta && zeta <= hi + 0.5 {
+                return PartKind::Salt;
+            }
+        }
+        let z = self.horizons;
+        if z.is_empty() || src < z[0] {
+            return PartKind::Water;
+        }
+        // Deepest h with z_h <= src (z_1.. is sorted; z_0 <= src here).
+        let h = z[1..].partition_point(|&v| v <= src);
+        if h + 1 >= z.len() {
+            return PartKind::Below;
+        }
+        let hc = self.contacts.get(h).is_some_and(|&c| zeta < c as f64);
+        PartKind::Interval { h, hc }
+    }
+}
+
+/// Fractions of a faulted column (spec §3.3): each output cell k covers the
+/// source interval `src[k] = (σ⁻, σ⁺)`; horizon crossings inside it map to
+/// output breakpoints `ζ = k + (z_h − σ⁻)/g`, salt bounds and contacts are
+/// output coordinates already, then the §3.2 merge runs unchanged (same
+/// `EPS_FRAC` snapping). A degenerate cell (`g ≤ EPS_FRAC`) is one part
+/// classified at its centre.
+pub fn column_parts_faulted(geom: &ColumnGeometry, src: &[(f64, f64)], out: &mut ColumnParts) {
+    out.parts.clear();
+    out.offsets.clear();
+    out.offsets.push(0);
+    let salt: Vec<f64> = geom
+        .salt
+        .filter(|(lo, hi)| lo <= hi)
+        .map_or(Vec::new(), |(lo, hi)| vec![lo + 0.5, hi + 0.5]);
+    let contacts: Vec<f64> = geom.contacts.iter().map(|&c| c as f64).filter(|c| c.is_finite()).collect();
+    let ev = &mut out.events;
+    for (k, &(slo, shi)) in src.iter().enumerate() {
+        let kf = k as f64;
+        let start = out.parts.len();
+        let g = shi - slo;
+        if g <= EPS_FRAC {
+            let kind = geom.classify_mapped(kf + 0.5, 0.5 * (slo + shi));
+            out.parts.push(Part { kind, frac: 1.0 });
+            out.offsets.push(out.parts.len());
+            continue;
+        }
+        ev.clear();
+        let mut push = |x: f64| {
+            if x.is_finite() && x > 0.0 && x < 1.0 {
+                let x = if x < EPS_FRAC || 1.0 - x < EPS_FRAC { x.round() } else { x };
+                if x > 0.0 && x < 1.0 {
+                    ev.push(x);
+                }
+            }
+        };
+        for &z in geom.horizons {
+            if z > slo && z < shi {
+                push((z - slo) / g);
+            }
+        }
+        salt.iter().chain(&contacts).for_each(|&b| push(b - kf));
+        ev.sort_by(f64::total_cmp);
+        let mut a = 0.0f64;
+        for &b in ev.iter() {
+            if b - a < EPS_FRAC || 1.0 - b < EPS_FRAC {
+                continue;
+            }
+            let m = 0.5 * (a + b);
+            push_part(&mut out.parts, start, geom.classify_mapped(kf + m, slo + m * g), b - a);
+            a = b;
+        }
+        let m = 0.5 * (a + 1.0);
+        push_part(&mut out.parts, start, geom.classify_mapped(kf + m, slo + m * g), 1.0 - a);
+        out.offsets.push(out.parts.len());
+    }
+}
+
 /// How a cell is modelled.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CellModel<'a> {
@@ -285,6 +466,19 @@ pub struct PartialVoxelStats {
     pub multi: u64,
     /// Cells whose labelled unit has zero fraction (whole-voxel fallback).
     pub label_guard: u64,
+    /// Cells whose whole-voxel kind is a sediment layer (the label-guard
+    /// denominator, spec §5.5).
+    pub sediment: u64,
+    /// Column-intervals with positive fraction but no labelled cell in the
+    /// column (spec §3.4 "hidden intervals"; counted by the run summary).
+    pub hidden_intervals: u64,
+    /// Mixed cells kept whole because a part lies below the deepest horizon
+    /// (whole-voxel `Unfilled`, spec §3.4).
+    pub below: u64,
+    /// Faulted cells below the output seabed whose pull-back reached above
+    /// the source seabed: their water parts take the cell's sediment unit
+    /// ([`absorb_water_below`]).
+    pub water_below: u64,
 }
 
 impl PartialVoxelStats {
@@ -293,6 +487,10 @@ impl PartialVoxelStats {
         self.mixed += o.mixed;
         self.multi += o.multi;
         self.label_guard += o.label_guard;
+        self.sediment += o.sediment;
+        self.hidden_intervals += o.hidden_intervals;
+        self.below += o.below;
+        self.water_below += o.water_below;
     }
 }
 
@@ -306,16 +504,68 @@ pub fn cell_model<'a>(
     stats: &mut PartialVoxelStats,
 ) -> CellModel<'a> {
     stats.cells += 1;
-    if parts.len() <= 1 {
-        return CellModel::Whole;
-    }
+    // The guard counts every cell with no fraction of its labelled unit,
+    // pure cells included (a stretched faulted cell can lie wholly in the
+    // neighbouring unit); either way the cell stays whole.
     if !parts.iter().any(|p| p.kind.unit() == label) {
         stats.label_guard += 1;
+        return CellModel::Whole;
+    }
+    if parts.len() <= 1 {
         return CellModel::Whole;
     }
     stats.mixed += 1;
     stats.multi += (parts.len() >= 3) as u64;
     CellModel::Mixed(parts)
+}
+
+/// Water below the seabed (faulted columns, spec §3.3): a fault lookup that
+/// folds back near the seabed maps cells below the output seabed onto
+/// source positions above `z_0`, which the pull-back classifies as water.
+/// Water cannot lie under sediment, and the labels (nearest source cell)
+/// say sediment there, so the water parts of cells `from..` take the unit of
+/// the nearest sediment part of the same cell (interval 0 when the cell has
+/// none) and merge with equal neighbours. Returns the number of cells
+/// changed. A no-op on unfaulted columns, where only the seabed cell has a
+/// water part.
+pub fn absorb_water_below(parts: &mut ColumnParts, from: usize) -> u64 {
+    let nz = parts.len();
+    if !(from..nz).any(|k| parts.cell(k).iter().any(|p| p.kind == PartKind::Water)) {
+        return 0;
+    }
+    let mut out: Vec<Part> = Vec::with_capacity(parts.parts.len());
+    let mut offsets = Vec::with_capacity(nz + 1);
+    offsets.push(0);
+    let mut changed = 0;
+    for k in 0..nz {
+        let cell = parts.cell(k);
+        let start = out.len();
+        if k >= from && cell.iter().any(|p| p.kind == PartKind::Water) {
+            changed += 1;
+            for (n, p) in cell.iter().enumerate() {
+                let kind = if p.kind == PartKind::Water {
+                    let sed = |q: &&Part| matches!(q.kind, PartKind::Interval { .. });
+                    cell[n + 1..]
+                        .iter()
+                        .find(sed)
+                        .or_else(|| cell[..n].iter().rev().find(sed))
+                        .map_or(PartKind::Interval { h: 0, hc: false }, |q| q.kind)
+                } else {
+                    p.kind
+                };
+                match out[start..].last_mut() {
+                    Some(q) if q.kind == kind => q.frac += p.frac,
+                    _ => out.push(Part { kind, frac: p.frac }),
+                }
+            }
+        } else {
+            out.extend_from_slice(cell);
+        }
+        offsets.push(out.len());
+    }
+    parts.parts = out;
+    parts.offsets = offsets;
+    changed
 }
 
 /// Total fraction of `unit` over a column (its thickness inside `[0, nz)`).
@@ -446,7 +696,8 @@ mod tests {
                 cells: 3,
                 mixed: 1,
                 multi: 0,
-                label_guard: 1
+                label_guard: 1,
+                ..Default::default()
             }
         );
     }

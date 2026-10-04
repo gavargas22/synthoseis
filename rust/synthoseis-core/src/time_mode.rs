@@ -12,10 +12,13 @@
 use std::sync::Once;
 
 use synthoseis_geo::faults::FaultTile;
-use synthoseis_seismic::{reflectivity_time_column_with_twt, twt_column, TwtScratch, ZoeppritzForm};
+use synthoseis_seismic::{
+    reflectivity_time_column_with_twt, subcell_reflectivity, twt_column, SubcellColumn, TwtScratch, ZoeppritzForm,
+};
 
+use crate::partial_voxels::PvReflectivity;
 use crate::pipeline::{E2eConfig, TimeAxis};
-use crate::rock_physics::{elastic_model, ElasticModel};
+use crate::rock_physics::{elastic_model, ColumnScratch, ElasticModel, RpmModel};
 use crate::salt::SaltBody;
 
 static GPU_FALLBACK_LOG: Once = Once::new();
@@ -70,20 +73,102 @@ pub fn fuse_props_tile_time(
             &mut scratch,
             &mut x,
         );
-        // Raw reflectivity is f32 everywhere (as the depth fuse's rfc).
-        for v in x.iter_mut() {
-            *v = *v as f32 as f64;
+        finish_trace(&mut x, wavelet, &mut tile_out[t * nt..(t + 1) * nt]);
+    }
+}
+
+/// Cast the raw time reflectivity `x` to f32 (as the depth fuse's rfc) and
+/// apply the wavelet in time into `out` (`f32 -> f64 convolve_same_1d ->
+/// f32`); an empty wavelet leaves the raw reflectivity.
+fn finish_trace(x: &mut [f64], wavelet: &[f64], out: &mut [f32]) {
+    for v in x.iter_mut() {
+        *v = *v as f32 as f64;
+    }
+    if wavelet.is_empty() {
+        for (o, &v) in out.iter_mut().zip(x.iter()) {
+            *o = v as f32;
         }
-        let out = &mut tile_out[t * nt..(t + 1) * nt];
-        if wavelet.is_empty() {
-            for (o, &v) in out.iter_mut().zip(x.iter()) {
-                *o = v as f32;
+    } else {
+        let conv = synthoseis_seismic::convolve_same_1d(x, wavelet);
+        for (o, &c) in out.iter_mut().zip(conv.iter()) {
+            *o = c as f32;
+        }
+    }
+}
+
+/// `true` when the time fuse of `model` takes the partial-voxel path: a
+/// rock-physics model with partial state and the physical (not the
+/// constant test-hook) velocity.
+pub fn partial_time_path(model: &ElasticModel) -> Option<&RpmModel> {
+    match model {
+        ElasticModel::Rpm(m) if m.partial.is_some() && m.time.is_some_and(|a| a.constant_twt_vp.is_none()) => {
+            Some(m)
+        }
+        _ => None,
+    }
+}
+
+/// Partial-voxel time fuse of the tile `[i0, i1) x [j0, j1)` (spec §1.4,
+/// §1.5) into `(ti, tj, nt)` `tile_out`: per column the parts and their
+/// end-members ([`RpmModel::column_partial`]), T through the slowness sum,
+/// then either every sub-cell interface at its exact time (`subcell`) or
+/// the Backus voxels' cell-to-cell reflectivity at the same T (`cell`),
+/// inserted with the windowed sinc; then the same f32 cast and wavelet as
+/// [`fuse_props_tile_time`].
+#[allow(clippy::too_many_arguments)]
+pub fn fuse_tile_time_partial(
+    m: &RpmModel,
+    labels: &[u8],
+    shape: [usize; 3],
+    i0: usize,
+    i1: usize,
+    j0: usize,
+    j1: usize,
+    wavelet: &[f64],
+    angle_deg: f64,
+    tile_out: &mut [f32],
+) {
+    if synthoseis_gpu::prefer_gpu() {
+        GPU_FALLBACK_LOG.call_once(|| {
+            eprintln!("gpu: depth-to-time mode fuses on the CPU (time-mode WGSL kernel not ported; --legacy-depth-as-time keeps the GPU path)");
+        });
+    }
+    let axis = m.time.expect("time axis");
+    let pm = m.partial.as_ref().expect("partial state");
+    let [_, nj, nz] = shape;
+    let nt = axis.nt;
+    let tj = j1 - j0;
+    let tile = m.partial_tile(i0, i1, j0, j1);
+    let mut scratch = ColumnScratch::default();
+    let (mut rho, mut vp, mut vs) = (vec![0.0f32; nz], vec![0.0f32; nz], vec![0.0f32; nz]);
+    let mut col = SubcellColumn::default();
+    let mut r = Vec::new();
+    let mut ts = TwtScratch::default();
+    let mut x = vec![0.0f64; nt];
+    for i in i0..i1 {
+        for j in j0..j1 {
+            let g = (i * nj + j) * nz;
+            m.column_partial(i, j, &labels[g..g + nz], &tile, &mut scratch, &mut rho, &mut vp, &mut vs);
+            m.partial_column_twt(&scratch, &axis, &mut col);
+            match pm.reflectivity {
+                PvReflectivity::Subcell => {
+                    subcell_reflectivity(&col, angle_deg, m.zoeppritz, axis.dt_ms, axis.kernel, &mut r, &mut x)
+                }
+                PvReflectivity::Cell => reflectivity_time_column_with_twt(
+                    &vp,
+                    &vs,
+                    &rho,
+                    &col.t_cells,
+                    angle_deg,
+                    m.zoeppritz,
+                    axis.dt_ms,
+                    axis.kernel,
+                    &mut ts,
+                    &mut x,
+                ),
             }
-        } else {
-            let conv = synthoseis_seismic::convolve_same_1d(&x, wavelet);
-            for (o, &c) in out.iter_mut().zip(conv.iter()) {
-                *o = c as f32;
-            }
+            let t = (i - i0) * tj + (j - j0);
+            finish_trace(&mut x, wavelet, &mut tile_out[t * nt..(t + 1) * nt]);
         }
     }
 }
@@ -122,6 +207,25 @@ pub fn tile_twt(
     axis: &TimeAxis,
 ) -> Vec<f64> {
     let nz = shape[2];
+    if let Some(m) = partial_time_path(model) {
+        // Partial voxels: the slowness-sum T of the fuse (spec §1.4), so
+        // labels, the noise seabed time and the summaries see the same T.
+        let nj = shape[1];
+        let tile = m.partial_tile(i0, i1, j0, j1);
+        let mut scratch = ColumnScratch::default();
+        let (mut rho, mut vp, mut vs) = (vec![0.0f32; nz], vec![0.0f32; nz], vec![0.0f32; nz]);
+        let mut col = SubcellColumn::default();
+        let mut t = Vec::with_capacity((i1 - i0) * (j1 - j0) * (nz + 1));
+        for i in i0..i1 {
+            for j in j0..j1 {
+                let g = (i * nj + j) * nz;
+                m.column_partial(i, j, &labels[g..g + nz], &tile, &mut scratch, &mut rho, &mut vp, &mut vs);
+                m.partial_column_twt(&scratch, axis, &mut col);
+                t.extend_from_slice(&col.t_cells);
+            }
+        }
+        return t;
+    }
     let n = (i1 - i0) * (j1 - j0) * nz;
     let (mut vp, mut vs, mut rho) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
     model.tile_properties(labels, shape, i0, i1, j0, j1, &mut vp, &mut vs, &mut rho);

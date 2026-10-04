@@ -233,7 +233,50 @@ enum Commands {
         /// See docs/salt-bodies.md.
         #[arg(long, default_value_t = false)]
         fault_labels_through_salt: bool,
+        /// Whole-voxel rasterisation, byte for byte as master (the default
+        /// until partial voxels are switched on by default). Rejected with
+        /// --toy-geometry planar / --legacy-toy-depth (whole-voxel by
+        /// construction). See docs/partial-voxels.md.
+        #[arg(long, default_value_t = false)]
+        legacy_whole_voxels: bool,
+        /// Partial voxels: exact vertical volume fractions of every depth
+        /// cell (layered geometry). `subcell`: every sub-cell interface at
+        /// its exact two-way time (time mode only); `cell`: Backus voxels
+        /// with the cell-to-cell reflectivity (any axis). Off by default.
+        /// See docs/partial-voxels.md.
+        #[arg(long)]
+        partial_voxel_reflectivity: Option<String>,
     },
+}
+
+/// `--legacy-whole-voxels` / `--partial-voxel-reflectivity` (partial-voxels
+/// spec §2). Partial voxels are off unless `--partial-voxel-reflectivity`
+/// is given (PR B2 flips the default).
+fn parse_partial_voxels(
+    legacy_whole_voxels: bool,
+    reflectivity: Option<&str>,
+    geometry: synthoseis_core::ToyGeometry,
+    time_enabled: bool,
+) -> Result<synthoseis_core::partial_voxels::PartialVoxelConfig, String> {
+    use synthoseis_core::partial_voxels::{PartialVoxelConfig, PvReflectivity};
+    let planar = geometry == synthoseis_core::ToyGeometry::Planar;
+    if legacy_whole_voxels && planar {
+        return Err("--legacy-whole-voxels has no effect with --toy-geometry planar or --legacy-toy-depth (whole-voxel by construction)".into());
+    }
+    let Some(r) = reflectivity else {
+        return Ok(PartialVoxelConfig::default());
+    };
+    if legacy_whole_voxels {
+        return Err("--partial-voxel-reflectivity has no effect with --legacy-whole-voxels".into());
+    }
+    let r = PvReflectivity::parse(r)?;
+    if planar {
+        return Err("--partial-voxel-reflectivity requires the layered geometry (not --toy-geometry planar / --legacy-toy-depth)".into());
+    }
+    if r == PvReflectivity::Subcell && !time_enabled {
+        return Err("--partial-voxel-reflectivity subcell requires the time axis (not --legacy-depth-as-time); use cell".into());
+    }
+    Ok(PartialVoxelConfig::with(r))
 }
 
 /// `--legacy-depth-as-time` / `--dt-ms` / `--twt-samples` / `--twt-kernel`
@@ -599,6 +642,8 @@ fn main() {
             twt_samples,
             twt_kernel,
             fault_labels_through_salt,
+            legacy_whole_voxels,
+            partial_voxel_reflectivity,
         }) => {
             let workers = workers.max(1);
             synthoseis_gpu::set_prefer_gpu(gpu);
@@ -726,6 +771,17 @@ fn main() {
                 twt_samples,
                 twt_kernel.as_deref(),
                 bandpass_trailing_sample,
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(2);
+            });
+            let mut rock = rock;
+            rock.partial_voxels = parse_partial_voxels(
+                legacy_whole_voxels,
+                partial_voxel_reflectivity.as_deref(),
+                geometry,
+                time.enabled,
             )
             .unwrap_or_else(|e| {
                 eprintln!("{e}");

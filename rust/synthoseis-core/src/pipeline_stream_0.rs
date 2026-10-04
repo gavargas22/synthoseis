@@ -138,8 +138,8 @@ pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
 /// by construction. Layered: [`crate::toy_geometry::layered_horizon_maps_continuous`];
 /// with salt, the drag of the *rounded* maps without the final re-round (the
 /// drag is not re-derived from continuous maps, which would move labels).
-/// `round(continuous) == toy_horizon_maps(cfg)` exactly. Not wired into any
-/// pipeline path yet.
+/// `round(continuous) == toy_horizon_maps(cfg)` exactly. Used by the
+/// partial-voxel model (`partial_model`) only.
 pub fn toy_horizon_maps_continuous(cfg: &E2eConfig) -> Option<(Vec<f64>, usize)> {
     match cfg.effective_geometry() {
         crate::toy_geometry::ToyGeometry::Planar => None,

@@ -157,6 +157,11 @@ pub struct RockPhysicsConfig {
     /// salt and have no seismic expression inside it. CLI
     /// `--fault-labels-through-salt`. See `docs/salt-bodies.md`.
     pub fault_labels_through_salt: bool,
+    /// Partial voxels (spec-partial-voxels; off by default until PR B2):
+    /// exact vertical volume fractions with Backus mixing (cell mode) or
+    /// sub-cell reflectivity (time mode). CLI `--partial-voxel-reflectivity`
+    /// / `--legacy-whole-voxels`. See [`crate::partial_voxels`].
+    pub partial_voxels: crate::partial_voxels::PartialVoxelConfig,
 }
 
 impl Default for RockPhysicsConfig {
@@ -181,6 +186,7 @@ impl Default for RockPhysicsConfig {
             salt: true,
             salt_legacy_top_offset: false,
             fault_labels_through_salt: false,
+            partial_voxels: crate::partial_voxels::PartialVoxelConfig::default(),
         }
     }
 }
@@ -724,6 +730,9 @@ pub struct RpmModel {
     /// Every fuse path reads it from here, so the model, its depth and its
     /// output axis always travel together.
     pub time: Option<crate::pipeline::TimeAxis>,
+    /// Partial-voxel state (`None` = whole voxels, the default); see
+    /// [`crate::partial_model`].
+    pub partial: Option<Box<crate::partial_model::PartialModel>>,
 }
 
 /// Elastic properties used by every fuse path.
@@ -759,6 +768,9 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
     let salt = crate::salt::salt_body(cfg);
     let mut model = RpmModel::build_with_salt(cfg.seed, &rp, &maps, nh, labels, shape, &sand, salt);
     model.time = cfg.time_axis();
+    if let Some(r) = cfg.effective_partial_voxels() {
+        model.partial = Some(Box::new(crate::partial_model::PartialModel::build(cfg, &model, &rp, &sand, r)));
+    }
     ElasticModel::Rpm(Box::new(model))
 }
 
@@ -874,6 +886,7 @@ impl RpmModel {
             zoeppritz: rp.zoeppritz_form(),
             salt,
             time: None,
+            partial: None,
         }
     }
 
@@ -946,6 +959,8 @@ impl RpmModel {
 pub struct ColumnScratch {
     pub depth: Vec<f32>,
     pub kinds: Vec<VoxelKind>,
+    /// Partial-voxel scratch ([`RpmModel::column_partial`]).
+    pub partial: crate::partial_model::PartialScratch,
 }
 
 impl ElasticModel {
@@ -999,6 +1014,7 @@ impl ElasticModel {
                         .sum::<usize>()
                     + m.shifts.len() * std::mem::size_of::<LayerShifts>()
                     + m.salt.as_ref().map_or(0, |s| s.runs.len() * 8)
+                    + m.partial.as_ref().map_or(0, |p| p.delta.len() * 4 + p.salt_bounds.len() * 24)
             }
         }
     }
@@ -1020,6 +1036,10 @@ impl ElasticModel {
         let [_, nj, nk] = shape;
         let tj = j1 - j0;
         let mut scratch = ColumnScratch::default();
+        let partial = match self {
+            ElasticModel::Rpm(m) if m.partial.is_some() => Some(m.partial_tile(i0, i1, j0, j1)),
+            _ => None,
+        };
         for i in i0..i1 {
             for j in j0..j1 {
                 let g = (i * nj + j) * nk;
@@ -1034,15 +1054,27 @@ impl ElasticModel {
                             rho[o + k] = r;
                         }
                     }
-                    ElasticModel::Rpm(m) => m.column(
-                        i,
-                        j,
-                        col,
-                        &mut scratch,
-                        &mut rho[o..o + nk],
-                        &mut vp[o..o + nk],
-                        &mut vs[o..o + nk],
-                    ),
+                    ElasticModel::Rpm(m) => match &partial {
+                        None => m.column(
+                            i,
+                            j,
+                            col,
+                            &mut scratch,
+                            &mut rho[o..o + nk],
+                            &mut vp[o..o + nk],
+                            &mut vs[o..o + nk],
+                        ),
+                        Some(t) => m.column_partial(
+                            i,
+                            j,
+                            col,
+                            t,
+                            &mut scratch,
+                            &mut rho[o..o + nk],
+                            &mut vp[o..o + nk],
+                            &mut vs[o..o + nk],
+                        ),
+                    },
                 }
             }
         }
