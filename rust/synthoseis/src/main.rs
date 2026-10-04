@@ -270,7 +270,7 @@ fn parse_partial_voxels(
     }
     let Some(r) = reflectivity else {
         if legacy_whole_voxels || planar {
-            return Ok(PartialVoxelConfig::default());
+            return Ok(PartialVoxelConfig::whole_voxels());
         }
         let r = if time_enabled {
             PvReflectivity::Subcell

@@ -6,12 +6,16 @@ https://app.notion.com/p/3ee0272f1f7b8153b164f797a23bb987).
 PR A adds the numerical kernels for partial voxels. PR B1 wires them into
 every path (classic, chunked/streaming, overlap, strip-stitch,
 multi-process, geometry-once) behind two switches. **PR B2 turns partial
-voxels on by default in the CLI**, so stacks (and time labels) change for
-every layered-geometry run without a flag. `--legacy-whole-voxels` is the
-opt-out: it reproduces master d8b96e69's default byte for byte. The planar
-geometry and `--legacy-toy-depth` stay whole-voxel.
+voxels on by default in the CLI and in the Rust library**
+(`PartialVoxelConfig::default()`), so stacks (and time labels) change for
+every layered-geometry run that does not opt out. The opt-out is
+`--legacy-whole-voxels` (CLI) / `PartialVoxelConfig::whole_voxels()`
+(`legacy_whole_voxels: true`, library): it reproduces master d8b96e69's
+default byte for byte. The planar geometry and `--legacy-toy-depth` stay
+whole-voxel. The Python extension (`synthoseis_mdio`) is MDIO I/O only and
+has no generation API, so there is no Python switch.
 
-## Switches (CLI, since PR B2)
+## Switches (CLI and library, since PR B2)
 
 | Flag | Effect |
 |---|---|
@@ -20,8 +24,18 @@ geometry and `--legacy-toy-depth` stay whole-voxel.
 | `--partial-voxel-reflectivity subcell` | partial voxels, sub-cell interfaces at exact ray times (time axis only) |
 | `--partial-voxel-reflectivity cell` | partial voxels, Backus voxels with the cell-to-cell reflectivity (time axis or `--legacy-depth-as-time`) |
 
-Before B2 (d8b96e69) the CLI default was whole voxels and the switch had to
-be given explicitly; the B2 default equals d8b96e69 with the switch on.
+Library (`RockPhysicsConfig::partial_voxels`, a `PartialVoxelConfig`):
+
+| Value | Effect |
+|---|---|
+| `PartialVoxelConfig::default()` = `on()` | partial voxels, `Subcell` in time mode, `Cell` on the legacy axis (B2 default) |
+| `PartialVoxelConfig::whole_voxels()` (`legacy_whole_voxels: true`) | whole voxels (the opt-out); byte-identical to the d8b96e69 library default |
+| `PartialVoxelConfig::with(PvReflectivity::Subcell \| Cell)` | partial voxels with an explicit reflectivity |
+
+Before B2 (d8b96e69) the CLI and library default was whole voxels and the
+switch had to be given explicitly (B1's `enabled: true`, now replaced by
+the `legacy_whole_voxels` opt-out field); the B2 default equals d8b96e69
+with the switch on.
 
 - Exit 2: `--legacy-whole-voxels` with `--toy-geometry planar` /
   `--legacy-toy-depth`; `--partial-voxel-reflectivity` with
@@ -29,9 +43,8 @@ be given explicitly; the B2 default equals d8b96e69 with the switch on.
   `--legacy-depth-as-time`.
 - Multi-process workers receive the flag (`cli_jobs::rock_physics_args`),
   and `--legacy-whole-voxels` when the switch is off.
-- Library: `RockPhysicsConfig::partial_voxels` (`PartialVoxelConfig`;
-  `PartialVoxelConfig::default()` stays off, so library callers and the
-  Python bindings keep whole voxels unless they opt in);
+- Library: `RockPhysicsConfig::partial_voxels` (`PartialVoxelConfig`, on
+  by default; `whole_voxels()` opts out);
   `E2eConfig::effective_partial_voxels()` gives the mode (layered geometry
   only; enabled without a mode = subcell in time mode, cell on the legacy
   axis).
@@ -51,9 +64,15 @@ be given explicitly; the B2 default equals d8b96e69 with the switch on.
 - **Labels.** Depth labels, fault labels and salt labels are unchanged. Time
   labels (and the time-domain fault and salt cubes) are point-sampled
   through the partial T, so they move where T crosses a sample boundary:
-  almost always by one sample, a unit thinner than one sample can appear
-  or vanish, and deep in long columns the accumulated T drift can reach
-  two samples (PR B2 CLI spread: 10 of 7.66 M time-label samples).
+  mostly by one sample, and a unit thinner than one sample can appear or
+  vanish. The partial T differs from the whole-voxel T cell by cell and
+  the difference accumulates down the column; where the drift passes one
+  dt, a label boundary moves by two samples or more. That is rare at 4 ms
+  and common at dt = 2 ms: seed 7, 64×64×256, 3 faults, `--dt-ms 2` (nt =
+  512) moves 1,633 time-label samples by ≥ 2 samples (0.078 % of 2.10 M
+  samples; Strata measured 1,627), against 10 of 7.66 M in the mostly 4 ms
+  PR B2 CLI spread. On the 64×64×256 cubes at 4 ms, 1.3–3.1 % of the time
+  labels change.
 - **Root attributes** (switch on only): `voxel_model: "partial-z"`,
   `partial_voxel_mixing: "backus"`, `partial_voxel_reflectivity:
   "subcell"|"cell"`. No new arrays.
@@ -228,7 +247,10 @@ are the error as a share of `|R_top|`.
 - Labels (5 seeds × salt on/off × 0/4 faults): legacy-axis labels, fault
   labels and salt labels identical on vs off; time labels move by at most
   one sample (0.50 % of samples at 10×12×48), no new classes, fault ∧ salt
-  = 0.
+  = 0. *That bound and figure are a small-cube B1 result (48 cells, a 96 m
+  column at dz = 2 m), where the T drift stays below one dt; larger cubes
+  change more labels and can move some by two samples (see the PR B2
+  section below and "Labels" above).*
 - Label guard with 4 faults ≤ 1 % of sediment cells (5 seeds × salt on/off
   at 32×32×128: max 0.70 %); 0 unfaulted; 0 hidden intervals without salt.
 
@@ -250,7 +272,9 @@ are the error as a share of `|R_top|`.
   are one-sample moves, 916 (0.52 %) are samples of units thinner than one
   sample that point sampling now hits, and 10 (0.006 %; 3 in two faulted demo
   columns, repeated in its three filter variants, plus 1 in a dt = 2 ms column)
-  move two samples through accumulated T drift. Time-domain fault and salt
+  move two samples through accumulated T drift. The spread is mostly 4 ms
+  (one dt = 2 ms row); at dt = 2 ms the drift passes one dt far more often
+  (1,633 two-sample moves on the seed 7, 3-fault demo cube, above). Time-domain fault and salt
   cubes: 0.14 % and 0.02 % of samples change.
 - The summary statistics come from the time-summary pass (`run_summary`):
   one pass over the columns instead of two, same stdout.

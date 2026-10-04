@@ -482,14 +482,15 @@ impl E2eConfig {
     }
 
     /// Partial-voxel reflectivity actually used (`None` = whole voxels):
-    /// [`crate::partial_voxels::PartialVoxelConfig::enabled`] on the layered
+    /// [`crate::partial_voxels::PartialVoxelConfig::enabled`] (on by default;
+    /// `legacy_whole_voxels` opts out) on the layered
     /// geometry only (planar and `legacy_toy_depth` have no continuous
     /// maps); the default reflectivity is `Subcell` in time mode and `Cell`
     /// on the legacy axis, and `Subcell` never runs on the legacy axis.
     pub fn effective_partial_voxels(&self) -> Option<crate::partial_voxels::PvReflectivity> {
         use crate::partial_voxels::PvReflectivity;
         let pv = &self.rock_physics.partial_voxels;
-        if !pv.enabled || self.effective_geometry() != ToyGeometry::Layered {
+        if !pv.enabled() || self.effective_geometry() != ToyGeometry::Layered {
             return None;
         }
         Some(match (self.time_enabled(), pv.reflectivity) {
@@ -557,7 +558,7 @@ impl E2eConfig {
     /// [`TimeConfig::validate`].
     pub fn validate_time(&self) -> Result<(), String> {
         let pv = &self.rock_physics.partial_voxels;
-        if pv.enabled
+        if pv.enabled()
             && !self.time_enabled()
             && pv.reflectivity == Some(crate::partial_voxels::PvReflectivity::Subcell)
         {

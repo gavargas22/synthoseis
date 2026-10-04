@@ -65,12 +65,18 @@ impl PvReflectivity {
 }
 
 /// Partial-voxel switch (spec §2), in [`crate::RockPhysicsConfig`].
-/// `enabled = false` (the library default, and the CLI default until PR B2)
-/// is whole-voxel rasterisation, byte for byte as before. The planar
-/// geometry and `legacy_toy_depth` are always whole-voxel.
+/// **On by default** (PR B2, library and CLI): `Default` is partial voxels
+/// with the axis default reflectivity (`Subcell` in time mode, `Cell` on
+/// the legacy axis). `legacy_whole_voxels = true` (CLI
+/// `--legacy-whole-voxels`, [`PartialVoxelConfig::whole_voxels`]) is the
+/// opt-out: whole-voxel rasterisation, byte for byte as the d8b96e69
+/// default. The planar geometry and `legacy_toy_depth` are always
+/// whole-voxel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PartialVoxelConfig {
-    pub enabled: bool,
+    /// Opt-out: whole voxels, byte for byte as master d8b96e69's default.
+    /// `reflectivity` must be `None` with it (the CLI rejects the combination).
+    pub legacy_whole_voxels: bool,
     /// `None`: `Subcell` in time mode, `Cell` on the legacy axis.
     /// `Some(Subcell)` on the legacy axis is rejected by
     /// [`crate::pipeline::E2eConfig::validate_time`].
@@ -78,14 +84,37 @@ pub struct PartialVoxelConfig {
 }
 
 impl PartialVoxelConfig {
-    /// Partial voxels on with the default reflectivity for the axis.
+    /// Partial voxels on with the default reflectivity for the axis (the
+    /// same as `Default`).
     pub fn on() -> Self {
-        Self { enabled: true, reflectivity: None }
+        Self {
+            legacy_whole_voxels: false,
+            reflectivity: None,
+        }
     }
 
     /// Partial voxels on with an explicit reflectivity.
     pub fn with(reflectivity: PvReflectivity) -> Self {
-        Self { enabled: true, reflectivity: Some(reflectivity) }
+        Self {
+            legacy_whole_voxels: false,
+            reflectivity: Some(reflectivity),
+        }
+    }
+
+    /// The opt-out (`--legacy-whole-voxels`): whole voxels, byte for byte
+    /// as the d8b96e69 default.
+    pub fn whole_voxels() -> Self {
+        Self {
+            legacy_whole_voxels: true,
+            reflectivity: None,
+        }
+    }
+
+    /// Partial voxels requested (`!legacy_whole_voxels`); the geometry may
+    /// still force whole voxels, see
+    /// [`crate::pipeline::E2eConfig::effective_partial_voxels`].
+    pub fn enabled(&self) -> bool {
+        !self.legacy_whole_voxels
     }
 }
 

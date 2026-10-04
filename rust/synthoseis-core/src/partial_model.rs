@@ -1,8 +1,8 @@
 //! Partial voxels in the rock-physics model and the fuse (spec
-//! partial-voxels §3.3–§3.6, PR B1). Off unless
-//! [`crate::partial_voxels::PartialVoxelConfig::enabled`] (library default
-//! and, until PR B2, the CLI default): with it off nothing here runs and
-//! every output is byte-identical to whole voxels.
+//! partial-voxels §3.3–§3.6, PR B1). On by default since PR B2 (library and
+//! CLI); with [`crate::partial_voxels::PartialVoxelConfig::legacy_whole_voxels`]
+//! nothing here runs and every output is byte-identical to whole voxels
+//! (the d8b96e69 default).
 //!
 //! * [`PartialModel`] rides on [`RpmModel::partial`]: the continuous horizon
 //!   offsets `δ = z − round(z)` (f32 per horizon per column, spec §3.1), the

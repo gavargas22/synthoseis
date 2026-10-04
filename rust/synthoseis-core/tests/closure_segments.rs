@@ -22,6 +22,16 @@ use synthoseis_core::pipeline::{E2eConfig, FaultConfig, FilterConfig, RockPhysic
 use synthoseis_core::rock_physics::{closure_fluid, elastic_model, ElasticModel};
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
+/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
+/// default): partial voxels are the library default since PR B2, and this
+/// golden asserts master (whole-voxel) output.
+fn whole(c: &E2eConfig) -> E2eConfig {
+    let mut c = c.clone();
+    c.rock_physics.partial_voxels =
+        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
+    c
+}
+
 #[derive(Deserialize)]
 struct FillCase {
     shape: [usize; 2],
@@ -323,9 +333,11 @@ fn faults_merge_juxtaposed_closures_and_switch_restores_ef2dc42() {
     let seg = generate_chunked(&c).0.angle_stack;
     let unseg = generate_chunked(&faulted_sandy(7, true)).0.angle_stack;
     assert_ne!(seg, unseg);
-    let flat = |u| E2eConfig {
-        faults: FaultConfig::with_count(0),
-        ..faulted_sandy(7, u)
+    let flat = |u| {
+        whole(&E2eConfig {
+            faults: FaultConfig::with_count(0),
+            ..faulted_sandy(7, u)
+        })
     };
     let (a, b) = (
         generate_chunked(&flat(false)).0.angle_stack,

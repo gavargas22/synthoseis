@@ -16,6 +16,16 @@ use synthoseis_core::{
 use synthoseis_io::MdioStore;
 use tempfile::tempdir;
 
+/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
+/// default): partial voxels are the library default since PR B2, and this
+/// golden asserts master (whole-voxel) output.
+fn whole(c: &E2eConfig) -> E2eConfig {
+    let mut c = c.clone();
+    c.rock_physics.partial_voxels =
+        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
+    c
+}
+
 fn case(
     geometry: ToyGeometry,
     seed: u64,
@@ -256,14 +266,16 @@ fn overlap_legacy_no_fault_labels_reproduces_master() {
             MASTER_FAULT_ONLY,
         ),
     ] {
-        let with = |p: &Path, legacy: bool| E2eConfig {
-            store_path: Some(p.to_path_buf()),
-            chunk_shape: Some([8, 5, 16]),
-            faults: FaultConfig {
-                overlap_legacy_no_fault_labels: legacy,
-                ..base.faults.clone()
-            },
-            ..base.clone()
+        let with = |p: &Path, legacy: bool| {
+            whole(&E2eConfig {
+                store_path: Some(p.to_path_buf()),
+                chunk_shape: Some([8, 5, 16]),
+                faults: FaultConfig {
+                    overlap_legacy_no_fault_labels: legacy,
+                    ..base.faults.clone()
+                },
+                ..base.clone()
+            })
         };
         let legacy = dir.path().join(format!("{name}-legacy.mdio"));
         run_e2e_streaming_overlapped(&with(&legacy, true)).unwrap();
@@ -281,10 +293,10 @@ fn overlap_legacy_no_fault_labels_reproduces_master() {
         assert_ne!(store_dir_hash(&new), master);
     }
     // Time mode: identical to master d51ab237 with or without the switch.
-    let base = E2eConfig {
+    let base = whole(&E2eConfig {
         time: TimeConfig::default(),
         ..case(ToyGeometry::Layered, 4, [24, 24, 128], 4, Some(0.4))
-    };
+    });
     for legacy in [false, true] {
         let p = dir.path().join(format!("time-{legacy}.mdio"));
         let mut c = base.clone();

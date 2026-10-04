@@ -145,8 +145,12 @@ time (`--partial-voxel-reflectivity subcell`; `cell` uses the Backus voxels
 with the cell-to-cell reflectivity and is the default with
 `--legacy-depth-as-time`). **Stacks change by default**, and time labels move
 where the traveltime crosses a sample boundary; depth, fault and salt labels
-are unchanged. `--legacy-whole-voxels` is the opt-out: it reproduces the
-previous default (master d8b96e69) byte for byte. The planar geometry and
+are unchanged. The Rust library default is the same
+(`PartialVoxelConfig::default()`). `--legacy-whole-voxels` (CLI) /
+`PartialVoxelConfig::whole_voxels()` (library, `legacy_whole_voxels: true`)
+is the opt-out: it reproduces the previous default (master d8b96e69) byte
+for byte. The Python extension is MDIO I/O only and has no partial-voxel
+option. The planar geometry and
 `--legacy-toy-depth` are always whole-voxel. Partial-voxel stores carry the
 `voxel_model = "partial-z"`, `partial_voxel_mixing` and
 `partial_voxel_reflectivity` attributes. See

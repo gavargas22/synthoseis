@@ -29,6 +29,16 @@
 
 use synthoseis_core::pipeline::E2eConfig;
 
+/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
+/// default): partial voxels are the library default since PR B2, and this
+/// golden asserts master (whole-voxel) output.
+fn whole(c: &E2eConfig) -> E2eConfig {
+    let mut c = c.clone();
+    c.rock_physics.partial_voxels =
+        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
+    c
+}
+
 const UP: usize = 16;
 const DOM_MIN: f64 = 2.0;
 const DOM_HALF: usize = 6;
@@ -52,6 +62,10 @@ fn run(salt: bool) -> Run {
         samples: 128,
         ..E2eConfig::default()
     };
+    // Whole voxels: the prediction is the cell-boundary TWT of the first
+    // labelled cell, while partial voxels (the PR B2 default) place the
+    // event at the exact sub-cell horizon time.
+    cfg = whole(&cfg);
     cfg.rock_physics.salt = salt;
     assert!(cfg.time_enabled());
     let (labels, shape) = synthoseis_core::pipeline_stream::generate_labels(&cfg);

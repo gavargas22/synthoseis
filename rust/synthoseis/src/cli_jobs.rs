@@ -195,7 +195,7 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
         a.push("--fault-labels-through-salt".into());
     }
     // Partial voxels: the CLI always sets an explicit reflectivity.
-    if rock.partial_voxels.enabled {
+    if rock.partial_voxels.enabled() {
         let r = rock.partial_voxels.reflectivity.expect("CLI partial voxels carry an explicit reflectivity");
         a.push("--partial-voxel-reflectivity".into());
         a.push(r.as_str().into());
@@ -339,7 +339,7 @@ pub fn maybe_run_multiprocess(
                 // Partial voxels are the CLI default: an explicit opt-out
                 // must reach layered workers (planar is whole-voxel and
                 // rejects the flag).
-                (!rock.partial_voxels.enabled
+                (!rock.partial_voxels.enabled()
                     && !rock.legacy_toy_depth
                     && geometry == synthoseis_core::ToyGeometry::Layered)
                     .then_some("--legacy-whole-voxels"),
