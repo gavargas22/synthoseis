@@ -1,29 +1,37 @@
-# Partial voxels — kernels (PR A) and wiring (PR B1)
+# Partial voxels — kernels (PR A), wiring (PR B1), on by default (PR B2)
 
 Spec: `spec-partial-voxels.md` (Notion copy:
 https://app.notion.com/p/3ee0272f1f7b8153b164f797a23bb987).
 
 PR A adds the numerical kernels for partial voxels. PR B1 wires them into
 every path (classic, chunked/streaming, overlap, strip-stitch,
-multi-process, geometry-once) behind two switches. **In B1 the default is
-still whole voxels**, so every store written without the new flag is
-byte-identical to master. PR B2 flips the default to partial voxels.
+multi-process, geometry-once) behind two switches. **PR B2 turns partial
+voxels on by default in the CLI**, so stacks (and time labels) change for
+every layered-geometry run without a flag. `--legacy-whole-voxels` is the
+opt-out: it reproduces master d8b96e69's default byte for byte. The planar
+geometry and `--legacy-toy-depth` stay whole-voxel.
 
-## Switches (PR B1)
+## Switches (CLI, since PR B2)
 
 | Flag | Effect |
 |---|---|
-| (none) | whole voxels (B1 default) |
-| `--legacy-whole-voxels` | whole voxels, explicitly (the B2 opt-out); same bytes as the default |
+| (none) | partial voxels: `subcell` on the time axis, `cell` with `--legacy-depth-as-time` (B2 default; same bytes as the explicit flag) |
+| `--legacy-whole-voxels` | whole voxels (the opt-out); byte-identical to the d8b96e69 default |
 | `--partial-voxel-reflectivity subcell` | partial voxels, sub-cell interfaces at exact ray times (time axis only) |
 | `--partial-voxel-reflectivity cell` | partial voxels, Backus voxels with the cell-to-cell reflectivity (time axis or `--legacy-depth-as-time`) |
+
+Before B2 (d8b96e69) the CLI default was whole voxels and the switch had to
+be given explicitly; the B2 default equals d8b96e69 with the switch on.
 
 - Exit 2: `--legacy-whole-voxels` with `--toy-geometry planar` /
   `--legacy-toy-depth`; `--partial-voxel-reflectivity` with
   `--legacy-whole-voxels`, with the planar geometry, or `subcell` with
   `--legacy-depth-as-time`.
-- Multi-process workers receive the flag (`cli_jobs::rock_physics_args`).
-- Library: `RockPhysicsConfig::partial_voxels` (`PartialVoxelConfig`);
+- Multi-process workers receive the flag (`cli_jobs::rock_physics_args`),
+  and `--legacy-whole-voxels` when the switch is off.
+- Library: `RockPhysicsConfig::partial_voxels` (`PartialVoxelConfig`;
+  `PartialVoxelConfig::default()` stays off, so library callers and the
+  Python bindings keep whole voxels unless they opt in);
   `E2eConfig::effective_partial_voxels()` gives the mode (layered geometry
   only; enabled without a mode = subcell in time mode, cell on the legacy
   axis).
@@ -41,8 +49,11 @@ byte-identical to master. PR B2 flips the default to partial voxels.
   the Backus voxels at the same T. The same T feeds the time labels, the
   noise seabed time and the time summaries.
 - **Labels.** Depth labels, fault labels and salt labels are unchanged. Time
-  labels are point-sampled through the partial T, so they move by at most
-  one sample where T crosses a sample boundary.
+  labels (and the time-domain fault and salt cubes) are point-sampled
+  through the partial T, so they move where T crosses a sample boundary:
+  almost always by one sample, a unit thinner than one sample can appear
+  or vanish, and deep in long columns the accumulated T drift can reach
+  two samples (PR B2 CLI spread: 10 of 7.66 M time-label samples).
 - **Root attributes** (switch on only): `voxel_model: "partial-z"`,
   `partial_voxel_mixing: "backus"`, `partial_voxel_reflectivity:
   "subcell"|"cell"`. No new arrays.
@@ -211,11 +222,35 @@ are the error as a share of `|R_top|`.
   salt + 4 faults; nt = nz + 37, dt = 2 ms, dz = 2 m, RICH filters), C in
   time mode, C on the legacy axis. The CLI multi-process store equals the
   single-process store with the flag.
-- Switch off is the default; `--legacy-whole-voxels` gives the same store;
-  S ≠ C ≠ off; the attributes appear only with the switch on.
+- On by default since B2 (= the explicit flag, pinned); `--legacy-whole-voxels`
+  gives the d8b96e69 default (pinned); S ≠ C ≠ off; the attributes appear
+  only with the switch on.
 - Labels (5 seeds × salt on/off × 0/4 faults): legacy-axis labels, fault
   labels and salt labels identical on vs off; time labels move by at most
   one sample (0.50 % of samples at 10×12×48), no new classes, fault ∧ salt
   = 0.
 - Label guard with 4 faults ≤ 1 % of sediment cells (5 seeds × salt on/off
   at 32×32×128: max 0.70 %); 0 unfaulted; 0 hidden intervals without salt.
+
+## Default flip validation (PR B2)
+
+- 32 CLI stores (the B1 spread: classic, chunked, overlap, strip-stitch,
+  multi-process, angle sweeps, planar/toy, the 64×64×256 demo with filters,
+  faults and salt, both axes): `--legacy-whole-voxels` = d8b96e69 default
+  (32/32 store trees and stdout identical); the new default = d8b96e69 with
+  `--partial-voxel-reflectivity subcell` (`cell` on the legacy axis)
+  (32/32); `--partial-voxel-reflectivity cell` = d8b96e69 with the same flag
+  (32/32).
+- Labels, new default vs `--legacy-whole-voxels` over the same 36 stores
+  (the angle rows write three): legacy-axis (depth) labels, fault labels
+  and salt labels identical (0 of 4.30 M / 1.14 M / 4.29 M samples). Time
+  labels: 175,983 of 7,659,328 samples change (2.30 %; 64×64×256 demo cubes
+  1.3–3.1 %, 24×20×150–24×24×128 cubes 0.6–2.3 %, 12×10×64 cubes
+  0.7–1.3 %, 8³ cubes 0); 99.47 % of the changes
+  are one-sample moves, 916 (0.52 %) are samples of units thinner than one
+  sample that point sampling now hits, and 10 (0.006 %; 3 in two faulted demo
+  columns, repeated in its three filter variants, plus 1 in a dt = 2 ms column)
+  move two samples through accumulated T drift. Time-domain fault and salt
+  cubes: 0.14 % and 0.02 % of samples change.
+- The summary statistics come from the time-summary pass (`run_summary`):
+  one pass over the columns instead of two, same stdout.

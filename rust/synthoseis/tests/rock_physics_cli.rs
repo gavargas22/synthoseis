@@ -18,11 +18,32 @@ fn run(args: &[&str], store: &Path) -> Output {
 fn run_time(args: &[&str], store: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_synthoseis"))
         .args(["run", "--e2e", "--chunked"])
-        .args(args)
+        .args(whole_voxels(args))
         .arg("--store")
         .arg(store)
         .output()
         .expect("spawn synthoseis")
+}
+
+/// Partial voxels are on by default since PR B2: the goldens here are
+/// whole-voxel stores, so every layered run adds `--legacy-whole-voxels`
+/// (partial-voxels spec §5.4: unchanged hashes with the opt-out). Planar,
+/// `--legacy-toy-depth` and runs that pick a voxel mode are left alone.
+fn whole_voxels<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut v = args.to_vec();
+    let picks = |a: &&str| {
+        matches!(
+            *a,
+            "planar"
+                | "--legacy-toy-depth"
+                | "--partial-voxel-reflectivity"
+                | "--legacy-whole-voxels"
+        )
+    };
+    if !args.iter().any(picks) {
+        v.push("--legacy-whole-voxels");
+    }
+    v
 }
 
 /// FNV-1a over the `data/fault_labels` u8 bytes.

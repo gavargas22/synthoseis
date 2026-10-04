@@ -335,6 +335,15 @@ pub fn maybe_run_multiprocess(
             } else {
                 time_args(time)
             })
+            .args(
+                // Partial voxels are the CLI default: an explicit opt-out
+                // must reach layered workers (planar is whole-voxel and
+                // rejects the flag).
+                (!rock.partial_voxels.enabled
+                    && !rock.legacy_toy_depth
+                    && geometry == synthoseis_core::ToyGeometry::Layered)
+                    .then_some("--legacy-whole-voxels"),
+            )
             .arg("--toy-geometry")
             .arg(geometry.as_str());
         if let Some([ci, cj, ck]) = resolved {

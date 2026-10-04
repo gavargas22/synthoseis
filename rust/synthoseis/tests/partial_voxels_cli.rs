@@ -1,8 +1,10 @@
-//! CLI partial-voxel switches (spec "partial voxels" PR B1): off by default
-//! (`--legacy-whole-voxels` is the same store), `--partial-voxel-reflectivity
-//! subcell|cell` turns the partial model on, reaches multi-process workers
-//! (bit-identical to one process) and strip-stitch, writes the three root
-//! attributes and the summary line; invalid combinations exit 2.
+//! CLI partial-voxel switches (spec "partial voxels" PR B1/B2): on by default
+//! since B2 (subcell in time mode, cell on the legacy axis), equal to the
+//! explicit `--partial-voxel-reflectivity`; `--legacy-whole-voxels` opts out
+//! (the d8b96e69 default, pinned). The switch and the opt-out reach
+//! multi-process workers (bit-identical to one process) and strip-stitch;
+//! the three root attributes and the summary line appear only when on;
+//! invalid combinations exit 2.
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -62,31 +64,101 @@ const MP: &[&str] = &[
     "8",
 ];
 
+// Pinned hashes of `store_hash` (angle stack + labels). The new defaults
+// equal master d8b96e69 run with the switch on (`--partial-voxel-reflectivity
+// subcell`, and `cell` with `--legacy-depth-as-time`); the opt-out equals
+// master d8b96e69's default (PR B2 evidence, whole store trees `diff -r`).
+const DEFAULT_PLAIN: u64 = 0xf01f_b4ee_8d9b_7b1b;
+const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0x8b0e_3e27_34c6_f372;
+const DEFAULT_MP: u64 = 0xc536_6956_01a0_7532;
+const WHOLE_PLAIN: u64 = 0xd6c3_d652_7a21_bda1;
+const WHOLE_MP: u64 = 0x0847_bdd4_c368_37b0;
+
 #[test]
-fn default_off_and_legacy_whole_voxels() {
+fn default_is_partial_and_legacy_whole_voxels_opts_out() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let d = dir.path().join("default.mdio");
-    let out = run(PLAIN, &d);
+    let attrs = |p: &Path| {
+        synthoseis_io::MdioStore::open(p)
+            .unwrap()
+            .root_attrs()
+            .unwrap()
+    };
+    for (name, base, explicit, mode, pinned, whole) in [
+        (
+            "time",
+            PLAIN.to_vec(),
+            "subcell",
+            "subcell",
+            DEFAULT_PLAIN,
+            Some(WHOLE_PLAIN),
+        ),
+        (
+            "legacy-axis",
+            with(PLAIN, &["--legacy-depth-as-time"]),
+            "cell",
+            "cell",
+            DEFAULT_PLAIN_LEGACY_AXIS,
+            None,
+        ),
+        (
+            "mp",
+            MP.to_vec(),
+            "subcell",
+            "subcell",
+            DEFAULT_MP,
+            Some(WHOLE_MP),
+        ),
+    ] {
+        let d = dir.path().join(format!("{name}-default.mdio"));
+        let out = run(&base, &d);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let so = stdout(&out);
+        assert!(
+            so.contains("partial voxels: mixed=") && so.contains(&format!("mode={mode}")),
+            "{name}: {so}"
+        );
+        assert_eq!(attrs(&d)["voxel_model"], "partial-z", "{name}");
+        assert_eq!(attrs(&d)["partial_voxel_reflectivity"], mode, "{name}");
+        assert_eq!(store_hash(&d), pinned, "{name}: new default");
+        let e = dir.path().join(format!("{name}-explicit.mdio"));
+        assert!(run(
+            &with(&base, &["--partial-voxel-reflectivity", explicit]),
+            &e
+        )
+        .status
+        .success());
+        assert_eq!(
+            store_hash(&e),
+            store_hash(&d),
+            "{name}: default = explicit {explicit}"
+        );
+        let l = dir.path().join(format!("{name}-whole.mdio"));
+        let out = run(&with(&base, &["--legacy-whole-voxels"]), &l);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(
+            !stdout(&out).contains("partial voxels:"),
+            "{name}: {}",
+            stdout(&out)
+        );
+        for k in PV_ATTRS {
+            assert!(attrs(&l).get(k).is_none(), "{name}: opt-out store has {k}");
+        }
+        assert_ne!(store_hash(&l), store_hash(&d), "{name}: opt-out vs default");
+        if let Some(w) = whole {
+            assert_eq!(
+                store_hash(&l),
+                w,
+                "{name}: --legacy-whole-voxels = d8b96e69 default"
+            );
+        }
+    }
+    // Planar is whole-voxel by construction: no attrs, no summary line.
+    let p = dir.path().join("planar.mdio");
+    let out = run(&with(PLAIN, &["--toy-geometry", "planar"]), &p);
     assert!(out.status.success(), "{out:?}");
-    assert!(
-        !stdout(&out).contains("partial voxels:"),
-        "{}",
-        stdout(&out)
-    );
-    let l = dir.path().join("legacy.mdio");
-    let out = run(&with(PLAIN, &["--legacy-whole-voxels"]), &l);
-    assert!(out.status.success(), "{out:?}");
-    assert_eq!(
-        store_hash(&d),
-        store_hash(&l),
-        "--legacy-whole-voxels = default in B1"
-    );
-    let attrs = synthoseis_io::MdioStore::open(&d)
-        .unwrap()
-        .root_attrs()
-        .unwrap();
+    assert!(!stdout(&out).contains("partial voxels:"));
     for k in PV_ATTRS {
-        assert!(attrs.get(k).is_none(), "default store has {k}");
+        assert!(attrs(&p).get(k).is_none(), "planar store has {k}");
     }
 }
 
@@ -166,14 +238,17 @@ fn partial_on_attrs_summary_and_modes() {
         hashes.push(store_hash(&p));
     }
     let off = dir.path().join("off.mdio");
-    assert!(run(PLAIN, &off).status.success());
+    assert!(run(&with(PLAIN, &["--legacy-whole-voxels"]), &off)
+        .status
+        .success());
     assert_ne!(hashes[0], store_hash(&off), "subcell vs off");
     assert_ne!(hashes[1], store_hash(&off), "cell vs off");
     assert_ne!(hashes[0], hashes[1], "subcell vs cell");
 }
 
-/// The switch reaches multi-process workers: bit-identical to one process
-/// with the same chunking, for S, C and C on the legacy axis.
+/// The switch and the opt-out reach multi-process workers: bit-identical to
+/// one process with the same chunking, for the default, S, C, C on the
+/// legacy axis, the legacy-axis default and `--legacy-whole-voxels`.
 #[test]
 fn partial_flag_reaches_multiprocess_workers() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -183,6 +258,10 @@ fn partial_flag_reaches_multiprocess_workers() {
         .filter(|a| !["--multiprocess", "--workers", "3"].contains(a))
         .collect();
     for flags in [
+        &[][..],
+        &["--legacy-whole-voxels"][..],
+        &["--legacy-depth-as-time"][..],
+        &["--legacy-depth-as-time", "--legacy-whole-voxels"][..],
         &["--partial-voxel-reflectivity", "subcell"][..],
         &["--partial-voxel-reflectivity", "cell"][..],
         &[
@@ -206,7 +285,11 @@ fn partial_flag_reaches_multiprocess_workers() {
             .unwrap()
             .root_attrs()
             .unwrap();
-        assert_eq!(attrs["voxel_model"], "partial-z", "{flags:?}");
+        if flags.contains(&"--legacy-whole-voxels") {
+            assert!(attrs.get("voxel_model").is_none(), "{flags:?}");
+        } else {
+            assert_eq!(attrs["voxel_model"], "partial-z", "{flags:?}");
+        }
     }
 }
 

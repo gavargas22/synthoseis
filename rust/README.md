@@ -138,6 +138,20 @@ sample) byte for byte, and `--legacy-toy-depth` implies it. Use `--dt-ms`,
 stores carry the `time_conversion = "vp-twt"`, `depth_step_m` and
 `twt_kernel` attributes. See [`docs/depth-to-time.md`](../docs/depth-to-time.md).
 
+**Partial voxels (default since PR B2).** Cells that straddle a horizon,
+the seabed, a salt top or a fluid contact are Backus mixes of their parts,
+and on the time axis every sub-cell interface is placed at its exact ray
+time (`--partial-voxel-reflectivity subcell`; `cell` uses the Backus voxels
+with the cell-to-cell reflectivity and is the default with
+`--legacy-depth-as-time`). **Stacks change by default**, and time labels move
+where the traveltime crosses a sample boundary; depth, fault and salt labels
+are unchanged. `--legacy-whole-voxels` is the opt-out: it reproduces the
+previous default (master d8b96e69) byte for byte. The planar geometry and
+`--legacy-toy-depth` are always whole-voxel. Partial-voxel stores carry the
+`voxel_model = "partial-z"`, `partial_voxel_mixing` and
+`partial_voxel_reflectivity` attributes. See
+[`docs/partial-voxels.md`](../docs/partial-voxels.md).
+
 
 ## Multi-worker job partition (local)
 
