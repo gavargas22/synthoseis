@@ -22,15 +22,8 @@ use synthoseis_core::pipeline::{E2eConfig, FaultConfig, FilterConfig, RockPhysic
 use synthoseis_core::rock_physics::{closure_fluid, elastic_model, ElasticModel};
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
-/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
-/// default): partial voxels are the library default since PR B2, and this
-/// golden asserts master (whole-voxel) output.
-fn whole(c: &E2eConfig) -> E2eConfig {
-    let mut c = c.clone();
-    c.rock_physics.partial_voxels =
-        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
-    c
-}
+mod common;
+use common::whole;
 
 #[derive(Deserialize)]
 struct FillCase {
@@ -333,6 +326,17 @@ fn faults_merge_juxtaposed_closures_and_switch_restores_ef2dc42() {
     let seg = generate_chunked(&c).0.angle_stack;
     let unseg = generate_chunked(&faulted_sandy(7, true)).0.angle_stack;
     assert_ne!(seg, unseg);
+    // Without faults, segmented == ef2dc42 only with whole voxels, so this
+    // check runs through `whole`. Segmentation (#33) clamps the stored
+    // fluid contact to the unit's base *cell* (`min(fill, crest + max_column,
+    // base)` in `closure_segments`). With partial voxels (the default since
+    // #43), a sand sliver thinner than half a cell at the unit base, below
+    // that integer base, keeps the brine end-member under segmentation,
+    // while ef2dc42's unclamped contact fills it. On this cube 256 of
+    // 61,440 stack samples differ (max |Δ| 0.041 vs stack rms 0.070;
+    // labels identical). That comes from the #33 clamp, not from partial
+    // voxels. Strata's closure-minimum spec moves the clamp to base + ½ cell
+    // in a separate PR; revisit this `whole` pin when that lands.
     let flat = |u| {
         whole(&E2eConfig {
             faults: FaultConfig::with_count(0),
