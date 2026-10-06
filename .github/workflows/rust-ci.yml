@@ -16,6 +16,12 @@ jobs:
   check-and-test:
     name: cargo check + test
     runs-on: ubuntu-latest
+    # `cargo test` uses [profile.test] (opt-level 2, see rust/Cargo.toml).
+    # The smoke steps below use `cargo run` (dev profile); give it the same
+    # opt-level so the CLI runs fast. Both keep debug-assertions and
+    # overflow-checks on. Slow sweeps run in nightly.yml.
+    env:
+      CARGO_PROFILE_DEV_OPT_LEVEL: "2"
     defaults:
       run:
         working-directory: rust
@@ -23,8 +29,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: cargo check
-        run: cargo check --workspace
+      - name: Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      # `cargo test` builds every target, so a separate `cargo check` step
+      # only repeated work.
       - name: cargo test
         run: cargo test --workspace
       - name: synthoseis-gpu without wgpu feature
@@ -124,7 +134,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.83
       - name: MSRV-aware lockfile
         run: CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo +stable generate-lockfile
+      # PRs only type-check on 1.83; the full 1.83 test run is nightly
+      # (nightly-msrv.yml).
       - name: cargo check (1.83)
         run: cargo +1.83 check --workspace --all-targets --locked
-      - name: cargo test (1.83)
-        run: cargo +1.83 test --workspace --locked
