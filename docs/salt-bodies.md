@@ -45,8 +45,12 @@ After faulting, `Faults.py` calls, when `include_salt` is set:
 2. **`update_depth_maps_with_salt_segments_drag`**, horizon by horizon:
    - If the horizon lies inside salt in some column, a counter `r` goes up
      by one. `r` is cumulative over horizons.
-   - The horizon is lifted by `2 r` samples in its salt columns.
-   - Every horizon is smoothed with `gaussian_filter(sigma = 3)`.
+   - The horizon is lifted by `2 r` samples in its salt columns
+     (`L = −2r · salt_mask`).
+   - Default (lift-only): `m_out = m + gaussian_filter(L, sigma = 3)`.
+     Opt-out `--salt-smooth-all-horizons` restores legacy
+     `m_out = gaussian_filter(m + L, sigma = 3)`, which also flattens the
+     undragged map far from salt.
    - Then `push_down_remove_negative_thickness` runs. Despite the name,
      this is **geometry only**: it moves horizon depths down so that no
      layer has negative thickness after the drag. It is not the seismic
@@ -76,7 +80,7 @@ After faulting, `Faults.py` calls, when `include_salt` is set:
 | draws | one keyed unit draw per legacy draw (`salt::keyed_draws(seed)`), in legacy order. numpy `uniform` and `triangular` are replayed with numpy's exact operation order | bit-exact given the same unit draws. The distribution is validated by KS |
 | top | numpy linear `percentile(horizon 1, 99)` + offset | bit-exact |
 | shape | incremental 3D convex hull of the 218 points. Per column, the salt is the sample run `[k0, k1)` inside every hull facet | bit-exact mask (a hull meets each vertical line in one segment) |
-| drag | shift, scipy `gaussian_filter(sigma=3)` replayed exactly (scipy's kernel weights stored as IEEE bits, `reflect` edges, axis 0 then 1, scipy's symmetric summation order), push-down (geometry only: no negative thicknesses) | bit-exact |
+| drag | lift `L`, scipy `gaussian_filter(sigma=3)` on `L` (default) or on `m+L` (`--salt-smooth-all-horizons`); kernel weights as IEEE bits, `reflect`, axis 0 then 1; push-down | bit-exact vs scipy either way |
 | geometry | the dragged maps are rounded to whole samples, as the layered geometry already does, and fed to label fill, faults and the depth model | Rust has whole-sample horizons |
 | properties | `VoxelKind::Salt` → `SALT` (2.17, 4500, 2250 as f32) before the forward-fill. It overrides water, layers and closures | as legacy |
 | closures | salt-aware fills in all three closure modes (segmented default, `--closures-unsegmented`, `--closures-per-layer`). A column is a gap when the unit's top sample is salt. Gap cells get `-1 + max_column`, ring cells `top + max_column`, and both stay open | bit-exact vs `_flood_fill` |
@@ -136,9 +140,14 @@ each one below or leaves it out as noted.
    cube_shape[0])`. On non-square cubes the salt can land off-centre or
    outside in `j`. Kept; the geometry fixture has non-square cubes. The
    default toy cube is square.
-2. **Every horizon is smoothed**, including horizons that never touch salt.
-   Kept. On the demo cube this moves horizons by about a sample in 2.5 % of
-   the voxels far from the salt (see Effect).
+2. **Every horizon is smoothed**, including horizons that never touch salt
+   (legacy / `--salt-smooth-all-horizons`). **Default is now lift-only**
+   (`m + G(L)`): far-field maps stay bit-identical to the undragged maps
+   before push-down (never-touch horizons and cells with Chebyshev distance
+   ≥ 13 from any lifted cell). On the demo cube under smooth-all, about
+   2.5 % of labels far from salt still changed; under lift-only that drops
+   to ≤ 0.1 %. Near-flank uplift stays the same shape (RMS |legacy − fix|
+   within 4 columns ≈ 0.35–0.52 samples on 64²).
 3. **`push_down_remove_negative_thickness` never fixes horizons 0/1.** The
    loop stops at `i = 2`. Kept (the Rust `enforce_nonnegative_thicknesses`
    is the same loop).
@@ -298,7 +307,8 @@ python rust/synthoseis-core/examples/plot_salt_demo.py /tmp/saltd /tmp/salts OUT
     strip-stitch and multi-process paths do this chunk by chunk, with one
     chunk in memory (`salt::verify_salt_labels`); a test corrupts one voxel
     and checks that it is caught.
-- **Multi-process:** `--no-salt` and `--salt-legacy-top-offset` are
+- **Multi-process:** `--no-salt`, `--salt-legacy-top-offset` and
+  `--salt-smooth-all-horizons` are
   forwarded to workers; multi-process equals a single process for both and
   for the default.
 - **GPU:** matches CPU with salt (`lithology_gpu.rs`, two salt cases).

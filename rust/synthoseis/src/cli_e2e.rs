@@ -340,6 +340,14 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
                 ""
             }
         );
+        println!(
+            "drag: {}",
+            if cfg.rock_physics.salt_smooth_all_horizons {
+                "smooth-all (--salt-smooth-all-horizons)"
+            } else {
+                "lift-only"
+            }
+        );
     } else if g == synthoseis_core::ToyGeometry::Layered {
         println!("salt: off (--no-salt, master b4f4259)");
     }

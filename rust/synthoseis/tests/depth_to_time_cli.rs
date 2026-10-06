@@ -100,9 +100,9 @@ const MASTERD2T_RICH: u64 = 0xc747_5878_6ba7_0f95;
 const MASTERD2T_RICH_TRAILING: u64 = 0xc64a_edda_ee03_ff02;
 const MASTERD2T_MP: u64 = 0x5f5f_85af_e374_3e75;
 // The same runs in time mode (the default since this branch).
-const TIME_PLAIN: u64 = 0x6aa8_1542_40b2_94e6;
-const TIME_RICH: u64 = 0x02d9_a61d_29bb_4de2;
-const TIME_MP: u64 = 0x5f34_69f1_e77e_3494;
+const TIME_PLAIN: u64 = 0xf6e5_0563_6edd_f658;
+const TIME_RICH: u64 = 0x7608_198b_26f4_8be8;
+const TIME_MP: u64 = 0xd1d0_5a88_d109_29df;
 
 #[test]
 fn legacy_depth_as_time_reproduces_master_f3720fb2() {
@@ -115,7 +115,10 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
         ("mp", MP, MASTERD2T_MP, Some(TIME_MP)),
     ] {
         let legacy = dir.path().join(format!("{name}-legacy.mdio"));
-        let out = run(&with(base, &["--legacy-depth-as-time"]), &legacy);
+        let out = run(
+            &with(base, &["--legacy-depth-as-time", "--salt-smooth-all-horizons"]),
+            &legacy,
+        );
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(!stdout(&out).contains("time axis:"), "{name}: legacy prints no time summary");
         assert_eq!(store_hash(&legacy), master, "{name}: --legacy-depth-as-time vs master f3720fb2");
@@ -235,7 +238,7 @@ fn invalid_time_flags_exit_2() {
 
 /// Fault-label salt mask in time mode (#38 + #39, spec §8), seed 7 at
 /// 24 × 24 × 128 with 3 faults: the time-domain `fault_labels` are `fault
-/// AND NOT salt`, the mask removes exactly the 79 fault ∩ salt voxels of
+/// AND NOT salt`, the mask removes exactly the 66 fault ∩ salt voxels of
 /// the `--fault-labels-through-salt` store (which the summary reports as
 /// `masked_in_salt=79`, counted on the time cube), the angle stack is
 /// unchanged. (The CLI takes `--faults` on the single-worker chunked path
@@ -252,7 +255,7 @@ fn fault_label_salt_mask_in_time_mode() {
     let masked_p = dir.path().join("masked.mdio");
     let out = run(FAULTED7, &masked_p);
     assert!(out.status.success(), "{out:?}");
-    assert!(stdout(&out).contains("masked_in_salt=79 "), "{}", stdout(&out));
+    assert!(stdout(&out).contains("masked_in_salt=66 "), "{}", stdout(&out));
     let through_p = dir.path().join("through.mdio");
     let out = run(&with(FAULTED7, &["--fault-labels-through-salt"]), &through_p);
     assert!(out.status.success(), "{out:?}");
@@ -263,7 +266,7 @@ fn fault_label_salt_mask_in_time_mode() {
     assert_eq!(salt, salt2);
     let overlap = through.iter().zip(&salt).filter(|(&f, &s)| f == 1 && s == 1).count();
     let removed = through.iter().map(|&v| v as usize).sum::<usize>() - masked.iter().map(|&v| v as usize).sum::<usize>();
-    assert_eq!((removed, overlap), (79, 79));
+    assert_eq!((removed, overlap), (66, 66));
     for v in 0..masked.len() {
         assert_eq!(masked[v] == 1, through[v] == 1 && salt[v] == 0, "voxel {v}");
     }
@@ -287,3 +290,4 @@ fn staircase_warning_and_gpu_fallback_log() {
     assert!(stderr(&out).contains("depth-to-time mode fuses on the CPU"), "{}", stderr(&out));
     assert_eq!(store_hash(&gpu), TIME_PLAIN, "--gpu time mode = CPU time mode");
 }
+

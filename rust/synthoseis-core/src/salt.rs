@@ -11,9 +11,11 @@
 //!      convex hull of the 218 points (`scipy.spatial.Delaunay.find_simplex`).
 //! 2. `update_depth_maps_with_salt_segments_drag`: every horizon whose depth
 //!    falls inside salt in some column is shifted up by `2 * r` samples
-//!    there (`r` counts the horizons touching salt so far), every horizon is
-//!    smoothed with `gaussian_filter(sigma = 3)`, and negative thicknesses are
-//!    removed from the base upwards. The horizons drag up against the flanks.
+//!    there (`r` counts the horizons touching salt so far), the lift is
+//!    spread with `gaussian_filter(sigma = 3)` (default: lift-only
+//!    `m + G(L)`; opt-out `--salt-smooth-all-horizons` restores legacy
+//!    `G(m+L)`), and negative thicknesses are removed from the base upwards.
+//!    The horizons drag up against the flanks.
 //! 3. Lithology 2 inside salt; rock physics sets `rho = 2.17`, `vp = 4500`,
 //!    `vs = 2250` there (before the base forward-fill).
 //! 4. Closures: salt makes the horizon gaps that `Closures._flood_fill`
@@ -37,6 +39,9 @@
 //!   Rust faults displace labels, there are no faulted maps), and the
 //!   percentile uses the unfaulted horizon 1. Legacy smooths the faulted
 //!   maps, which also blurs every fault offset in the horizons.
+//! * Default drag is lift-only (`m + G(L)`): far from salt the maps stay
+//!   undragged. `--salt-smooth-all-horizons` restores post-#34
+//!   `G(m+L)`, which also flattens the dome far from salt.
 //! * The salt body itself is not faulted (as in legacy).
 
 use crate::pipeline::E2eConfig;
@@ -526,16 +531,39 @@ pub fn gaussian_filter_sigma3(map: &[f64], ni: usize, nj: usize) -> Vec<f64> {
     a
 }
 
-/// Legacy `update_depth_maps_with_salt_segments_drag` (dragged maps; the gap
-/// maps are not built, see [`closure_fill_input`]) followed by
+/// Horizon drag against salt flanks, then
 /// `push_down_remove_negative_thickness`. `maps` is `(ni, nj, nh)` in
 /// samples; horizon depths index the salt grid after `astype(int)` and a
 /// clip to `[0, nk + pad - 1]` (legacy `faulted_depth.shape[2] - 1`).
 ///
-/// Legacy quirks kept: the Gaussian smoothing is applied to every horizon,
-/// including those that never touch salt; the shift counter `r` is
-/// cumulative over horizons; the push-down never fixes horizons 0 / 1.
-pub fn drag_horizon_maps(maps: &[f64], shape: [usize; 3], salt: &SaltBody) -> Vec<f64> {
+/// With `smooth_all = false` (the default, lift-only): for each horizon the
+/// lift field `L = −2r · salt_mask` is smoothed and added back,
+/// `m_out = m + G_σ3(L)`. With `smooth_all = true`
+/// (`--salt-smooth-all-horizons`): legacy / post-#34 behaviour
+/// `m_out = G_σ3(m + L)`, which also blurs the undragged map far from salt.
+/// Same `r`, hit test, kernel, reflect edges and axis order either way.
+/// The push-down never fixes horizons 0 / 1.
+pub fn drag_horizon_maps(
+    maps: &[f64],
+    shape: [usize; 3],
+    salt: &SaltBody,
+    smooth_all: bool,
+) -> Vec<f64> {
+    let mut out = drag_horizon_maps_before_pushdown(maps, shape, salt, smooth_all);
+    synthoseis_geo::enforce_nonnegative_thicknesses(&mut out, shape);
+    out
+}
+
+/// Like [`drag_horizon_maps`] without the final push-down. Far-field
+/// bit-identity gates use this: under lift-only, never-touch horizons and
+/// cells with Chebyshev distance ≥ 13 from any lifted cell must equal the
+/// undragged map before push-down can move them.
+pub fn drag_horizon_maps_before_pushdown(
+    maps: &[f64],
+    shape: [usize; 3],
+    salt: &SaltBody,
+    smooth_all: bool,
+) -> Vec<f64> {
     let [ni, nj, nh] = shape;
     let n = ni * nj;
     assert_eq!(maps.len(), n * nh);
@@ -544,27 +572,38 @@ pub fn drag_horizon_maps(maps: &[f64], shape: [usize; 3], salt: &SaltBody) -> Ve
     let mut out = vec![0.0f64; n * nh];
     let mut rel: i64 = 0;
     let mut m = vec![0.0f64; n];
+    let mut lift = vec![0.0f64; n];
     let mut lab = vec![false; n];
     for h in 0..nh {
         for c in 0..n {
             m[c] = maps[c * nh + h];
             let k = (m[c] as i64).clamp(0, hi) as usize;
             lab[c] = salt.contains(c, k);
+            lift[c] = 0.0;
         }
         if lab.iter().any(|&v| v) {
             rel += 1;
         }
         for c in 0..n {
             if lab[c] {
-                m[c] -= (2 * rel) as f64;
+                lift[c] = -((2 * rel) as f64);
             }
         }
-        let s = gaussian_filter_sigma3(&m, ni, nj);
-        for c in 0..n {
-            out[c * nh + h] = s[c];
+        if smooth_all {
+            for c in 0..n {
+                m[c] += lift[c];
+            }
+            let s = gaussian_filter_sigma3(&m, ni, nj);
+            for c in 0..n {
+                out[c * nh + h] = s[c];
+            }
+        } else {
+            let s = gaussian_filter_sigma3(&lift, ni, nj);
+            for c in 0..n {
+                out[c * nh + h] = m[c] + s[c];
+            }
         }
     }
-    synthoseis_geo::enforce_nonnegative_thicknesses(&mut out, shape);
     out
 }
 
