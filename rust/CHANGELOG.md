@@ -38,9 +38,11 @@ Output-changing defaults are listed here with their opt-out flag.
   the output is master bad1daa8 byte for byte.
 - API: `RockPhysicsConfig::min_closure_voxels: usize` is replaced by
   `closure_minimum: ClosureMinimum` (use `ClosureMinimum::voxels(ni, nj)`
-  for the applied threshold); new `legacy_closure_contact_cap`,
-  `ClosureRun::fluid_contact`, `closure_segments::segmented_sand_unit_fluids_with`,
-  `closure_census` / `ClosureCensus` and `write_closure_attrs`.
+  for the applied threshold; variants `Scaled`, `Fixed(N)`, `Legacy`, plus
+  `ClosureMinimum::LEGACY` and `LEGACY_VOXELS`); new
+  `legacy_closure_contact_cap`, `ClosureRun::fluid_contact`,
+  `closure_segments::segmented_sand_unit_fluids_with`, `closure_census` /
+  `ClosureCensus` and `write_closure_attrs`.
 - **Partial voxels are on by default** (PR B2; spec "partial voxels"). The
   CLI now Backus-mixes cells that straddle a horizon, the seabed, a salt top
   or a fluid contact, and on the time axis places every sub-cell interface at
