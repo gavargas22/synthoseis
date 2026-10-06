@@ -103,30 +103,30 @@ jobs:
         run: |
           set -euo pipefail
           FM="--e2e --chunked --seed 11 --shape 24,24,128 --faults 4 --sand-layer-fraction 0.4"
-          # Legacy axis: #38's depth counts (master f3720fb2).
+          # Legacy axis: depth-domain counts (lift-only default; was 3919/155 under smooth-all).
           cargo run --profile test -p synthoseis -- run $FM --legacy-depth-as-time --store /tmp/fm.mdio | tee /tmp/fm.txt
-          grep -q "fault_voxels=3919, masked_in_salt=155 " /tmp/fm.txt
+          grep -q "fault_voxels=3855, masked_in_salt=155 " /tmp/fm.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-depth-as-time --fault-labels-through-salt --store /tmp/fm-through.mdio | tee /tmp/fm-through.txt
-          grep -q "fault_voxels=4074 (--fault-labels-through-salt)" /tmp/fm-through.txt
+          grep -q "fault_voxels=4010 (--fault-labels-through-salt)" /tmp/fm-through.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-depth-as-time --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fm-gpu.mdio | tee /tmp/fm-gpu.txt
           grep -q "masked_in_salt=155 " /tmp/fm-gpu.txt
           # Time output, whole voxels (--legacy-whole-voxels = d8b96e69 default):
           # counts of the written time cube.
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --store /tmp/fmt.mdio | tee /tmp/fmt.txt
-          grep -q "fault_voxels=3870, masked_in_salt=63 " /tmp/fmt.txt
+          grep -q "fault_voxels=3774, masked_in_salt=72 " /tmp/fmt.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --fault-labels-through-salt --store /tmp/fmt-through.mdio | tee /tmp/fmt-through.txt
-          grep -q "fault_voxels=3933 (--fault-labels-through-salt)" /tmp/fmt-through.txt
+          grep -q "fault_voxels=3846 (--fault-labels-through-salt)" /tmp/fmt-through.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
-          grep -q "masked_in_salt=63 " /tmp/fmt-gpu.txt
+          grep -q "masked_in_salt=72 " /tmp/fmt-gpu.txt
           # Time output, partial voxels (default since PR B2): the time-domain
           # fault cube is sampled through the partial traveltime.
           cargo run --profile test -p synthoseis -- run $FM --store /tmp/fmp.mdio | tee /tmp/fmp.txt
-          grep -q "fault_voxels=3896, masked_in_salt=68 " /tmp/fmp.txt
+          grep -q "fault_voxels=3800, masked_in_salt=70 " /tmp/fmp.txt
           grep -q "^partial voxels: .*mode=subcell" /tmp/fmp.txt
           cargo run --profile test -p synthoseis -- run $FM --fault-labels-through-salt --store /tmp/fmp-through.mdio | tee /tmp/fmp-through.txt
-          grep -q "fault_voxels=3964 (--fault-labels-through-salt)" /tmp/fmp-through.txt
+          grep -q "fault_voxels=3870 (--fault-labels-through-salt)" /tmp/fmp-through.txt
           cargo run --profile test -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmp-gpu.mdio | tee /tmp/fmp-gpu.txt
-          grep -q "fault_voxels=3896, masked_in_salt=68 " /tmp/fmp-gpu.txt
+          grep -q "fault_voxels=3800, masked_in_salt=70 " /tmp/fmp-gpu.txt
 
   msrv:
     name: MSRV (Rust 1.83)
