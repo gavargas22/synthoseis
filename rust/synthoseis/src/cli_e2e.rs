@@ -391,7 +391,38 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
                 }
             );
         }
+        print_closure_minimum(cfg);
     }
+}
+
+/// `closures: minimum T voxels (...), kept K of C compartments`.
+fn print_closure_minimum(cfg: &synthoseis_core::pipeline::E2eConfig) {
+    use synthoseis_core::ClosureMinimum;
+    let (labels, shape) = synthoseis_core::generate_labels(cfg);
+    let Some(c) = synthoseis_core::closure_census(cfg, &labels, shape) else {
+        return;
+    };
+    let rule = match c.rule {
+        ClosureMinimum::Scaled => format!(
+            "scaled ni·nj/{}, floor {}, {}",
+            ClosureMinimum::SCALED_CELLS_PER_VOXEL,
+            ClosureMinimum::SCALED_FLOOR,
+            ClosureMinimum::SCALED_CAP.map_or("no cap".to_string(), |v| format!("cap {v}"))
+        ),
+        ClosureMinimum::LEGACY => "fixed 500, --legacy-closure-minimum".to_string(),
+        ClosureMinimum::Fixed(n) => format!("fixed {n}"),
+    };
+    println!(
+        "closures: minimum {} voxels ({rule}), kept {} of {} compartments{}",
+        c.minimum,
+        c.kept(),
+        c.sizes.len(),
+        if cfg.rock_physics.legacy_closure_contact_cap {
+            ", contact cap at base cell (--legacy-closure-contact-cap)"
+        } else {
+            ""
+        }
+    );
 }
 
 pub fn print_rock_summary(rp: &synthoseis_core::RockPhysicsConfig) {

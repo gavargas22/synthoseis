@@ -57,6 +57,7 @@ pub fn run_e2e_strip_stitched(
     let store = MdioStore::create_empty(&path, &create).map_err(|e| e.to_string())?;
     crate::time_mode::write_time_attrs(&store, cfg)?;
     crate::partial_model::write_partial_voxel_attrs(&store, cfg)?;
+    crate::rock_physics::write_closure_attrs(&store, cfg)?;
     store.ensure_labels_array().map_err(|e| e.to_string())?;
     let faults = fault_model(cfg);
     if faults.is_some() {

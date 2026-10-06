@@ -371,7 +371,18 @@ fn model_uses_markov_lithology_end_to_end() {
     assert_eq!(toy.effective_lithology(), ToyLithology::Alternating);
 
     // Previous layered default (master after #30) under `alternating`.
-    let demo = |rp: RockPhysicsConfig| whole(&layered(7, [64, 64, 128], rp));
+    // These demo goldens predate the scaled closure minimum: master
+    // bad1daa8's fixed 500 (`ClosureMinimum::LEGACY`, spec §6.9).
+    let demo = |rp: RockPhysicsConfig| {
+        whole(&layered(
+            7,
+            [64, 64, 128],
+            RockPhysicsConfig {
+                closure_minimum: synthoseis_core::ClosureMinimum::LEGACY,
+                ..rp
+            },
+        ))
+    };
     let alt = demo(RockPhysicsConfig {
         lithology: ToyLithology::Alternating,
         closures_unsegmented: true,
@@ -421,7 +432,7 @@ fn markov_sands_form_closures_with_fluids() {
             seed,
             [48, 48, 192],
             RockPhysicsConfig {
-                min_closure_voxels: 1,
+                closure_minimum: synthoseis_core::ClosureMinimum::Fixed(1),
                 ..RockPhysicsConfig::default()
             },
         );

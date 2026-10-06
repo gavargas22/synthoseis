@@ -131,8 +131,50 @@ surface:
 3. The contact is `min(spill, crest + max_column_m / digi)`.
 4. The fluid (brine/oil/gas, uniform) is keyed by seed, layer and closure
    rank.
-5. Closures smaller than `min_closure_voxels` (500, as in legacy) stay
-   brine.
+5. Closures smaller than the closure minimum stay brine (see "Closure
+   minimum" below).
+
+### Closure minimum
+
+Legacy keeps a closure only if it holds at least `min_closure_voxels_simple`
+voxels: 500 in `config/example.json`, whose cube is 300 × 300 × 1250
+(`Closures.py` `remove_small_objects` on the output grid). Legacy's own
+16 × 16 e2e fixture lowers it to 20 (`docs/angle-stack-e2e-parity.md`).
+The Rust default scales it with the map area (`ClosureMinimum::Scaled`):
+
+    minimum = clamp(round(ni · nj / 180), 20, 500)   (integer: (ni·nj + 90) / 180)
+
+- **Map area.** Trap width scales with the cube (dome radius 0.22–0.35 ×
+  min(ni, nj)); trap height is capped by the 37.5-cell maximum column and the
+  sand unit, so nk does not enter. 180 cells² per voxel gives exactly 500 at
+  300 × 300.
+- **Floor 20.** Compartment sizes are bimodal: specks (1–3 column pits and
+  fault slivers) are mostly 1–10 voxels, real traps on small cubes 20–500.
+  Floors 10–50 give the same kept counts within ±0.2 per seed.
+- **Cap 500.** Never stricter than legacy: every closure kept at 500 stays
+  kept with the same contact and fluid (the fluid draw is keyed by rank over
+  every closed region, kept or not). Cubes with ni·nj ≥ 89,910 are
+  unchanged. (`ClosureMinimum::SCALED_CAP`; `None` would let the rule grow
+  past 500.)
+- **Values.** 8 × 8 to 60 × 60: 20; 64 × 64: 23; 96 × 96: 51; 128 × 128:
+  91; 192 × 192: 205; 300 × 300 and larger: 500.
+- **Counting.** Whole cells (`Σ (k1 − k0)` per compartment), also under
+  partial voxels: no circular dependency on the contact, the same traps in
+  both voxel modes, and consistent with whole-cell detection.
+- **Scope.** All closure modes: 3D-segmented per sand unit (default),
+  `--closures-unsegmented`, `--closures-per-layer` and the planar geometry.
+  Salt walls only shape the fill; the minimum applies the same way.
+- **Measured** (default configuration, 12 seeds per cube): the kept share of
+  the closure volume rises from 59–99.8 % to ≥ 98.8 % on 22 cube/fault
+  combinations; on 32 × 32 × 128 without faults the seeds without any kept
+  trap drop from 9 to 4 of 12.
+- **Not ported.** Legacy also has `min_closure_voxels_faulted` (2,500, 5×
+  the simple minimum) and `_onlap` (500) for its closure types. Rust has no
+  closure types, so one minimum applies to every compartment.
+- **Switches.** `--legacy-closure-minimum` / `ClosureMinimum::LEGACY`
+  (`Fixed(500)`, master bad1daa8), `--min-closure-voxels N` /
+  `Fixed(N)`. Scaled stores carry `closure_min_voxels` and
+  `closure_minimum = "scaled-area"`.
 
 Voxels above the contact use the oil or gas sand trend. There is no
 Gassmann step, as in legacy. `dome_closure_selects_fluid_above_contact`

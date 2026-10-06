@@ -188,7 +188,7 @@ pub use pipeline_stream::{
     SeismicFilters, SeismicNoise, WorkingSetStats, DEFAULT_INCIDENCE_DEG, GENERATE_LABELS_CALLS,
 };
 pub use rock_physics::{
-    elastic_model, ElasticModel, MixingMethod, NetToGross, RockPhysicsConfig, RpmModel,
+    closure_census, elastic_model, ClosureCensus, ClosureMinimum, ElasticModel, MixingMethod, NetToGross, RockPhysicsConfig, RpmModel,
     ZoeppritzForm,
 };
 pub use lithology::ToyLithology;

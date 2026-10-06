@@ -15,6 +15,19 @@
 //!      and spill point, both here and in ef2dc42. The voxels of every
 //!      region are the same as in ef2dc42; only the stored contact is now
 //!      clamped to the unit base.
+//!    - Two contacts per column: the legacy closure depth
+//!      [`ClosureRun::contact`] = `min(fill, cap, base)` (capped at the
+//!      integer base cell; it sets the closure voxels `[top, k1)` and the
+//!      closure list), and the fluid contact [`ClosureRun::fluid_contact`]
+//!      = `min(fill, cap, base + ½)` stored in the fluid maps. Under the
+//!      centre rule the true unit base lies in `[base − ½, base + ½)` and
+//!      partial voxels clip a contact to its own interval, so `base + ½`
+//!      fills a full-unit trap down to the true sub-cell base, while a
+//!      fault-repeated copy of the unit lower in the column (continuous top
+//!      ≥ `base + ½`) stays out. Whole voxels are bit-identical (cell
+//!      `base` carries another label). `legacy_closure_contact_cap`
+//!      (`--legacy-closure-contact-cap`) stores `contact` instead, as master
+//!      bad1daa8.
 //!    - Legacy walls off fault gaps (NaN cells of the faulted depth maps),
 //!      but its gap-inserting `Faults.partial_faulting` is never called, so
 //!      the walls never engage there. They are not ported.
@@ -25,8 +38,9 @@
 //!      separate compartments.
 //!    - Sand juxtaposed across a fault joins the closures on both sides into
 //!      one compartment.
-//!    - Compartments below `min_closure_voxels` stay brine, as with legacy
-//!      `remove_small_objects(closure_min_voxels)`.
+//!    - Compartments below the closure minimum
+//!      ([`crate::rock_physics::ClosureMinimum::voxels`], whole cells) stay
+//!      brine, as with legacy `remove_small_objects(closure_min_voxels)`.
 //! 3. **Fluids.** One brine / oil / gas draw per compartment, as with
 //!    legacy `rng.integers(3)` per component.
 //!    - The draw is keyed by the compartment's primary closure: the smallest
@@ -64,8 +78,12 @@ pub struct ClosureRun {
     pub col: usize,
     pub k0: usize,
     pub k1: usize,
-    /// Per-column contact (`min(fill, crest + max_column, base)`).
+    /// Per-column legacy closure depth (`min(fill, crest + max_column,
+    /// base)`, capped at the integer base cell).
     pub contact: f64,
+    /// Per-column fluid contact (`min(fill, crest + max_column, base + ½)`),
+    /// stored in the fluid maps by default; see the module docs.
+    pub fluid_contact: f64,
 }
 
 /// 2D stage for one sand unit: closure voxel runs, in raster order of
@@ -161,6 +179,7 @@ pub fn unit_closure_runs_salt(
                     k0,
                     k1,
                     contact,
+                    fluid_contact: filled[c].min(cap).min(base[c] as f64 + 0.5),
                 });
             }
         }
@@ -261,7 +280,7 @@ pub struct Compartment {
     pub pieces: usize,
     /// Number of sand units it spans (> 1: juxtaposition across a fault).
     pub units: usize,
-    /// At least `min_closure_voxels` (smaller compartments stay brine).
+    /// At least the closure minimum (smaller compartments stay brine).
     pub kept: bool,
     /// Keyed like an unsplit ef2dc42 closure (`false`: split-off piece).
     pub primary: bool,
@@ -299,6 +318,24 @@ pub fn segmented_sand_unit_fluids_salt(
     max_column: f64,
     min_voxels: usize,
     salt: Option<&crate::salt::SaltBody>,
+) -> (Vec<(usize, LayerFluids)>, Vec<Compartment>) {
+    segmented_sand_unit_fluids_with(labels, shape, intervals, sand, seed, max_column, min_voxels, salt, false)
+}
+
+/// [`segmented_sand_unit_fluids_salt`] with the contact switch:
+/// `legacy_contact_cap = true` stores [`ClosureRun::contact`] (master
+/// bad1daa8) instead of [`ClosureRun::fluid_contact`] in the fluid maps.
+#[allow(clippy::too_many_arguments)]
+pub fn segmented_sand_unit_fluids_with(
+    labels: &[u8],
+    shape: [usize; 3],
+    intervals: &[usize],
+    sand: &[bool],
+    seed: u64,
+    max_column: f64,
+    min_voxels: usize,
+    salt: Option<&crate::salt::SaltBody>,
+    legacy_contact_cap: bool,
 ) -> (Vec<(usize, LayerFluids)>, Vec<Compartment>) {
     let [ni, nj, _] = shape;
     let n = ni * nj;
@@ -390,7 +427,11 @@ pub fn segmented_sand_unit_fluids_salt(
         }
         let u = run_unit[r];
         let f = compartments[c].fluid;
-        per_unit[u].contact[run.col] = run.contact as f32;
+        per_unit[u].contact[run.col] = if legacy_contact_cap {
+            run.contact
+        } else {
+            run.fluid_contact
+        } as f32;
         per_unit[u].fluid[run.col] = f;
         let k = (run.rank, c);
         let list = &mut pieces[u];

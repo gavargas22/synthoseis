@@ -152,6 +152,7 @@ pub fn write_e2e_mdio_chunked(
     let store = MdioStore::create_empty(path, &create).map_err(|e| e.to_string())?;
     crate::time_mode::write_time_attrs(&store, cfg)?;
     crate::partial_model::write_partial_voxel_attrs(&store, cfg)?;
+    crate::rock_physics::write_closure_attrs(&store, cfg)?;
     store
         .write_volume(&volumes.angle_stack)
         .map_err(|e| e.to_string())?;

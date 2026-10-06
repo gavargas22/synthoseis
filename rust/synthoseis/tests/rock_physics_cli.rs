@@ -10,8 +10,28 @@ use std::process::{Command, Output};
 /// (`--legacy-depth-as-time`, depth-to-time spec §4): the pinned hashes are
 /// stores written by master binaries before the time conversion, and must
 /// pass unchanged. Time-mode runs use [`run_time`].
+///
+/// The goldens predate the scaled closure minimum (closure-minimum spec
+/// §6.9), so [`run`] also adds `--legacy-closure-minimum` (master
+/// bad1daa8's fixed 500) unless the run picks a closure minimum or has no
+/// closures. The scaled default is pinned in
+/// `tests/closure_minimum_cli.rs`.
 fn run(args: &[&str], store: &Path) -> Output {
-    run_time(&with(args, &["--legacy-depth-as-time"]), store)
+    run_time(&legacy_closures(&with(args, &["--legacy-depth-as-time"])), store)
+}
+
+fn legacy_closures<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut v = args.to_vec();
+    let picks = |a: &&str| {
+        matches!(
+            *a,
+            "--legacy-toy-depth" | "--no-fluids" | "--min-closure-voxels" | "--legacy-closure-minimum"
+        )
+    };
+    if !args.iter().any(picks) {
+        v.push("--legacy-closure-minimum");
+    }
+    v
 }
 
 /// [`run`] without the legacy axis switch: the default time output.

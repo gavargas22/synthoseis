@@ -193,7 +193,17 @@ fn default_demo_cube_goldens() {
         m.layers.len()
     );
     assert!(shifted >= 1 && hc >= 1);
-    let (v, _) = generate_chunked(&whole(&c));
+    // Master bad1daa8's fixed 500-voxel closure minimum
+    // (`ClosureMinimum::LEGACY`) keeps the pre-scaled-minimum goldens
+    // (closure-minimum spec §6.9); the scaled default is pinned below.
+    let legacy = E2eConfig {
+        rock_physics: synthoseis_core::RockPhysicsConfig {
+            closure_minimum: synthoseis_core::ClosureMinimum::LEGACY,
+            ..c.rock_physics.clone()
+        },
+        ..c.clone()
+    };
+    let (v, _) = generate_chunked(&whole(&legacy));
     // Horizons sit on whole samples and the base lies below the cube, so the
     // only unfilled (255) samples are the water column above the seabed.
     let nk = 128;
@@ -216,7 +226,7 @@ fn default_demo_cube_goldens() {
     assert_eq!(ah(&v.angle_stack), LAYERED_STACK15);
     // Partial-voxel default (PR B2, legacy axis = cell): the depth labels
     // are unchanged, the stack differs.
-    let (d, _) = generate_chunked(&c);
+    let (d, _) = generate_chunked(&legacy);
     assert_eq!(fnv(d.labels.iter().copied()), LAYERED_LABELS);
     assert_eq!(
         ah(&d.angle_stack),
@@ -224,8 +234,23 @@ fn default_demo_cube_goldens() {
         "{:#018x}",
         ah(&d.angle_stack)
     );
+    // Scaled closure minimum (default, 23 voxels at 64x64): labels
+    // unchanged, both stacks move.
+    let (w, _) = generate_chunked(&whole(&c));
+    let (p, _) = generate_chunked(&c);
+    eprintln!(
+        "scaled: whole {:#018x} partial {:#018x}",
+        ah(&w.angle_stack),
+        ah(&p.angle_stack)
+    );
+    assert_eq!(fnv(w.labels.iter().copied()), LAYERED_LABELS);
+    assert_eq!(fnv(p.labels.iter().copied()), LAYERED_LABELS);
+    assert_eq!(ah(&w.angle_stack), LAYERED_STACK15_SCALED);
+    assert_eq!(ah(&p.angle_stack), LAYERED_STACK15_PV_SCALED);
 }
 
+const LAYERED_STACK15_SCALED: u64 = 0x74e6_e4cc_66ee_1feb;
+const LAYERED_STACK15_PV_SCALED: u64 = 0x997a_244c_56ae_2549;
 const LAYERED_STACK15_PV: u64 = 0x19f1_aa16_41c9_def1;
 
 const LAYERED_LABELS: u64 = 0x021e_4d94_9085_f056;
@@ -296,7 +321,7 @@ fn layered_statistics_match_legacy() {
     for seed in 0..24u64 {
         let c = E2eConfig {
             rock_physics: RockPhysicsConfig {
-                min_closure_voxels: 1,
+                closure_minimum: synthoseis_core::ClosureMinimum::Fixed(1),
                 lithology: ToyLithology::Alternating,
                 ..RockPhysicsConfig::default()
             },

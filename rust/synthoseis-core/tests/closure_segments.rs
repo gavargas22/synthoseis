@@ -22,16 +22,6 @@ use synthoseis_core::pipeline::{E2eConfig, FaultConfig, FilterConfig, RockPhysic
 use synthoseis_core::rock_physics::{closure_fluid, elastic_model, ElasticModel};
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
-/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
-/// default): partial voxels are the library default since PR B2, and this
-/// golden asserts master (whole-voxel) output.
-fn whole(c: &E2eConfig) -> E2eConfig {
-    let mut c = c.clone();
-    c.rock_physics.partial_voxels =
-        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
-    c
-}
-
 #[derive(Deserialize)]
 struct FillCase {
     shape: [usize; 2],
@@ -324,7 +314,7 @@ fn faults_merge_juxtaposed_closures_and_switch_restores_ef2dc42() {
         &sand,
         c.seed,
         rp.max_column_m / rp.depth_step_m,
-        rp.min_closure_voxels,
+        rp.closure_minimum.voxels(shape[0], shape[1]),
     );
     assert!(
         comps.iter().any(|k| k.kept && k.units > 1),
@@ -333,18 +323,39 @@ fn faults_merge_juxtaposed_closures_and_switch_restores_ef2dc42() {
     let seg = generate_chunked(&c).0.angle_stack;
     let unseg = generate_chunked(&faulted_sandy(7, true)).0.angle_stack;
     assert_ne!(seg, unseg);
-    let flat = |u| {
-        whole(&E2eConfig {
-            faults: FaultConfig::with_count(0),
-            ..faulted_sandy(7, u)
-        })
-    };
-    let (a, b) = (
-        generate_chunked(&flat(false)).0.angle_stack,
-        generate_chunked(&flat(true)).0.angle_stack,
-    );
-    assert!(
-        a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()),
-        "no faults: segmented == ef2dc42"
-    );
+    // Without faults segmented == ef2dc42 bit for bit, on the default
+    // (partial voxels), with the scaled and with the legacy closure
+    // minimum: the fluid contact reaches base + ½ (closure-minimum spec
+    // §4), as on the unsegmented path, which has no base clamp. Master
+    // bad1daa8 (`legacy_closure_contact_cap` + `ClosureMinimum::LEGACY`)
+    // differs in 256 / 2,000 / 75 / 0 samples for seeds 7 / 1 / 2 / 3 (the
+    // base sliver stays brine).
+    use synthoseis_core::ClosureMinimum;
+    for (seed, master_differs) in [(7u64, 256usize), (1, 2000), (2, 75), (3, 0)] {
+        for minimum in [ClosureMinimum::Scaled, ClosureMinimum::LEGACY] {
+            let flat = |u, cap| {
+                let mut c = E2eConfig {
+                    faults: FaultConfig::with_count(0),
+                    ..faulted_sandy(seed, u)
+                };
+                c.rock_physics.closure_minimum = minimum;
+                c.rock_physics.legacy_closure_contact_cap = cap && !u;
+                c
+            };
+            let (a, b) = (
+                generate_chunked(&flat(false, false)).0.angle_stack,
+                generate_chunked(&flat(true, false)).0.angle_stack,
+            );
+            assert!(
+                a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()),
+                "seed {seed} {minimum:?}, no faults: segmented == ef2dc42"
+            );
+            let l = generate_chunked(&flat(false, true)).0.angle_stack;
+            let n = l.iter().zip(&b).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+            println!("seed {seed} {minimum:?}: legacy contact cap differs from unsegmented in {n}/{} samples", b.len());
+            if minimum == ClosureMinimum::LEGACY {
+                assert_eq!(n, master_differs, "seed {seed}: master bad1daa8 vs unsegmented");
+            }
+        }
+    }
 }

@@ -53,12 +53,25 @@ continuous surface with cliffs.
      spill point, as in legacy.
    - Unchanged deviations from #32: 4-connected regions, every region
      capped, no border zeroing (see Deferred).
+   - **Two contacts.** The legacy closure depth `min(fill, cap, base)`
+     (`ClosureRun::contact`) is capped at the integer base cell; it sets the
+     closure voxels and the closure list, bit-exact against the legacy
+     fixture. The fluid contact stored in the fluid maps
+     (`ClosureRun::fluid_contact`) is capped at `base + ½`: under the centre
+     rule the true unit base lies in `[base − ½, base + ½)`, and partial
+     voxels clip a contact to its own interval, so a trap that fills its
+     unit reaches the true sub-cell base. A fault-repeated copy of the unit
+     lower in the column starts at `base + ½` or deeper and stays out,
+     which is why the clamp exists. Whole voxels are bit-identical (cell
+     `base` carries another label). `--legacy-closure-contact-cap` stores
+     the base-cell contact, as master bad1daa8.
 2. **Segmentation.** The closure runs of all units form 3D components with
    18-connectivity. Same-column and in-plane face neighbours connect when
    their sample ranges touch (|dk| ≤ 1); in-plane diagonals need an
    overlap (dk = 0). `closure_segments::segment_runs` uses union-find on
-   runs, so memory is O(closure columns). Components below
-   `min_closure_voxels` stay brine.
+   runs, so memory is O(closure columns). Components below the closure
+   minimum (`ClosureMinimum::voxels`, docs/rock-physics-port.md) stay
+   brine.
 3. **Fluids.** One draw per compartment:
    - A compartment that contains the first column of a 2D closure is keyed
      like ef2dc42, `closure_fluid(seed, unit top, rank)`, using the smallest

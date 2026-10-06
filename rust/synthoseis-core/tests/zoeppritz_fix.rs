@@ -66,7 +66,7 @@ fn rich(rock: RockPhysicsConfig) -> E2eConfig {
             first_random_layer: 0,
             layer_shift_samples: Some(6),
             property_shift_samples: Some(3),
-            min_closure_voxels: 1,
+            closure_minimum: synthoseis_core::ClosureMinimum::Fixed(1),
             ..rock
         },
     }

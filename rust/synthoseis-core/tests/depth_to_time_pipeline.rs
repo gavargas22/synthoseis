@@ -292,12 +292,26 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
 /// overlap is 0 and the mask must change nothing. Seed 7 (the demo
 /// seed): 79 fault ∩ salt voxels removed with whole voxels (the d8b96e69
 /// default, `whole`), PV_SEED7 with the partial-voxel default (PR B2: the
-/// time-domain cubes are sampled through the partial traveltime).
+/// time-domain cubes are sampled through the partial traveltime). The
+/// scaled closure minimum (20 voxels here) keeps more traps, which moves
+/// the partial traveltime: PV_SEED7 = 84, and master bad1daa8's 85 under
+/// `ClosureMinimum::LEGACY` (`--legacy-closure-minimum`). The whole-voxel
+/// pins are unchanged (labels and the depth-sampled cubes never depend on
+/// fluids).
 #[test]
 fn time_mode_fault_salt_mask_removed_count_every_path() {
-    const PV_SEED7: usize = 85;
-    for (seed, want, whole_voxels) in [(30u64, 0usize, true), (7, 79, true), (7, PV_SEED7, false)] {
-        let cfg = rich(seed, [24, 24, 128], None, 3);
+    const PV_SEED7: usize = 84;
+    const PV_SEED7_LEGACY_MINIMUM: usize = 85;
+    for (seed, want, whole_voxels, legacy_minimum) in [
+        (30u64, 0usize, true, false),
+        (7, 79, true, false),
+        (7, PV_SEED7, false, false),
+        (7, PV_SEED7_LEGACY_MINIMUM, false, true),
+    ] {
+        let mut cfg = rich(seed, [24, 24, 128], None, 3);
+        if legacy_minimum {
+            cfg.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
+        }
         let cfg = if whole_voxels { whole(&cfg) } else { cfg };
         let m = mask_cubes(&cfg);
         let removed = assert_mask_removes_overlap(&format!("seed {seed} in-memory"), &m.masked, &m.through, &m.salt);
@@ -633,10 +647,12 @@ fn time_mode_fuse_tile_cost_within_1_3x() {
 /// Hashes from the master f3720fb2 library (same configs,
 /// `generate_chunked`). #38 changed only the fault labels against
 /// 0eb937b5: masked by the salt (`FAULTS`); through-salt equals 0eb937b5's
-/// (`FAULTS_THROUGH`). The time-mode default differs.
+/// (`FAULTS_THROUGH`). The time-mode default differs. Also with master
+/// bad1daa8's fixed 500-voxel closure minimum (`ClosureMinimum::LEGACY`,
+/// closure-minimum spec §6.9): f3720fb2 predates the scaled minimum.
 #[test]
 fn legacy_depth_as_time_reproduces_master_f3720fb2() {
-    let demo = whole(&E2eConfig {
+    let mut demo = whole(&E2eConfig {
         seed: 7,
         inline_count: 64,
         crossline_count: 64,
@@ -644,6 +660,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
         time: TimeConfig::legacy(),
         ..E2eConfig::default()
     });
+    demo.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
     let mut f = FilterConfig::legacy(4.0, 30.0, 3);
     f.noise = NoiseConfig { snr_db: Some(12.5), ..NoiseConfig::default() };
     let bp = E2eConfig { filters: f, ..demo.clone() };

@@ -116,6 +116,15 @@ fn check(c: &E2eConfig, want: u64, what: &str) {
     assert_eq!(angle_hash(&generate_tiny_cube(c).angle_stack), want, "classic {what}");
 }
 
+/// [`check`] with master bad1daa8's fixed 500-voxel closure minimum
+/// (`ClosureMinimum::LEGACY`, `--legacy-closure-minimum`): these goldens
+/// predate the scaled closure minimum (closure-minimum spec §6.9).
+fn check_master(c: &E2eConfig, want: u64, what: &str) {
+    let mut c = c.clone();
+    c.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
+    check(&c, want, what);
+}
+
 /// Bandpass-on (Ricker skipped) configs: (name, config, old hash, fixed hash).
 fn skip_cases() -> Vec<(&'static str, E2eConfig, u64, u64)> {
     vec![
@@ -138,10 +147,10 @@ fn skip_cases() -> Vec<(&'static str, E2eConfig, u64, u64)> {
 fn both_bandpass_modes_are_pinned() {
     for (name, c, old, fixed) in skip_cases() {
         assert!(c.filters.skips_ricker() && c.filters.bandpass_excludes_trailing_sample());
-        check(&c, fixed, &format!("fixed {name}"));
+        check_master(&c, fixed, &format!("fixed {name}"));
         let flagged = E2eConfig { filters: with_trailing(c.filters.clone(), true), ..c.clone() };
         assert!(!flagged.filters.bandpass_excludes_trailing_sample());
-        check(&flagged, old, &format!("--bandpass-trailing-sample {name}"));
+        check_master(&flagged, old, &format!("--bandpass-trailing-sample {name}"));
         assert_ne!(old, fixed);
     }
 }
@@ -177,7 +186,7 @@ fn ricker_paths_are_unchanged_under_both_flag_values() {
             // simply ignores it when the Ricker is kept.
             let c = E2eConfig { filters: with_trailing(c.filters.clone(), on), ..c.clone() };
             assert!(!c.filters.bandpass_excludes_trailing_sample());
-            check(&c, want, &format!("{name} (flag {on})"));
+            check_master(&c, want, &format!("{name} (flag {on})"));
         }
     }
 }
