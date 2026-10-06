@@ -199,6 +199,25 @@ enum Commands {
         /// docs/closure-segmentation-faults.md.
         #[arg(long, default_value_t = false)]
         closures_unsegmented: bool,
+        /// Legacy switch: fixed 500-voxel closure minimum (master bad1daa8,
+        /// legacy min_closure_voxels_simple for its 300 x 300 x 1250 cube).
+        /// Default: scaled with the map area, clamp(round(NI*NJ/180), 20,
+        /// 500) whole cells (20 up to 60 x 60, 23 at 64 x 64, 91 at
+        /// 128 x 128, 500 from 300 x 300). See docs/rock-physics-port.md.
+        #[arg(long, default_value_t = false)]
+        legacy_closure_minimum: bool,
+        /// Fixed closure minimum of N >= 1 whole cells (smaller closure
+        /// compartments stay brine), instead of the scaled default.
+        #[arg(long)]
+        min_closure_voxels: Option<usize>,
+        /// Legacy switch: cap the fluid contact of segmented closures at the
+        /// integer unit base cell (master bad1daa8). Default: base + 1/2
+        /// cell, so partial voxels fill a full-unit trap down to the true
+        /// sub-cell sand base. Rejected where it has no effect
+        /// (--legacy-whole-voxels, planar, --closures-unsegmented,
+        /// --closures-per-layer). See docs/partial-voxels.md.
+        #[arg(long, default_value_t = false)]
+        legacy_closure_contact_cap: bool,
         /// Legacy switch: no salt body (master b4f4259). Salt is on by
         /// default for the layered geometry (legacy `include_salt: true`).
         /// See docs/salt-bodies.md.
@@ -290,6 +309,49 @@ fn parse_partial_voxels(
         return Err("--partial-voxel-reflectivity subcell requires the time axis (not --legacy-depth-as-time); use cell".into());
     }
     Ok(PartialVoxelConfig::with(r))
+}
+
+/// `true` would make `--legacy-closure-minimum` also restore the integer
+/// contact cap (one combined opt-out for both closure changes, master
+/// bad1daa8), wherever the cap has an effect.
+const LEGACY_CLOSURE_MINIMUM_IMPLIES_CONTACT_CAP: bool = false;
+
+/// `--legacy-closure-minimum` / `--min-closure-voxels` /
+/// `--legacy-closure-contact-cap` (closure-minimum spec §5). Runs after
+/// [`parse_partial_voxels`]: the contact cap only has an effect on the
+/// segmented partial-voxel path.
+fn apply_closures(
+    mut rock: synthoseis_core::RockPhysicsConfig,
+    geometry: synthoseis_core::ToyGeometry,
+    legacy_minimum: bool,
+    min_voxels: Option<usize>,
+    legacy_contact_cap: bool,
+) -> Result<synthoseis_core::RockPhysicsConfig, String> {
+    use synthoseis_core::ClosureMinimum;
+    if legacy_minimum && min_voxels.is_some() {
+        return Err("--legacy-closure-minimum and --min-closure-voxels are mutually exclusive".into());
+    }
+    if min_voxels == Some(0) {
+        return Err("--min-closure-voxels expects N >= 1".into());
+    }
+    let any = legacy_minimum || min_voxels.is_some() || legacy_contact_cap;
+    if any && (!rock.fluids || rock.legacy_toy_depth) {
+        return Err("--legacy-closure-minimum / --min-closure-voxels / --legacy-closure-contact-cap have no effect with --no-fluids or --legacy-toy-depth".into());
+    }
+    let planar = geometry == synthoseis_core::ToyGeometry::Planar;
+    let cap_applies =
+        !(planar || rock.closures_unsegmented || rock.closures_per_layer || !rock.partial_voxels.enabled());
+    if legacy_contact_cap && !cap_applies {
+        return Err("--legacy-closure-contact-cap has no effect with --legacy-whole-voxels, --toy-geometry planar, --closures-unsegmented or --closures-per-layer".into());
+    }
+    rock.closure_minimum = match (legacy_minimum, min_voxels) {
+        (true, _) => ClosureMinimum::LEGACY,
+        (false, Some(n)) => ClosureMinimum::Fixed(n),
+        (false, None) => ClosureMinimum::Scaled,
+    };
+    rock.legacy_closure_contact_cap =
+        legacy_contact_cap || (LEGACY_CLOSURE_MINIMUM_IMPLIES_CONTACT_CAP && legacy_minimum && cap_applies);
+    Ok(rock)
 }
 
 /// `--legacy-depth-as-time` / `--dt-ms` / `--twt-samples` / `--twt-kernel`
@@ -648,6 +710,9 @@ fn main() {
             sand_layer_thickness,
             closures_per_layer,
             closures_unsegmented,
+            legacy_closure_minimum,
+            min_closure_voxels,
+            legacy_closure_contact_cap,
             no_salt,
             salt_legacy_top_offset,
             legacy_depth_as_time,
@@ -800,6 +865,17 @@ fn main() {
                 eprintln!("{e}");
                 std::process::exit(2);
             });
+            let rock = apply_closures(
+                rock,
+                geometry,
+                legacy_closure_minimum,
+                min_closure_voxels,
+                legacy_closure_contact_cap,
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(2);
+            });
             // Validate the output axis against the depth model and filters
             // (dt range, nt range, output Nyquist) before any work: exit 2.
             let probe = synthoseis_core::pipeline::E2eConfig {
@@ -918,6 +994,60 @@ fn main() {
             } else {
                 cli_e2e::run_multi_worker_placeholder(config);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use synthoseis_core::{ClosureMinimum, RockPhysicsConfig};
+
+    /// Multi-process workers rebuild the closure options from these flags,
+    /// and clap accepts them.
+    #[test]
+    fn closure_options_are_forwarded_to_workers() {
+        for (minimum, cap, want) in [
+            (ClosureMinimum::Scaled, false, vec![]),
+            (ClosureMinimum::LEGACY, false, vec!["--legacy-closure-minimum"]),
+            (ClosureMinimum::Fixed(7), true, vec!["--min-closure-voxels", "7", "--legacy-closure-contact-cap"]),
+            // `--min-closure-voxels 500` keeps its own label (same threshold
+            // as the legacy switch).
+            (ClosureMinimum::Fixed(500), false, vec!["--min-closure-voxels", "500"]),
+        ] {
+            let rock = RockPhysicsConfig {
+                closure_minimum: minimum,
+                legacy_closure_contact_cap: cap,
+                partial_voxels: synthoseis_core::partial_voxels::PartialVoxelConfig::with(
+                    synthoseis_core::partial_voxels::PvReflectivity::Subcell,
+                ),
+                ..RockPhysicsConfig::default()
+            };
+            let args = crate::cli_jobs::rock_physics_args(&rock);
+            let closure: Vec<&str> = args
+                .iter()
+                .map(String::as_str)
+                .skip_while(|a| !a.contains("closure"))
+                .take_while(|a| a.contains("closure") || a.parse::<usize>().is_ok())
+                .collect();
+            assert_eq!(closure, want, "{minimum:?} cap {cap}");
+            let mut argv = vec!["synthoseis".to_string(), "run".into(), "--e2e".into(), "--chunked".into()];
+            argv.extend(args);
+            let cli = <super::Cli as clap::Parser>::try_parse_from(argv).expect("workers accept the flags");
+            let Some(super::Commands::Run {
+                legacy_closure_minimum,
+                min_closure_voxels,
+                legacy_closure_contact_cap,
+                ..
+            }) = cli.command
+            else {
+                panic!()
+            };
+            let back = match (legacy_closure_minimum, min_closure_voxels) {
+                (true, _) => ClosureMinimum::LEGACY,
+                (false, Some(n)) => ClosureMinimum::Fixed(n),
+                (false, None) => ClosureMinimum::Scaled,
+            };
+            assert_eq!((back, legacy_closure_contact_cap), (minimum, cap));
         }
     }
 }

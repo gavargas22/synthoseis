@@ -88,6 +88,63 @@ impl Default for NetToGross {
     }
 }
 
+/// Minimum closure size (whole cells) below which a closure compartment
+/// stays brine (legacy `remove_small_objects(min_closure_voxels_simple)`).
+/// See docs/rock-physics-port.md ("Closure minimum").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClosureMinimum {
+    /// `clamp(round(ni·nj / 180), 20, 500)` from the cube's map area
+    /// (default). 180 cells² per voxel anchors the rule at legacy's
+    /// 300 × 300 design cube (exactly 500 there).
+    #[default]
+    Scaled,
+    /// A fixed minimum of N whole cells (`--min-closure-voxels N`).
+    Fixed(usize),
+    /// Master bad1daa8 / legacy `min_closure_voxels_simple`: a fixed 500
+    /// (`--legacy-closure-minimum`). Same threshold as `Fixed(500)`; kept
+    /// apart only so summaries and forwarded worker flags name the switch
+    /// the user picked.
+    Legacy,
+}
+
+impl ClosureMinimum {
+    /// Master bad1daa8 / legacy `min_closure_voxels_simple` (500).
+    pub const LEGACY: Self = ClosureMinimum::Legacy;
+    /// The threshold of [`ClosureMinimum::Legacy`].
+    pub const LEGACY_VOXELS: usize = 500;
+    /// Map cells per voxel of [`ClosureMinimum::Scaled`] (300·300 / 500).
+    pub const SCALED_CELLS_PER_VOXEL: usize = 180;
+    /// Floor of [`ClosureMinimum::Scaled`] (middle of the empty 10-50
+    /// voxel band between specks and real traps).
+    pub const SCALED_FLOOR: usize = 20;
+    /// Cap of [`ClosureMinimum::Scaled`]: never stricter than the legacy
+    /// 500. `None` would let the rule grow past 500 above 300 × 300.
+    pub const SCALED_CAP: Option<usize> = Some(500);
+
+    /// The threshold (whole cells) applied on an `ni × nj` cube. Integer
+    /// arithmetic; depends only on the global map size, so every tile,
+    /// worker and process sees the same value. Never below 1.
+    pub fn voxels(self, ni: usize, nj: usize) -> usize {
+        match self {
+            ClosureMinimum::Scaled => {
+                let per = Self::SCALED_CELLS_PER_VOXEL;
+                let t = ((ni * nj + per / 2) / per).max(Self::SCALED_FLOOR);
+                Self::SCALED_CAP.map_or(t, |cap| t.min(cap))
+            }
+            ClosureMinimum::Fixed(n) => n.max(1),
+            ClosureMinimum::Legacy => Self::LEGACY_VOXELS,
+        }
+    }
+
+    /// Short label for summaries and the `closure_minimum` attribute.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ClosureMinimum::Scaled => "scaled-area",
+            ClosureMinimum::Fixed(_) | ClosureMinimum::Legacy => "fixed",
+        }
+    }
+}
+
 /// Rock physics settings. `Default` is the corrected legacy model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RockPhysicsConfig {
@@ -114,9 +171,23 @@ pub struct RockPhysicsConfig {
     pub fluids: bool,
     /// Maximum hydrocarbon column in metres (legacy `max_column_height`).
     pub max_column_m: f64,
-    /// Closures with fewer hydrocarbon voxels stay brine (legacy
-    /// `min_closure_voxels_simple`).
-    pub min_closure_voxels: usize,
+    /// Minimum closure (compartment) size in whole cells: smaller closures
+    /// stay brine. Default [`ClosureMinimum::Scaled`]
+    /// (`clamp(round(ni·nj / 180), 20, 500)`), legacy
+    /// `min_closure_voxels_simple` scaled from its 300 × 300 design cube.
+    /// [`ClosureMinimum::LEGACY`] (`Fixed(500)`, CLI
+    /// `--legacy-closure-minimum`) reproduces master bad1daa8; CLI
+    /// `--min-closure-voxels N` is `Fixed(N)`. Use
+    /// [`ClosureMinimum::voxels`] for the threshold actually applied.
+    pub closure_minimum: ClosureMinimum,
+    /// Legacy switch: store the closure contact capped at the integer unit
+    /// base cell (`min(fill, cap, base)`, master bad1daa8) as the fluid
+    /// contact of segmented closures. Default: capped at `base + ½`, so
+    /// partial voxels fill a full-unit trap down to the true sub-cell unit
+    /// base. No effect with whole voxels (bit-identical) or on the
+    /// unsegmented / per-layer paths (no base clamp). CLI
+    /// `--legacy-closure-contact-cap`. See [`crate::closure_segments`].
+    pub legacy_closure_contact_cap: bool,
     /// Evaluate Zoeppritz with the legacy `det` typo instead of the textbook
     /// expression. CLI `--legacy-zoeppritz`. Implied by `legacy_toy_depth`.
     pub legacy_zoeppritz: bool,
@@ -178,7 +249,8 @@ impl Default for RockPhysicsConfig {
             property_shift_samples: None,
             fluids: true,
             max_column_m: 150.0,
-            min_closure_voxels: 500,
+            closure_minimum: ClosureMinimum::default(),
+            legacy_closure_contact_cap: false,
             legacy_zoeppritz: false,
             lithology: ToyLithology::default(),
             sand_layer_fraction: None,
@@ -776,6 +848,118 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
     ElasticModel::Rpm(Box::new(model))
 }
 
+/// Closure census of a run: the applied minimum and the whole-cell size of
+/// every closure compartment of the active closure mode (3D compartments
+/// by default; 2D regions with `closures_unsegmented`; per-layer regions
+/// with `closures_per_layer` / the planar geometry), kept or not.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClosureCensus {
+    /// Threshold applied ([`ClosureMinimum::voxels`]).
+    pub minimum: usize,
+    /// Mode of [`RockPhysicsConfig::closure_minimum`].
+    pub rule: ClosureMinimum,
+    /// Whole-cell size of every compartment with at least one voxel.
+    pub sizes: Vec<usize>,
+}
+
+impl ClosureCensus {
+    /// Compartments at or above the minimum (they get a fluid draw).
+    pub fn kept(&self) -> usize {
+        self.sizes.iter().filter(|&&v| v >= self.minimum).count()
+    }
+
+    /// Share of all closure voxels (any size) in kept compartments; 1 with
+    /// no closures.
+    pub fn kept_volume_fraction(&self) -> f64 {
+        let total: usize = self.sizes.iter().sum();
+        let kept: usize = self.sizes.iter().filter(|&&v| v >= self.minimum).sum();
+        if total == 0 {
+            1.0
+        } else {
+            kept as f64 / total as f64
+        }
+    }
+}
+
+/// [`ClosureCensus`] of `cfg` on its (possibly faulted) labels, with the
+/// same closure stage as [`elastic_model`]. `None` without fluids or with
+/// `legacy_toy_depth` (no closures).
+pub fn closure_census(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Option<ClosureCensus> {
+    let rp = &cfg.rock_physics;
+    if rp.legacy_toy_depth || !rp.fluids {
+        return None;
+    }
+    let [ni, nj, nk] = shape;
+    let (maps, nh) = crate::pipeline_stream::toy_horizon_maps(cfg);
+    let sand = crate::lithology::interval_sand(
+        cfg.effective_lithology(),
+        cfg.seed,
+        nh,
+        rp.sand_layer_fraction,
+        rp.sand_layer_thickness,
+    );
+    let salt = crate::salt::salt_body(cfg);
+    let intervals = label_intervals(&maps, ni, nj, nh, nk);
+    let max_column = rp.max_column_m / rp.depth_step_m;
+    let sizes: Vec<usize> = if cfg.effective_closures_per_layer() {
+        intervals
+            .iter()
+            .enumerate()
+            .filter(|&(lab, &h)| lab < 255 && sand.get(h).copied().unwrap_or(false))
+            .flat_map(|(lab, &h)| {
+                unit_fluids_salt(labels, shape, &[lab as u8], h, cfg.seed, max_column, 1, salt.as_ref())
+                    .closures
+                    .into_iter()
+                    .map(|c| c.4)
+            })
+            .collect()
+    } else if rp.closures_unsegmented {
+        sand_unit_fluids_salt(labels, shape, &intervals, &sand, cfg.seed, max_column, 1, salt.as_ref())
+            .into_iter()
+            .flat_map(|(_, f)| f.closures.into_iter().map(|c| c.4))
+            .collect()
+    } else {
+        crate::closure_segments::segmented_sand_unit_fluids_with(
+            labels,
+            shape,
+            &intervals,
+            &sand,
+            cfg.seed,
+            max_column,
+            1,
+            salt.as_ref(),
+            rp.legacy_closure_contact_cap,
+        )
+        .1
+        .into_iter()
+        .map(|c| c.voxels)
+        .collect()
+    };
+    Some(ClosureCensus {
+        minimum: rp.closure_minimum.voxels(ni, nj),
+        rule: rp.closure_minimum,
+        sizes: sizes.into_iter().filter(|&v| v > 0).collect(),
+    })
+}
+
+/// Root MDIO attributes of the closure minimum: `closure_min_voxels` and
+/// `closure_minimum: "scaled-area"`, in [`ClosureMinimum::Scaled`] mode
+/// only (with fluids on and not `legacy_toy_depth`), so `Fixed` runs
+/// (`--legacy-closure-minimum`, `--min-closure-voxels`) keep master bytes.
+pub fn write_closure_attrs(store: &synthoseis_io::MdioStore, cfg: &E2eConfig) -> Result<(), String> {
+    let rp = &cfg.rock_physics;
+    if rp.legacy_toy_depth || !rp.fluids || rp.closure_minimum != ClosureMinimum::Scaled {
+        return Ok(());
+    }
+    let t = rp.closure_minimum.voxels(cfg.inline_count, cfg.crossline_count);
+    store
+        .set_root_attrs(&[
+            ("closure_min_voxels", serde_json::json!(t)),
+            ("closure_minimum", serde_json::json!(ClosureMinimum::Scaled.as_str())),
+        ])
+        .map_err(|e| e.to_string())
+}
+
 impl RpmModel {
     /// Build from horizon maps `(ni, nj, nh)`, labels and the per-interval
     /// sand flags (see [`crate::lithology::interval_sand`]; intervals beyond
@@ -812,6 +996,9 @@ impl RpmModel {
         let intervals = label_intervals(maps, ni, nj, nh, nk);
         let step = rp.depth_step_m as f32;
         let max_column = rp.max_column_m / rp.depth_step_m;
+        // Global map size: every tile, worker and process rebuilds the full
+        // label volume, so all see the same threshold.
+        let min_voxels = rp.closure_minimum.voxels(ni, nj);
         let unit_fluid_maps = if rp.closures_per_layer || !rp.fluids {
             Vec::new()
         } else if rp.closures_unsegmented {
@@ -822,19 +1009,20 @@ impl RpmModel {
                 sand,
                 seed,
                 max_column,
-                rp.min_closure_voxels,
+                min_voxels,
                 salt.as_ref(),
             )
         } else {
-            crate::closure_segments::segmented_sand_unit_fluids_salt(
+            crate::closure_segments::segmented_sand_unit_fluids_with(
                 labels,
                 shape,
                 &intervals,
                 sand,
                 seed,
                 max_column,
-                rp.min_closure_voxels,
+                min_voxels,
                 salt.as_ref(),
+                rp.legacy_closure_contact_cap,
             )
             .0
         };
@@ -861,7 +1049,7 @@ impl RpmModel {
                                 h,
                                 seed,
                                 max_column,
-                                rp.min_closure_voxels,
+                                min_voxels,
                                 salt.as_ref(),
                             )
                         } else {

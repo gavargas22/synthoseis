@@ -509,15 +509,16 @@ fn segmented_case(unsegmented: bool) -> E2eConfig {
 /// Salt body (default on) with 4 faults, sitting mid-cube (seed 102:
 /// inlines 7-20, crosslines 5-15, samples 59-116 of 24x20x128), so it
 /// crosses the chunk boundaries of every tiling below, with closures sealed
-/// against its flank by the salt walls (closures of >= 100 voxels kept, so
-/// the walled closures reach the model); salt labels are checked by every
-/// MDIO path.
+/// against its flank by the salt walls; salt labels are checked by every
+/// MDIO path. The default scaled closure minimum (20 voxels at 24x20) keeps
+/// 5 compartments (419/391/187/134/46 voxels), so the walled closures reach
+/// the model without an override (master bad1daa8's fixed 500 kept none;
+/// this case used to set 100).
 fn salt_case(salt: bool) -> E2eConfig {
     E2eConfig {
         geometry: synthoseis_core::ToyGeometry::Layered,
         rock_physics: RockPhysicsConfig {
             sand_layer_fraction: Some(0.4),
-            min_closure_voxels: 100,
             salt,
             ..RockPhysicsConfig::default()
         },
@@ -603,7 +604,7 @@ fn rich(chunks: [usize; 3]) -> E2eConfig {
             first_random_layer: 0,
             layer_shift_samples: Some(6),
             property_shift_samples: Some(3),
-            min_closure_voxels: 1,
+            closure_minimum: synthoseis_core::ClosureMinimum::Fixed(1),
             ..RockPhysicsConfig::default()
         },
         ..cfg(10, [24, 20, 64], chunks, 3)

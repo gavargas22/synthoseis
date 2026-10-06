@@ -19,6 +19,16 @@ use tempfile::tempdir;
 mod common;
 use common::whole;
 
+/// [`whole`] with master bad1daa8's fixed 500-voxel closure minimum
+/// (`ClosureMinimum::LEGACY`): the master store hashes below predate the
+/// scaled minimum, whose `closure_min_voxels` / `closure_minimum` root
+/// attributes and fluids change the store (closure-minimum spec §6.9).
+fn master_cfg(c: &E2eConfig) -> E2eConfig {
+    let mut c = whole(c);
+    c.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
+    c
+}
+
 fn case(
     geometry: ToyGeometry,
     seed: u64,
@@ -260,7 +270,7 @@ fn overlap_legacy_no_fault_labels_reproduces_master() {
         ),
     ] {
         let with = |p: &Path, legacy: bool| {
-            whole(&E2eConfig {
+            master_cfg(&E2eConfig {
                 store_path: Some(p.to_path_buf()),
                 chunk_shape: Some([8, 5, 16]),
                 faults: FaultConfig {
@@ -286,7 +296,7 @@ fn overlap_legacy_no_fault_labels_reproduces_master() {
         assert_ne!(store_dir_hash(&new), master);
     }
     // Time mode: identical to master d51ab237 with or without the switch.
-    let base = whole(&E2eConfig {
+    let base = master_cfg(&E2eConfig {
         time: TimeConfig::default(),
         ..case(ToyGeometry::Layered, 4, [24, 24, 128], 4, Some(0.4))
     });

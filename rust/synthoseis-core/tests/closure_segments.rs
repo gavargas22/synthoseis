@@ -22,9 +22,6 @@ use synthoseis_core::pipeline::{E2eConfig, FaultConfig, FilterConfig, RockPhysic
 use synthoseis_core::rock_physics::{closure_fluid, elastic_model, ElasticModel};
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
-mod common;
-use common::whole;
-
 #[derive(Deserialize)]
 struct FillCase {
     shape: [usize; 2],
@@ -317,7 +314,7 @@ fn faults_merge_juxtaposed_closures_and_switch_restores_ef2dc42() {
         &sand,
         c.seed,
         rp.max_column_m / rp.depth_step_m,
-        rp.min_closure_voxels,
+        rp.closure_minimum.voxels(shape[0], shape[1]),
     );
     assert!(
         comps.iter().any(|k| k.kept && k.units > 1),
@@ -326,29 +323,55 @@ fn faults_merge_juxtaposed_closures_and_switch_restores_ef2dc42() {
     let seg = generate_chunked(&c).0.angle_stack;
     let unseg = generate_chunked(&faulted_sandy(7, true)).0.angle_stack;
     assert_ne!(seg, unseg);
-    // Without faults, segmented == ef2dc42 only with whole voxels, so this
-    // check runs through `whole`. Segmentation (#33) clamps the stored
-    // fluid contact to the unit's base *cell* (`min(fill, crest + max_column,
-    // base)` in `closure_segments`). With partial voxels (the default since
-    // #43), a sand sliver thinner than half a cell at the unit base, below
-    // that integer base, keeps the brine end-member under segmentation,
-    // while ef2dc42's unclamped contact fills it. On this cube 256 of
-    // 61,440 stack samples differ (max |Δ| 0.041 vs stack rms 0.070;
-    // labels identical). That comes from the #33 clamp, not from partial
-    // voxels. Strata's closure-minimum spec moves the clamp to base + ½ cell
-    // in a separate PR; revisit this `whole` pin when that lands.
-    let flat = |u| {
-        whole(&E2eConfig {
-            faults: FaultConfig::with_count(0),
-            ..faulted_sandy(7, u)
-        })
-    };
-    let (a, b) = (
-        generate_chunked(&flat(false)).0.angle_stack,
-        generate_chunked(&flat(true)).0.angle_stack,
-    );
-    assert!(
-        a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()),
-        "no faults: segmented == ef2dc42"
-    );
+    // Without faults segmented == ef2dc42 bit for bit on the default
+    // (partial voxels), with the scaled and with the legacy closure minimum.
+    // The brine sliver master bad1daa8 shows here is caused by the #33
+    // contact clamp: segmentation stores `min(fill, crest + max_column,
+    // base)`, capped at the unit's integer base *cell*, while ef2dc42's
+    // unsegmented contact has no base clamp. Partial voxels only expose it:
+    // they resolve the sand between the integer base and the true unit base
+    // (a sliver under half a cell), and that sliver keeps the brine
+    // end-member; whole voxels give that cell another label. The
+    // closure clamp (`ClosureRun::contact`) is unchanged; closure-minimum
+    // spec §4 adds a separate fluid-contact cap, `ClosureRun::fluid_contact`
+    // = `min(fill, cap, base + ½ cell)`, stored in the fluid maps, so the
+    // sliver fills as in ef2dc42. Per §6.5a this check therefore no longer
+    // runs through a whole-voxel pin. `legacy_closure_contact_cap` +
+    // `ClosureMinimum::LEGACY` (master bad1daa8) still differ in 256 / 2,000
+    // / 75 / 0 samples for seeds 7 / 1 / 2 / 3.
+    use synthoseis_core::ClosureMinimum;
+    for (seed, master_differs) in [(7u64, 256usize), (1, 2000), (2, 75), (3, 0)] {
+        for minimum in [ClosureMinimum::Scaled, ClosureMinimum::LEGACY] {
+            let flat = |u, cap| {
+                let mut c = E2eConfig {
+                    faults: FaultConfig::with_count(0),
+                    ..faulted_sandy(seed, u)
+                };
+                c.rock_physics.closure_minimum = minimum;
+                c.rock_physics.legacy_closure_contact_cap = cap && !u;
+                c
+            };
+            let (a, b) = (
+                generate_chunked(&flat(false, false)).0.angle_stack,
+                generate_chunked(&flat(true, false)).0.angle_stack,
+            );
+            assert!(
+                a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()),
+                "seed {seed} {minimum:?}, no faults: segmented == ef2dc42"
+            );
+            let l = generate_chunked(&flat(false, true)).0.angle_stack;
+            let n = l
+                .iter()
+                .zip(&b)
+                .filter(|(x, y)| x.to_bits() != y.to_bits())
+                .count();
+            println!("seed {seed} {minimum:?}: legacy contact cap differs from unsegmented in {n}/{} samples", b.len());
+            if minimum == ClosureMinimum::LEGACY {
+                assert_eq!(
+                    n, master_differs,
+                    "seed {seed}: master bad1daa8 vs unsegmented"
+                );
+            }
+        }
+    }
 }

@@ -185,6 +185,17 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     if rock.closures_unsegmented {
         a.push("--closures-unsegmented".into());
     }
+    match rock.closure_minimum {
+        synthoseis_core::ClosureMinimum::Scaled => {}
+        synthoseis_core::ClosureMinimum::Legacy => a.push("--legacy-closure-minimum".into()),
+        synthoseis_core::ClosureMinimum::Fixed(n) => {
+            a.push("--min-closure-voxels".into());
+            a.push(n.to_string());
+        }
+    }
+    if rock.legacy_closure_contact_cap {
+        a.push("--legacy-closure-contact-cap".into());
+    }
     if !rock.salt && !rock.legacy_toy_depth {
         a.push("--no-salt".into());
     }

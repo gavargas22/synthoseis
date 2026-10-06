@@ -73,6 +73,15 @@ with the switch on.
   samples; Strata measured 1,627), against 10 of 7.66 M in the mostly 4 ms
   PR B2 CLI spread. On the 64×64×256 cubes at 4 ms, 1.3–3.1 % of the time
   labels change.
+- **Closure contacts.** A segmented closure that fills its sand unit has
+  its fluid contact capped at base + ½ cell (closure-minimum spec §4), so
+  the sub-cell sand between the base cell and the true unit base is
+  hydrocarbon, not brine. Measured: +0.56 to +1.09 % hydrocarbon volume per
+  cube, no compartment loses volume; on the no-fault 24×20×128 sand-0.5
+  cube segmented and unsegmented closures are identical again (seeds 7 / 1 /
+  2: 256 / 2,000 / 75 differing samples → 0). Whole voxels are
+  bit-identical. `--legacy-closure-contact-cap` restores master bad1daa8.
+  See docs/closure-segmentation-faults.md.
 - **Root attributes** (switch on only): `voxel_model: "partial-z"`,
   `partial_voxel_mixing: "backus"`, `partial_voxel_reflectivity:
   "subcell"|"cell"`. No new arrays.

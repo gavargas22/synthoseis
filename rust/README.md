@@ -156,6 +156,26 @@ option. The planar geometry and
 `partial_voxel_reflectivity` attributes. See
 [`docs/partial-voxels.md`](../docs/partial-voxels.md).
 
+**Closure minimum scaled with the cube (default).** A closure compartment
+needs `clamp(round(NI·NJ / 180), 20, 500)` whole cells to get a fluid draw,
+instead of legacy's fixed 500, which belongs to its 300 × 300 × 1250 cube:
+20 up to about 60 × 60, 23 at 64 × 64, 51 at 96 × 96, 91 at 128 × 128, 205
+at 192 × 192 and 500 from 300 × 300. Small cubes keep their traps (32 × 32 ×
+128: ≥ 98.8 % of the closure volume, against 59–64 % at 500); the rule is
+never stricter than 500. With partial voxels, the fluid contact of a trap
+that fills its sand unit now reaches the true sub-cell unit base (base + ½
+cell) instead of stopping at the base cell. `--legacy-closure-minimum`
+restores the fixed 500, `--min-closure-voxels N` sets a fixed N, and
+`--legacy-closure-contact-cap` restores the base-cell contact cap; with both
+legacy flags the output is master bad1daa8 byte for byte. Scaled stores
+carry `closure_min_voxels` and `closure_minimum = "scaled-area"`, and the
+summary prints `closures: minimum T voxels (...), kept K of C compartments`.
+Library: `RockPhysicsConfig::closure_minimum` (`ClosureMinimum::Scaled` /
+`Fixed(n)` / `LEGACY`) and `legacy_closure_contact_cap`. Legacy's separate
+2,500-voxel minimum for faulted closures is not ported. See
+[`docs/rock-physics-port.md`](../docs/rock-physics-port.md) ("Closure
+minimum").
+
 
 ## Multi-worker job partition (local)
 

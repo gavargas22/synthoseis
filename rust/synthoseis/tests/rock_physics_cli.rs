@@ -10,8 +10,37 @@ use std::process::{Command, Output};
 /// (`--legacy-depth-as-time`, depth-to-time spec §4): the pinned hashes are
 /// stores written by master binaries before the time conversion, and must
 /// pass unchanged. Time-mode runs use [`run_time`].
+///
+/// Flag-forwarding and exit-2 tests run the default (scaled) closure
+/// minimum; the master goldens use [`run_master`].
 fn run(args: &[&str], store: &Path) -> Output {
     run_time(&with(args, &["--legacy-depth-as-time"]), store)
+}
+
+/// [`run`] for the five master-reproduction goldens, which predate the
+/// scaled closure minimum (closure-minimum spec §6.9): adds
+/// `--legacy-closure-minimum` (master bad1daa8's fixed 500) unless the run
+/// picks a closure minimum or has no closures. The scaled default is
+/// pinned in `tests/closure_minimum_cli.rs`.
+fn run_master(args: &[&str], store: &Path) -> Output {
+    run(&legacy_closures(args), store)
+}
+
+fn legacy_closures<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut v = args.to_vec();
+    let picks = |a: &&str| {
+        matches!(
+            *a,
+            "--legacy-toy-depth"
+                | "--no-fluids"
+                | "--min-closure-voxels"
+                | "--legacy-closure-minimum"
+        )
+    };
+    if !args.iter().any(picks) {
+        v.push("--legacy-closure-minimum");
+    }
+    v
 }
 
 /// [`run`] without the legacy axis switch: the default time output.
@@ -317,14 +346,14 @@ fn alternating_lithology_reproduces_master_after_30() {
         ("deep", DEEP, MASTER30_DEEP),
     ] {
         let alt = dir.path().join(format!("{name}-alt.mdio"));
-        let out = run(&with(base, &["--toy-lithology", "alternating", "--no-salt"]), &alt);
+        let out = run_master(&with(base, &["--toy-lithology", "alternating", "--no-salt"]), &alt);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("toy lithology: alternating"), "{name}: {stdout}");
         assert_eq!(store_hash(&alt), master, "{name}: --toy-lithology alternating vs master after #30");
     }
     let markov = dir.path().join("deep-markov.mdio");
-    let out = run(DEEP, &markov);
+    let out = run_master(DEEP, &markov);
     assert!(out.status.success(), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).contains("toy lithology: markov (sand fraction"));
     assert_ne!(store_hash(&markov), MASTER30_DEEP, "default must use the Markov lithology");
@@ -421,14 +450,14 @@ fn closures_per_layer_flag_reproduces_master_8b5988f() {
         ("sand", SAND, MASTER8B_SAND),
     ] {
         let pl = dir.path().join(format!("{name}-pl.mdio"));
-        let out = run(&with(base, &["--closures-per-layer", "--no-salt"]), &pl);
+        let out = run_master(&with(base, &["--closures-per-layer", "--no-salt"]), &pl);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("closures: per sand layer (--closures-per-layer"), "{name}: {stdout}");
         assert_eq!(store_hash(&pl), master, "{name}: --closures-per-layer vs master 8b5988f");
     }
     let unit = dir.path().join("sand-unit.mdio");
-    let out = run(&with(SAND, &["--no-salt"]), &unit);
+    let out = run_master(&with(SAND, &["--no-salt"]), &unit);
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -479,25 +508,25 @@ fn closures_unsegmented_flag_reproduces_master_ef2dc42() {
         ("faulted4", &with(FAULTED, &["--seed", "4"])[..], MASTEREF_FAULTED_4, false),
     ] {
         let un = dir.path().join(format!("{name}-un.mdio"));
-        let out = run(&with(base, &["--closures-unsegmented", "--no-salt"]), &un);
+        let out = run_master(&with(base, &["--closures-unsegmented", "--no-salt"]), &un);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("unsegmented (--closures-unsegmented, master ef2dc42)"), "{name}: {stdout}");
         assert_eq!(store_hash(&un), master, "{name}: --closures-unsegmented vs master ef2dc42");
         let seg = dir.path().join(format!("{name}-seg.mdio"));
-        let out = run(&with(base, &["--no-salt"]), &seg);
+        let out = run_master(&with(base, &["--no-salt"]), &seg);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(String::from_utf8_lossy(&out.stdout).contains("3D-segmented across faults"));
         assert_eq!(store_hash(&seg) == master, segmented_same, "{name}: segmented vs ef2dc42");
     }
     for (seed, want) in [("7", SEGMENTED_FAULTED_7), ("4", SEGMENTED_FAULTED_4)] {
         let p = dir.path().join(format!("seg{seed}.mdio"));
-        assert!(run(&with(FAULTED, &["--seed", seed, "--no-salt"]), &p).status.success());
+        assert!(run_master(&with(FAULTED, &["--seed", seed, "--no-salt"]), &p).status.success());
         assert_eq!(store_hash(&p), want, "segmented faulted seed {seed}");
         // Tiling does not change the segmented output.
         let q = dir.path().join(format!("seg{seed}-tiles.mdio"));
         let tiled = with(&FAULTED[4..], &["--shape", "32,32,128", "--chunk-i", "3", "--chunk-j", "7", "--chunk-k", "16", "--seed", seed, "--no-salt"]);
-        assert!(run(&tiled, &q).status.success());
+        assert!(run_master(&tiled, &q).status.success());
         assert_eq!(store_hash(&q), want, "segmented faulted seed {seed}, tiles");
     }
 }
@@ -534,13 +563,13 @@ fn no_salt_flag_reproduces_master_b4f4259() {
         ("faulted7", &faulted7[..], MASTERB4_FAULTED_7, SALT_FAULTED_7, 2336),
     ] {
         let off = dir.path().join(format!("{name}-off.mdio"));
-        let out = run(&with(base, &["--no-salt"]), &off);
+        let out = run_master(&with(base, &["--no-salt"]), &off);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(String::from_utf8_lossy(&out.stdout).contains("salt: off (--no-salt, master b4f4259)"));
         assert_eq!(store_hash(&off), master, "{name}: --no-salt vs master b4f4259");
         assert!(!off.join("data").join("salt_labels").exists(), "{name}: no salt_labels without salt");
         let on = dir.path().join(format!("{name}-on.mdio"));
-        let out = run(base, &on);
+        let out = run_master(base, &on);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains(&format!("{voxels} voxels in")), "{name}: {stdout}");
@@ -599,7 +628,7 @@ fn fault_labels_through_salt_flag_reproduces_master_2b3850ba() {
         ),
     ] {
         let p = dir.path().join(format!("{name}-default.mdio"));
-        let out = run(base, &p);
+        let out = run_master(base, &p);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains(&format!("masked_in_salt={in_salt} ")), "{name}: {stdout}");
@@ -611,7 +640,7 @@ fn fault_labels_through_salt_flag_reproduces_master_2b3850ba() {
         assert!(f.iter().zip(&s).all(|(a, b)| a & b == 0), "{name}: fault and salt");
 
         let p = dir.path().join(format!("{name}-through.mdio"));
-        let out = run(&with(base, &["--fault-labels-through-salt"]), &p);
+        let out = run_master(&with(base, &["--fault-labels-through-salt"]), &p);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(String::from_utf8_lossy(&out.stdout).contains("(--fault-labels-through-salt)"));
         assert_eq!(fault_labels_hash(&p), salt34, "{name}: --fault-labels-through-salt vs master 2b3850ba");
@@ -619,7 +648,7 @@ fn fault_labels_through_salt_flag_reproduces_master_2b3850ba() {
         assert_eq!(masked == salt34, in_salt == 0, "{name}");
 
         let p = dir.path().join(format!("{name}-off.mdio"));
-        assert!(run(&with(base, &["--no-salt"]), &p).status.success());
+        assert!(run_master(&with(base, &["--no-salt"]), &p).status.success());
         assert_eq!(fault_labels_hash(&p), b4, "{name}: --no-salt fault labels vs master b4f4259");
     }
 }

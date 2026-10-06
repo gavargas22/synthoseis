@@ -217,7 +217,7 @@ fn demo(args: &[String]) {
                 &sand,
                 seed,
                 max_column,
-                rp.min_closure_voxels,
+                rp.closure_minimum.voxels(sh[0], sh[1]),
             );
             let kept: Vec<_> = comps.iter().filter(|k| k.kept).collect();
             let mut fl = [0usize; 3];
@@ -327,7 +327,7 @@ fn stats(args: &[String]) {
             &sand,
             seed,
             rp.max_column_m / rp.depth_step_m,
-            rp.min_closure_voxels,
+            rp.closure_minimum.voxels(sh[0], sh[1]),
         );
         for k in comps.iter().filter(|k| k.kept) {
             let f = k.fluid as usize;

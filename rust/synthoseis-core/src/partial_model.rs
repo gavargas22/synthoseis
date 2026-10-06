@@ -171,6 +171,11 @@ pub struct PartialScratch {
 }
 
 impl PartialScratch {
+    /// Volume fractions (parts) of every cell of the last column.
+    pub fn parts(&self) -> &ColumnParts {
+        &self.parts
+    }
+
     /// Cell-wise sub-layers of the last column.
     pub fn cells(&self) -> impl Iterator<Item = &[SubLayer]> {
         self.sub_off.windows(2).map(|w| &self.sub[w[0]..w[1]])

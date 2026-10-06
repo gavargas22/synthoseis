@@ -16,12 +16,10 @@ jobs:
   check-and-test:
     name: cargo check + test
     runs-on: ubuntu-latest
-    # `cargo test` uses [profile.test] (opt-level 2, see rust/Cargo.toml).
-    # The smoke steps below use `cargo run` (dev profile); give it the same
-    # opt-level so the CLI runs fast. Both keep debug-assertions and
-    # overflow-checks on. Slow sweeps run in nightly.yml.
-    env:
-      CARGO_PROFILE_DEV_OPT_LEVEL: "2"
+    # `cargo test` and the smoke steps (`cargo run --profile test`) share
+    # [profile.test] (opt-level 2, see rust/Cargo.toml), so the CLI reuses
+    # the test build. debug-assertions and overflow-checks stay on. Slow
+    # sweeps run in nightly.yml.
     defaults:
       run:
         working-directory: rust
@@ -42,80 +40,92 @@ jobs:
       - name: synthoseis-gpu with wgpu feature
         run: cargo test -p synthoseis-gpu --features wgpu
       - name: e2e tiny-cube smoke
-        run: cargo run -p synthoseis -- run --e2e --store /tmp/synthoseis-e2e.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --store /tmp/synthoseis-e2e.mdio
       - name: multi-worker partition smoke
-        run: cargo run -p synthoseis -- run --workers 4 --partition-plan /tmp/synthoseis-plan.json
+        run: cargo run --profile test -p synthoseis -- run --workers 4 --partition-plan /tmp/synthoseis-plan.json
       - name: chunked e2e smoke
-        run: cargo run -p synthoseis -- run --e2e --chunked --chunk-i 4 --chunk-j 4 --store /tmp/synthoseis-e2e-chunked.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --chunk-i 4 --chunk-j 4 --store /tmp/synthoseis-e2e-chunked.mdio
       - name: strip-stitch multi-worker e2e smoke
-        run: cargo run -p synthoseis -- run --e2e --chunked --workers 4 --chunk-i 2 --chunk-j 4 --store /tmp/synthoseis-e2e-strip.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --workers 4 --chunk-i 2 --chunk-j 4 --store /tmp/synthoseis-e2e-strip.mdio
       - name: multiprocess JobPartitionPlan e2e smoke
-        run: cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 4 --chunk-i 2 --chunk-j 4 --store /tmp/synthoseis-e2e-mp.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 4 --chunk-i 2 --chunk-j 4 --store /tmp/synthoseis-e2e-mp.mdio
       - name: geometry-once seismic-many angles smoke
-        run: cargo run -p synthoseis -- run --e2e --chunked --angles 0,15,30 --store /tmp/geo.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --angles 0,15,30 --store /tmp/geo.mdio
       - name: gpu tile fuse smoke (CPU fallback or WGSL when adapter)
-        run: cargo run -p synthoseis -- run --e2e --chunked --gpu --store /tmp/gpu.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --store /tmp/gpu.mdio
       - name: faults e2e smoke (fault_labels written)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 4 --seed 4 --shape 48,48,64 --store /tmp/faults.mdio && test -f /tmp/faults.mdio/data/fault_labels/.zarray
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 4 --seed 4 --shape 48,48,64 --store /tmp/faults.mdio && test -f /tmp/faults.mdio/data/fault_labels/.zarray
       - name: seismic filters e2e smoke (bandpass + lateral, non-dividing chunks)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --lateral-filter 3 --store /tmp/filters.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --lateral-filter 3 --store /tmp/filters.mdio
       - name: seismic filters keep-ricker + gpu skip smoke
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --keep-ricker --store /tmp/filters-keep.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --bandpass 4,30 --store /tmp/filters-gpu.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --keep-ricker --store /tmp/filters-keep.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --bandpass 4,30 --store /tmp/filters-gpu.mdio
       - name: seismic noise smoke (bandpass + lateral + noise, cpu and gpu)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --lateral-filter 3 --noise-snr-db 12.5 --noise-seed 7 --store /tmp/noise.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --noise-snr-db 12.5 --noise-legacy-seabed --store /tmp/noise-gpu.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --lateral-filter 3 --noise-snr-db 12.5 --noise-seed 7 --store /tmp/noise.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --noise-snr-db 12.5 --noise-legacy-seabed --store /tmp/noise-gpu.mdio
       - name: rock physics smoke (default, legacy switch, backus + gpu, multiprocess)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --store /tmp/rp.mdio && cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-toy-depth --store /tmp/rp-legacy.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --mixing backus --first-random-layer 0 --shape 24,20,64 --store /tmp/rp-backus-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --mixing backus --store /tmp/rp-mp.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --store /tmp/rp.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-toy-depth --store /tmp/rp-legacy.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --mixing backus --first-random-layer 0 --shape 24,20,64 --store /tmp/rp-backus-gpu.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --mixing backus --store /tmp/rp-mp.mdio
       - name: depth-to-time smoke (time default + attrs, --legacy-depth-as-time, dt 2 ms, linear, multiprocess, gpu fallback)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --noise-snr-db 12.5 --store /tmp/d2t.mdio && grep -q vp-twt /tmp/d2t.mdio/.zattrs && cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-depth-as-time --store /tmp/d2t-legacy.mdio && ! grep -q vp-twt /tmp/d2t-legacy.mdio/.zattrs && cargo run -p synthoseis -- run --e2e --chunked --shape 24,20,64 --dt-ms 2 --twt-kernel linear --bandpass 4,30 --store /tmp/d2t-2ms.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --twt-samples 12 --store /tmp/d2t-mp.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --store /tmp/d2t-gpu.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --noise-snr-db 12.5 --store /tmp/d2t.mdio && grep -q vp-twt /tmp/d2t.mdio/.zattrs && cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-depth-as-time --store /tmp/d2t-legacy.mdio && ! grep -q vp-twt /tmp/d2t-legacy.mdio/.zattrs && cargo run --profile test -p synthoseis -- run --e2e --chunked --shape 24,20,64 --dt-ms 2 --twt-kernel linear --bandpass 4,30 --store /tmp/d2t-2ms.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --twt-samples 12 --store /tmp/d2t-mp.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --store /tmp/d2t-gpu.mdio
       - name: zoeppritz smoke (textbook default, --legacy-zoeppritz cpu + gpu + multiprocess)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-zoeppritz --store /tmp/zl.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --legacy-zoeppritz --store /tmp/zl-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --store /tmp/zx-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --legacy-zoeppritz --store /tmp/zl-mp.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-zoeppritz --store /tmp/zl.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --legacy-zoeppritz --store /tmp/zl-gpu.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --store /tmp/zx-gpu.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --legacy-zoeppritz --store /tmp/zl-mp.mdio
       - name: toy geometry smoke (layered default + planar, single + multiprocess + gpu)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,192 --store /tmp/tl.mdio && cargo run -p synthoseis -- run --e2e --chunked --toy-geometry planar --shape 24,20,64 --store /tmp/tp.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --toy-geometry layered --store /tmp/tl-mp.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,160 --store /tmp/tl-gpu.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,192 --store /tmp/tl.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --toy-geometry planar --shape 24,20,64 --store /tmp/tp.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --toy-geometry layered --store /tmp/tl-mp.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,160 --store /tmp/tl-gpu.mdio
       - name: toy lithology smoke (markov default, fixed fraction + gpu, alternating, multiprocess)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,192 --store /tmp/lm.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,160 --sand-layer-fraction 0.4 --sand-layer-thickness 3 --store /tmp/lm-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --shape 24,20,64 --toy-lithology alternating --store /tmp/la.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --sand-layer-fraction 0.5 --store /tmp/lm-mp.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,192 --store /tmp/lm.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,160 --sand-layer-fraction 0.4 --sand-layer-thickness 3 --store /tmp/lm-gpu.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --shape 24,20,64 --toy-lithology alternating --store /tmp/la.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --sand-layer-fraction 0.5 --store /tmp/lm-mp.mdio
       - name: closures per sand unit smoke (default, --closures-per-layer, gpu, multiprocess)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,128 --sand-layer-fraction 0.5 --sand-layer-thickness 3 --store /tmp/cu.mdio && cargo run -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,128 --sand-layer-fraction 0.5 --sand-layer-thickness 3 --closures-per-layer --store /tmp/cl.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,128 --sand-layer-fraction 0.4 --sand-layer-thickness 3 --store /tmp/cu-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --closures-per-layer --store /tmp/cl-mp.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,128 --sand-layer-fraction 0.5 --sand-layer-thickness 3 --store /tmp/cu.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,128 --sand-layer-fraction 0.5 --sand-layer-thickness 3 --closures-per-layer --store /tmp/cl.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,128 --sand-layer-fraction 0.4 --sand-layer-thickness 3 --store /tmp/cu-gpu.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --closures-per-layer --store /tmp/cl-mp.mdio
       - name: closure segmentation across faults smoke (default, --closures-unsegmented, gpu, multiprocess)
-        run: cargo run -p synthoseis -- run --e2e --chunked --faults 4 --seed 7 --shape 32,32,128 --sand-layer-fraction 0.5 --sand-layer-thickness 1 --store /tmp/cs.mdio && cargo run -p synthoseis -- run --e2e --chunked --faults 4 --seed 7 --shape 32,32,128 --sand-layer-fraction 0.5 --sand-layer-thickness 1 --closures-unsegmented --store /tmp/cs-un.mdio && cargo run -p synthoseis -- run --e2e --chunked --gpu --faults 4 --seed 7 --shape 24,20,128 --sand-layer-fraction 0.5 --sand-layer-thickness 1 --store /tmp/cs-gpu.mdio && cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --closures-unsegmented --store /tmp/cs-mp.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 4 --seed 7 --shape 32,32,128 --sand-layer-fraction 0.5 --sand-layer-thickness 1 --store /tmp/cs.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 4 --seed 7 --shape 32,32,128 --sand-layer-fraction 0.5 --sand-layer-thickness 1 --closures-unsegmented --store /tmp/cs-un.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --faults 4 --seed 7 --shape 24,20,128 --sand-layer-fraction 0.5 --sand-layer-thickness 1 --store /tmp/cs-gpu.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --closures-unsegmented --store /tmp/cs-mp.mdio
       - name: salt bodies smoke (default, --no-salt, --salt-legacy-top-offset, gpu, multiprocess, overlap)
         run: |
           set -euo pipefail
-          cargo run -p synthoseis -- run --e2e --chunked --faults 4 --seed 7 --shape 32,32,128 --store /tmp/sb.mdio | tee /tmp/sb.txt
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 4 --seed 7 --shape 32,32,128 --store /tmp/sb.mdio | tee /tmp/sb.txt
           grep -q "^salt: top" /tmp/sb.txt
           test -d /tmp/sb.mdio/data/salt_labels
-          cargo run -p synthoseis -- run --e2e --chunked --faults 4 --seed 7 --shape 32,32,128 --no-salt --store /tmp/sb-off.mdio
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 4 --seed 7 --shape 32,32,128 --no-salt --store /tmp/sb-off.mdio
           test ! -e /tmp/sb-off.mdio/data/salt_labels
-          cargo run -p synthoseis -- run --e2e --chunked --shape 32,32,128 --salt-legacy-top-offset --store /tmp/sb-lt.mdio
-          cargo run -p synthoseis -- run --e2e --chunked --gpu --seed 30 --shape 24,20,128 --sand-layer-fraction 0.4 --store /tmp/sb-gpu.mdio
-          cargo run -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 4 --chunk-j 4 --store /tmp/sb-mp.mdio
-          cargo run -p synthoseis -- run --e2e --chunked --overlap --store /tmp/sb-ov.mdio
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --shape 32,32,128 --salt-legacy-top-offset --store /tmp/sb-lt.mdio
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --seed 30 --shape 24,20,128 --sand-layer-fraction 0.4 --store /tmp/sb-gpu.mdio
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 4 --chunk-j 4 --store /tmp/sb-mp.mdio
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --overlap --store /tmp/sb-ov.mdio
+      - name: closure minimum smoke (scaled default, --legacy-closure-minimum, --min-closure-voxels)
+        run: |
+          set -euo pipefail
+          CM="--e2e --chunked --seed 102 --shape 24,20,128 --faults 4 --sand-layer-fraction 0.4"
+          cargo run --profile test -p synthoseis -- run $CM --store /tmp/cm.mdio | tee /tmp/cm.txt
+          grep -q "closures: minimum 20 voxels (scaled" /tmp/cm.txt
+          grep -q '"closure_min_voxels": 20' /tmp/cm.mdio/.zattrs
+          cargo run --profile test -p synthoseis -- run $CM --legacy-closure-minimum --legacy-closure-contact-cap --store /tmp/cm-legacy.mdio | tee /tmp/cm-legacy.txt
+          grep -q "closures: minimum 500 voxels (fixed 500" /tmp/cm-legacy.txt
+          ! grep -q closure_min /tmp/cm-legacy.mdio/.zattrs
+          cargo run --profile test -p synthoseis -- run $CM --min-closure-voxels 100 --store /tmp/cm-100.mdio | tee /tmp/cm-100.txt
+          grep -q "closures: minimum 100 voxels (fixed 100)" /tmp/cm-100.txt
       - name: fault labels masked by salt smoke (default, --fault-labels-through-salt, gpu; time and legacy axis)
         run: |
           set -euo pipefail
           FM="--e2e --chunked --seed 11 --shape 24,24,128 --faults 4 --sand-layer-fraction 0.4"
           # Legacy axis: #38's depth counts (master f3720fb2).
-          cargo run -p synthoseis -- run $FM --legacy-depth-as-time --store /tmp/fm.mdio | tee /tmp/fm.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-depth-as-time --store /tmp/fm.mdio | tee /tmp/fm.txt
           grep -q "fault_voxels=3919, masked_in_salt=155 " /tmp/fm.txt
-          cargo run -p synthoseis -- run $FM --legacy-depth-as-time --fault-labels-through-salt --store /tmp/fm-through.mdio | tee /tmp/fm-through.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-depth-as-time --fault-labels-through-salt --store /tmp/fm-through.mdio | tee /tmp/fm-through.txt
           grep -q "fault_voxels=4074 (--fault-labels-through-salt)" /tmp/fm-through.txt
-          cargo run -p synthoseis -- run $FM --legacy-depth-as-time --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fm-gpu.mdio | tee /tmp/fm-gpu.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-depth-as-time --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fm-gpu.mdio | tee /tmp/fm-gpu.txt
           grep -q "masked_in_salt=155 " /tmp/fm-gpu.txt
           # Time output, whole voxels (--legacy-whole-voxels = d8b96e69 default):
           # counts of the written time cube.
-          cargo run -p synthoseis -- run $FM --legacy-whole-voxels --store /tmp/fmt.mdio | tee /tmp/fmt.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --store /tmp/fmt.mdio | tee /tmp/fmt.txt
           grep -q "fault_voxels=3870, masked_in_salt=63 " /tmp/fmt.txt
-          cargo run -p synthoseis -- run $FM --legacy-whole-voxels --fault-labels-through-salt --store /tmp/fmt-through.mdio | tee /tmp/fmt-through.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --fault-labels-through-salt --store /tmp/fmt-through.mdio | tee /tmp/fmt-through.txt
           grep -q "fault_voxels=3933 (--fault-labels-through-salt)" /tmp/fmt-through.txt
-          cargo run -p synthoseis -- run $FM --legacy-whole-voxels --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
           grep -q "masked_in_salt=63 " /tmp/fmt-gpu.txt
           # Time output, partial voxels (default since PR B2): the time-domain
           # fault cube is sampled through the partial traveltime.
-          cargo run -p synthoseis -- run $FM --store /tmp/fmp.mdio | tee /tmp/fmp.txt
+          cargo run --profile test -p synthoseis -- run $FM --store /tmp/fmp.mdio | tee /tmp/fmp.txt
           grep -q "fault_voxels=3896, masked_in_salt=68 " /tmp/fmp.txt
           grep -q "^partial voxels: .*mode=subcell" /tmp/fmp.txt
-          cargo run -p synthoseis -- run $FM --fault-labels-through-salt --store /tmp/fmp-through.mdio | tee /tmp/fmp-through.txt
+          cargo run --profile test -p synthoseis -- run $FM --fault-labels-through-salt --store /tmp/fmp-through.mdio | tee /tmp/fmp-through.txt
           grep -q "fault_voxels=3964 (--fault-labels-through-salt)" /tmp/fmp-through.txt
-          cargo run -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmp-gpu.mdio | tee /tmp/fmp-gpu.txt
+          cargo run --profile test -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmp-gpu.mdio | tee /tmp/fmp-gpu.txt
           grep -q "fault_voxels=3896, masked_in_salt=68 " /tmp/fmp-gpu.txt
 
   msrv:

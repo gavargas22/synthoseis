@@ -306,7 +306,7 @@ fn model_shares_unit_closures_across_member_layers() {
                 l.interval,
                 SEED,
                 150.0 / 4.0,
-                c.rock_physics.min_closure_voxels,
+                c.rock_physics.closure_minimum.voxels(shape[0], shape[1]),
             );
             assert_eq!(f.contact, want.contact, "label {lab}");
             assert_eq!(f.closures, want.closures, "label {lab}");

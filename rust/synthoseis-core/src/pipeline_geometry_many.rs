@@ -402,11 +402,9 @@ mod tests {
         assert_eq!(crate::time_mode::generate_labels_output(&cfg), reference.labels);
     }
 
-    #[test]
-    fn geometry_once_wall_clock_cheaper_than_naive_n() {
-        // Timing ratios are noisy in debug under parallel cargo test load.
-        // Prove amortization structurally: one geology pass, N stacks, tile-bounded peak.
-        let cfg = E2eConfig {
+    /// Planar 16×16×32 cube of the geometry-once tests.
+    fn geometry_once_cfg() -> E2eConfig {
+        E2eConfig {
             time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
@@ -418,7 +416,14 @@ mod tests {
             store_path: None,
             chunk_shape: Some([8, 8, 32]),
             rock_physics: Default::default(),
-        };
+        }
+    }
+
+    #[test]
+    fn geometry_once_amortizes_geology() {
+        // Amortization proved structurally: one geology pass, N stacks equal
+        // to the per-angle runs, tile-bounded peak.
+        let cfg = geometry_once_cfg();
         let angles = [0.0, 15.0, 30.0];
         let (report, stats) = run_e2e_geometry_once_seismic_many(&cfg, &angles).expect("amortized");
         assert_eq!(report.labels_generated, 1);
@@ -432,8 +437,17 @@ mod tests {
             stats.is_bounded_by_chunk(64),
             "peak temps not tile-bounded: {stats:?}"
         );
-        // Optional smoke: amortized wall-clock should not be wildly worse than naive
-        // (allow slack for debug + scheduling).
+    }
+
+    #[test]
+    #[ignore = "nightly: wall-clock ratio, flaky on a busy machine"]
+    fn geometry_once_wall_clock_cheaper_than_naive_n() {
+        // Amortized wall clock should not be wildly worse than naive (slack
+        // for debug and scheduling); the structural check is
+        // `geometry_once_amortizes_geology`.
+        let cfg = geometry_once_cfg();
+        let angles = [0.0, 15.0, 30.0];
+        let _ = run_e2e_geometry_once_seismic_many(&cfg, &angles).expect("warm-up");
         let t0 = Instant::now();
         let _ = run_e2e_geometry_once_seismic_many(&cfg, &angles).expect("amortized2");
         let amortized_ms = t0.elapsed().as_secs_f64() * 1000.0;
