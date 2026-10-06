@@ -284,3 +284,120 @@ fn invalid_closure_flags_exit_2() {
         assert!(out.status.success(), "{ok:?}: {out:?}");
     }
 }
+
+/// `--min-closure-voxels 500` is the legacy threshold under its own label:
+/// the summary says `(fixed 500)`, not `--legacy-closure-minimum`, and the
+/// store is the `--legacy-closure-minimum` store byte for byte.
+#[test]
+fn min_closure_voxels_500_keeps_its_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixed = dir.path().join("fixed500.mdio");
+    let out = run(&[DEMO, &["--min-closure-voxels", "500"]].concat(), &fixed);
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("closures: minimum 500 voxels (fixed 500), kept 0 of 3 compartments\n"),
+        "{stdout}"
+    );
+    let legacy = dir.path().join("legacy.mdio");
+    let out = run(&[DEMO, &["--legacy-closure-minimum"]].concat(), &legacy);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout)
+        .contains("closures: minimum 500 voxels (fixed 500, --legacy-closure-minimum)"));
+    assert_eq!(store_dir_hash(&fixed), store_dir_hash(&legacy));
+}
+
+/// The summary's `kept K of C compartments` against the model the run
+/// builds, in the two 2D-region closure modes (the segmented default is
+/// covered above): K = closures kept in the elastic model's fluid maps
+/// (once per sand unit for `--closures-unsegmented`, once per sand layer
+/// for `--closures-per-layer`), C = the same count with a 1-voxel minimum.
+#[test]
+fn summary_closure_counter_matches_model_unsegmented_and_per_layer() {
+    use synthoseis_core::rock_physics::{elastic_model, ElasticModel};
+    use synthoseis_core::ClosureMinimum;
+    fn kept(cfg: &synthoseis_core::pipeline::E2eConfig) -> usize {
+        let (labels, shape) = synthoseis_core::generate_labels(cfg);
+        let ElasticModel::Rpm(m) = elastic_model(cfg, &labels, shape) else {
+            panic!("rock physics model expected")
+        };
+        let rp = &cfg.rock_physics;
+        if rp.closures_per_layer {
+            return m
+                .layers
+                .iter()
+                .filter_map(|l| l.fluids.as_ref())
+                .map(|f| f.closures.len())
+                .sum();
+        }
+        // Unsegmented: every member label of a unit carries the unit's map.
+        let sand = synthoseis_core::lithology::interval_sand(
+            cfg.effective_lithology(),
+            cfg.seed,
+            m.nh,
+            rp.sand_layer_fraction,
+            rp.sand_layer_thickness,
+        );
+        synthoseis_core::lithology::closure_units(&sand)
+            .iter()
+            .filter_map(|&(top, end)| {
+                m.layers
+                    .iter()
+                    .find(|l| l.interval >= top && l.interval < end && l.fluids.is_some())
+                    .map(|l| l.fluids.as_ref().unwrap().closures.len())
+            })
+            .sum()
+    }
+    let dir = tempfile::tempdir().unwrap();
+    for (mode, thickness, want) in [
+        ("--closures-unsegmented", 1.0, (10, 18)),
+        ("--closures-per-layer", 3.0, (20, 32)),
+    ] {
+        let t = if thickness == 1.0 { "1" } else { "3" };
+        let args = [
+            "--seed",
+            "7",
+            "--shape",
+            "32,32,128",
+            "--faults",
+            "4",
+            "--sand-layer-fraction",
+            "0.5",
+            "--sand-layer-thickness",
+            t,
+            mode,
+        ];
+        let out = run(&args, &dir.path().join("s.mdio"));
+        assert!(out.status.success(), "{mode}: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let line = stdout
+            .lines()
+            .find(|l| l.starts_with("closures: minimum 20 voxels (scaled"))
+            .unwrap_or_else(|| panic!("{mode}: {stdout}"));
+        let cfg = |m: ClosureMinimum| synthoseis_core::pipeline::E2eConfig {
+            seed: 7,
+            inline_count: 32,
+            crossline_count: 32,
+            samples: 128,
+            faults: synthoseis_core::FaultConfig::with_count(4),
+            rock_physics: synthoseis_core::RockPhysicsConfig {
+                sand_layer_fraction: Some(0.5),
+                sand_layer_thickness: thickness,
+                closures_unsegmented: mode == "--closures-unsegmented",
+                closures_per_layer: mode == "--closures-per-layer",
+                closure_minimum: m,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (k, c) = (
+            kept(&cfg(ClosureMinimum::Scaled)),
+            kept(&cfg(ClosureMinimum::Fixed(1))),
+        );
+        assert_eq!((k, c), want, "{mode}: model counts");
+        assert!(
+            line.ends_with(&format!("kept {k} of {c} compartments")),
+            "{mode}: summary `{line}` vs model kept {k} of {c}"
+        );
+    }
+}

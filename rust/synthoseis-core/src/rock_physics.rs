@@ -98,13 +98,20 @@ pub enum ClosureMinimum {
     /// 300 × 300 design cube (exactly 500 there).
     #[default]
     Scaled,
-    /// A fixed minimum (`Fixed(500)` = master bad1daa8 and legacy).
+    /// A fixed minimum of N whole cells (`--min-closure-voxels N`).
     Fixed(usize),
+    /// Master bad1daa8 / legacy `min_closure_voxels_simple`: a fixed 500
+    /// (`--legacy-closure-minimum`). Same threshold as `Fixed(500)`; kept
+    /// apart only so summaries and forwarded worker flags name the switch
+    /// the user picked.
+    Legacy,
 }
 
 impl ClosureMinimum {
-    /// Master bad1daa8 / legacy `min_closure_voxels_simple`.
-    pub const LEGACY: Self = ClosureMinimum::Fixed(500);
+    /// Master bad1daa8 / legacy `min_closure_voxels_simple` (500).
+    pub const LEGACY: Self = ClosureMinimum::Legacy;
+    /// The threshold of [`ClosureMinimum::Legacy`].
+    pub const LEGACY_VOXELS: usize = 500;
     /// Map cells per voxel of [`ClosureMinimum::Scaled`] (300·300 / 500).
     pub const SCALED_CELLS_PER_VOXEL: usize = 180;
     /// Floor of [`ClosureMinimum::Scaled`] (middle of the empty 10-50
@@ -125,6 +132,7 @@ impl ClosureMinimum {
                 Self::SCALED_CAP.map_or(t, |cap| t.min(cap))
             }
             ClosureMinimum::Fixed(n) => n.max(1),
+            ClosureMinimum::Legacy => Self::LEGACY_VOXELS,
         }
     }
 
@@ -132,7 +140,7 @@ impl ClosureMinimum {
     pub fn as_str(self) -> &'static str {
         match self {
             ClosureMinimum::Scaled => "scaled-area",
-            ClosureMinimum::Fixed(_) => "fixed",
+            ClosureMinimum::Fixed(_) | ClosureMinimum::Legacy => "fixed",
         }
     }
 }

@@ -1010,6 +1010,9 @@ mod tests {
             (ClosureMinimum::Scaled, false, vec![]),
             (ClosureMinimum::LEGACY, false, vec!["--legacy-closure-minimum"]),
             (ClosureMinimum::Fixed(7), true, vec!["--min-closure-voxels", "7", "--legacy-closure-contact-cap"]),
+            // `--min-closure-voxels 500` keeps its own label (same threshold
+            // as the legacy switch).
+            (ClosureMinimum::Fixed(500), false, vec!["--min-closure-voxels", "500"]),
         ] {
             let rock = RockPhysicsConfig {
                 closure_minimum: minimum,

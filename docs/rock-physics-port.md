@@ -172,8 +172,8 @@ The Rust default scales it with the map area (`ClosureMinimum::Scaled`):
   the simple minimum) and `_onlap` (500) for its closure types. Rust has no
   closure types, so one minimum applies to every compartment.
 - **Switches.** `--legacy-closure-minimum` / `ClosureMinimum::LEGACY`
-  (`Fixed(500)`, master bad1daa8), `--min-closure-voxels N` /
-  `Fixed(N)`. Scaled stores carry `closure_min_voxels` and
+  (500, master bad1daa8), `--min-closure-voxels N` / `Fixed(N)`
+  (`Fixed(500)` is the same threshold, labelled `fixed 500`). Scaled stores carry `closure_min_voxels` and
   `closure_minimum = "scaled-area"`.
 
 Voxels above the contact use the oil or gas sand trend. There is no

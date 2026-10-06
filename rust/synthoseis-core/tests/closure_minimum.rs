@@ -63,7 +63,19 @@ fn scaled_rule_table() {
     assert_eq!(s.voxels(90, 41), 21); // 3690 / 180 = 20.5
     assert_eq!(s.voxels(299, 300), 498);
     assert_eq!(s.voxels(330, 273), 500); // 90,090 cells
-    assert_eq!(ClosureMinimum::LEGACY, ClosureMinimum::Fixed(500));
+    assert_eq!(ClosureMinimum::LEGACY, ClosureMinimum::Legacy);
+    assert_ne!(
+        ClosureMinimum::LEGACY,
+        ClosureMinimum::Fixed(500),
+        "labels differ"
+    );
+    for (ni, nj) in [(8, 8), (64, 64), (300, 300), (512, 512)] {
+        assert_eq!(
+            ClosureMinimum::LEGACY.voxels(ni, nj),
+            ClosureMinimum::Fixed(500).voxels(ni, nj),
+            "same threshold"
+        );
+    }
     assert_eq!(ClosureMinimum::LEGACY.voxels(8, 8), 500);
     assert_eq!(ClosureMinimum::Fixed(0).voxels(8, 8), 1);
     assert_eq!(ClosureMinimum::default(), ClosureMinimum::Scaled);
@@ -74,19 +86,25 @@ fn scaled_rule_table() {
     assert!(!RockPhysicsConfig::default().legacy_closure_contact_cap);
 }
 
-/// §6.2 gate: on 32×32×128, 64×64×256 and 128×128×256 (faults 0 and 3;
-/// seeds 1–6 / 1–4 / 1 to keep the debug CI cost down, the full 1–6 on
-/// every cube pass too):
-/// every closure master's fixed 500 keeps stays kept with the same contact
-/// and fluid in every column; the scaled minimum only adds closures.
+/// §6.2 gate, per PR: 32×32×128, seeds 1–6, faults 0 and 3. Every closure
+/// master's fixed 500 keeps stays kept with the same contact and fluid in
+/// every column; the scaled minimum only adds closures. The 64² and 128²
+/// cubes run nightly ([`scaled_minimum_is_never_stricter_medium_cubes`]).
 #[test]
 fn scaled_minimum_is_never_stricter() {
+    assert_never_stricter(&[([32, 32, 128], 1..=6)]);
+}
+
+/// §6.2 gate on 64×64×256 and 128×128×256 with the spec's seeds 1–6.
+#[test]
+#[ignore = "nightly: 64^2/128^2 closure-minimum sweep (about 1 min optimized)"]
+fn scaled_minimum_is_never_stricter_medium_cubes() {
+    assert_never_stricter(&[([64, 64, 256], 1..=6), ([128, 128, 256], 1..=6)]);
+}
+
+fn assert_never_stricter(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
     let mut added = 0;
-    for (shape, seeds) in [
-        ([32, 32, 128], 1..=6u64),
-        ([64, 64, 256], 1..=4),
-        ([128, 128, 256], 1..=1),
-    ] {
+    for (shape, seeds) in cubes.iter().cloned() {
         for faults in [0, 3] {
             for seed in seeds.clone() {
                 let c = cfg(shape, faults, seed);
@@ -136,9 +154,10 @@ fn scaled_minimum_is_never_stricter() {
     );
 }
 
-/// §6.3 gate: 32×32×128 without faults keeps a trap in at least 8 of 12
-/// seeds (master's 500: 3), and the kept closure volume is >= 98 % of all
-/// closure voxels on small and medium cubes (master: >= 59.1 %).
+/// §6.3 gate, per PR: 32×32×128 without faults keeps a trap in at least 8
+/// of 12 seeds (master's 500: 3), and the kept closure volume is >= 98 % of
+/// all closure voxels on the 32² cubes (master: >= 59.1 %). The 64² and
+/// 128² cubes run nightly ([`scaled_minimum_survival_medium_cubes`]).
 #[test]
 fn scaled_minimum_survival() {
     let with_trap = (1..=12u64)
@@ -160,12 +179,18 @@ fn scaled_minimum_survival() {
     );
     assert!(with_trap >= 8, "{with_trap}/12");
     assert_eq!(with_trap_500, 3);
-    for (shape, seeds) in [
-        ([32, 32, 128], 1..=12u64),
-        ([32, 32, 256], 1..=12),
-        ([64, 64, 256], 1..=12),
-        ([128, 128, 256], 1..=3),
-    ] {
+    assert_kept_volume(&[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)]);
+}
+
+/// §6.3 kept-volume gate on 64×64×256 and 128×128×256, 12 seeds each.
+#[test]
+#[ignore = "nightly: 64^2/128^2 closure-minimum sweep (about 1 min optimized)"]
+fn scaled_minimum_survival_medium_cubes() {
+    assert_kept_volume(&[([64, 64, 256], 1..=12), ([128, 128, 256], 1..=12)]);
+}
+
+fn assert_kept_volume(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
+    for (shape, seeds) in cubes.iter().cloned() {
         for faults in [0, 3] {
             let (mut kept, mut total) = (0usize, 0usize);
             for seed in seeds.clone() {

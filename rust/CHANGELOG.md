@@ -16,7 +16,9 @@ Output-changing defaults are listed here with their opt-out flag.
   Cubes with ni·nj ≥ 89,910 keep 500. Counting stays in whole cells under
   partial voxels.
   - Opt-out: **`--legacy-closure-minimum`** (CLI) /
-    **`ClosureMinimum::LEGACY`** (`Fixed(500)`, library).
+    **`ClosureMinimum::LEGACY`** (the `Legacy` variant, 500; library).
+    `--min-closure-voxels 500` / `Fixed(500)` applies the same threshold
+    under its own label.
   - New: **`--min-closure-voxels N`** (N ≥ 1) / `ClosureMinimum::Fixed(N)`.
   - Scaled stores carry the root attributes `closure_min_voxels` and
     `closure_minimum = "scaled-area"` (none with a fixed minimum), and the

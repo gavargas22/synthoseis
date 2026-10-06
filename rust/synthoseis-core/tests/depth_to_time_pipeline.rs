@@ -284,23 +284,40 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
 /// Seed 30 (the #34 salt case): its 3 faults never reach the salt, so the
 /// overlap is 0 and the mask must change nothing. Seed 7 (the demo
 /// seed): 79 fault ∩ salt voxels removed with whole voxels (the d8b96e69
-/// default, `whole`), PV_SEED7 with the partial-voxel default (PR B2: the
+/// default, `whole`), and a partial-voxel count with the default (PR B2: the
 /// time-domain cubes are sampled through the partial traveltime). The
 /// scaled closure minimum (20 voxels here) keeps more traps, which moves
-/// the partial traveltime: PV_SEED7 = 84, and master bad1daa8's 85 under
+/// the partial traveltime: 84, and master bad1daa8's 85 under
 /// `ClosureMinimum::LEGACY` (`--legacy-closure-minimum`). The whole-voxel
 /// pins are unchanged (labels and the depth-sampled cubes never depend on
-/// fluids).
+/// fluids). Per PR: every case in memory and through the tiled streaming
+/// writer; every writer path runs nightly
+/// ([`time_mode_fault_salt_mask_removed_count_every_path`]).
 #[test]
+fn time_mode_fault_salt_mask_removed_count() {
+    mask_removed_count(MASK_CASES, false);
+}
+
+/// [`time_mode_fault_salt_mask_removed_count`] through every writer path
+/// (classic, streaming, overlap, strip 3, multiprocess 2).
+#[test]
+#[ignore = "nightly: fault/salt mask count through every writer path"]
 fn time_mode_fault_salt_mask_removed_count_every_path() {
-    const PV_SEED7: usize = 84;
-    const PV_SEED7_LEGACY_MINIMUM: usize = 85;
-    for (seed, want, whole_voxels, legacy_minimum) in [
-        (30u64, 0usize, true, false),
-        (7, 79, true, false),
-        (7, PV_SEED7, false, false),
-        (7, PV_SEED7_LEGACY_MINIMUM, false, true),
-    ] {
+    mask_removed_count(MASK_CASES, true);
+}
+
+/// `(seed, removed, whole voxels, legacy minimum)`.
+const MASK_CASES: &[(u64, usize, bool, bool)] = &[
+    (30, 0, true, false),
+    (7, 79, true, false),
+    (7, 84, false, false),
+    (7, 85, false, true),
+];
+
+/// The in-memory mask count of each case, then the store of the tiled
+/// streaming writer (`every_path`: every writer path).
+fn mask_removed_count(cases: &[(u64, usize, bool, bool)], every_path: bool) {
+    for &(seed, want, whole_voxels, legacy_minimum) in cases {
         let mut cfg = rich(seed, [24, 24, 128], None, 3);
         if legacy_minimum {
             cfg.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
@@ -331,6 +348,9 @@ fn time_mode_fault_salt_mask_removed_count_every_path() {
             }),
         ];
         for (name, run) in paths {
+            if !every_path && name != "streaming" {
+                continue;
+            }
             let mut got = Vec::new();
             for (tag, cc) in [("masked", cfg.clone()), ("through", through_salt(&cfg))] {
                 let p = dir.path().join(format!("{}-{tag}.mdio", name.replace(' ', "")));

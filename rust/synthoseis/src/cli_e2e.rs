@@ -409,7 +409,10 @@ fn print_closure_minimum(cfg: &synthoseis_core::pipeline::E2eConfig) {
             ClosureMinimum::SCALED_FLOOR,
             ClosureMinimum::SCALED_CAP.map_or("no cap".to_string(), |v| format!("cap {v}"))
         ),
-        ClosureMinimum::LEGACY => "fixed 500, --legacy-closure-minimum".to_string(),
+        ClosureMinimum::Legacy => format!(
+            "fixed {}, --legacy-closure-minimum",
+            ClosureMinimum::LEGACY_VOXELS
+        ),
         ClosureMinimum::Fixed(n) => format!("fixed {n}"),
     };
     println!(
