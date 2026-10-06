@@ -7,7 +7,7 @@ mod trends;
 pub use legacy::{
     arithmetic_mean, example_f32, forward_fill_zeros, harmonic_mean, legacy_column_properties,
     mix_f32, sand_f32, shale_f32, shifted_index, voxel_properties, Elastic32, Fluid, LayerShifts,
-    MixingMethod, VoxelKind, SALT, WATER,
+    MixingMethod, VoxelKind, SALT, SALT_RHO, SALT_VP, SALT_VS, SALT_VS_LEGACY, WATER, salt_elastic,
 };
 
 pub use backus::{backus_mix, slowness_sum, voigt_mix};

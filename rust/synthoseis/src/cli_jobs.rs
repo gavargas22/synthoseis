@@ -205,6 +205,9 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     if rock.salt_smooth_all_horizons {
         a.push("--salt-smooth-all-horizons".into());
     }
+    if rock.salt_legacy_vs {
+        a.push("--salt-legacy-vs".into());
+    }
     if rock.fault_labels_through_salt {
         a.push("--fault-labels-through-salt".into());
     }

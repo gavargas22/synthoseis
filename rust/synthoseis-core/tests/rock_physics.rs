@@ -26,7 +26,7 @@ use synthoseis_core::{
 use synthoseis_geo::faults::{horizon_depth_from_age, FaultModel, FaultParams, ReachMode, Seabed};
 use synthoseis_geo::fill_layer_labels;
 use synthoseis_io::MdioStore;
-use synthoseis_rpm::{legacy_column_properties, LayerShifts, VoxelKind};
+use synthoseis_rpm::{legacy_column_properties, salt_elastic, LayerShifts, VoxelKind};
 use tempfile::tempdir;
 
 fn fixture_path(name: &str) -> std::path::PathBuf {
@@ -214,7 +214,7 @@ fn properties_bit_exact_vs_legacy_mixing() {
         let mut n = 0usize;
         for c in 0..ni * nj {
             let r = c * nk..(c + 1) * nk;
-            legacy_column_properties(&depth[r.clone()], &kinds[r.clone()], &shifts, method, &mut rho, &mut vp, &mut vs);
+            legacy_column_properties(&depth[r.clone()], &kinds[r.clone()], &shifts, method, salt_elastic(true), &mut rho, &mut vp, &mut vs);
             for k in 0..nk {
                 let g = c * nk + k;
                 assert_eq!(rho[k].to_bits(), want_rho[g], "{key} rho col {c} k {k}");
@@ -233,8 +233,8 @@ fn properties_bit_exact_vs_legacy_mixing() {
     let mut differs = 0;
     for c in 0..ni * nj {
         let r = c * nk..(c + 1) * nk;
-        legacy_column_properties(&depth[r.clone()], &kinds[r.clone()], &shifts, MixingMethod::InverseVelocity, &mut a, &mut s1, &mut s2);
-        legacy_column_properties(&depth[r.clone()], &brine_kinds[r], &shifts, MixingMethod::InverseVelocity, &mut b, &mut s3, &mut s2);
+        legacy_column_properties(&depth[r.clone()], &kinds[r.clone()], &shifts, MixingMethod::InverseVelocity, salt_elastic(true), &mut a, &mut s1, &mut s2);
+        legacy_column_properties(&depth[r.clone()], &brine_kinds[r], &shifts, MixingMethod::InverseVelocity, salt_elastic(true), &mut b, &mut s3, &mut s2);
         differs += a.iter().zip(&b).filter(|(x, y)| x != y).count();
     }
     assert!(differs > 100, "fluid substitution changed {differs} voxels");

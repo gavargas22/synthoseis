@@ -116,6 +116,7 @@ fn check_master(c: &E2eConfig, want: u64, what: &str) {
     let mut c = c.clone();
     c.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
     c.rock_physics.salt_smooth_all_horizons = true;
+    c.rock_physics.salt_legacy_vs = true;
     check(&c, want, what);
 }
 
@@ -194,9 +195,9 @@ fn salt_default_rich_is_pinned() {
     assert!(!rich(FilterConfig::default()).effective_salt());
     let fixed = FilterConfig::legacy(4.0, 30.0, 3);
     let cases: Vec<(&str, E2eConfig, u64)> = vec![
-        ("filters off", rich_salt(FilterConfig::default()), 0x377ced1c4114190b),
-        ("legacy 4-30 lateral 3 (fixed)", rich_salt(fixed.clone()), 0xfea4317819c830f4),
-        ("legacy 4-30 lateral 3 --bandpass-trailing-sample", rich_salt(with_trailing(fixed, true)), 0xa7bdffb37ab2c290),
+        ("filters off", rich_salt(FilterConfig::default()), 0x5949a629a9b5450c),
+        ("legacy 4-30 lateral 3 (fixed)", rich_salt(fixed.clone()), 0x503f3de4c7572248),
+        ("legacy 4-30 lateral 3 --bandpass-trailing-sample", rich_salt(with_trailing(fixed, true)), 0xac2fa62bf7362ab1),
     ];
     for (name, c, want) in cases {
         check(&c, want, &format!("salt-default rich {name}"));

@@ -77,7 +77,7 @@ const DEMO: &[&str] = &["--seed", "7", "--shape", "32,32,128", "--faults", "3"];
 const MASTER_BAD1DAA8_DEMO: u64 = 0x99e8_6ae5_7a12_b80c;
 /// `store_dir_hash` of the `DEMO` store with the new defaults (scaled
 /// minimum, contact at base + ½): the regression pin for the default.
-const SCALED_DEFAULT_DEMO: u64 = 0x736d_9e87_1a9b_ed80;
+const SCALED_DEFAULT_DEMO: u64 = 0xa91e_7b31_5d63_fcba;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte
 /// (every array and attribute); the default differs and is pinned.
@@ -92,6 +92,7 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
                 "--legacy-closure-minimum",
                 "--legacy-closure-contact-cap",
                 "--salt-smooth-all-horizons",
+                "--salt-legacy-vs",
             ],
         ]
         .concat(),
@@ -208,10 +209,12 @@ fn closure_flags_reach_multiprocess_workers() {
         &["--legacy-closure-contact-cap"][..],
         &["--legacy-closure-minimum", "--legacy-closure-contact-cap"][..],
         &["--salt-smooth-all-horizons"][..],
+        &["--salt-legacy-vs"][..],
         &[
             "--legacy-closure-minimum",
             "--legacy-closure-contact-cap",
             "--salt-smooth-all-horizons",
+            "--salt-legacy-vs",
         ][..],
     ] {
         let single = dir.path().join("single.mdio");

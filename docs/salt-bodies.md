@@ -7,7 +7,7 @@ The port covers:
 
 - the salt shape: a convex hull around a cloud of 218 jittered points,
 - the horizon drag against the salt flanks,
-- the salt rock properties (rho 2.17 g/cc, Vp 4500 m/s, Vs 2250 m/s),
+- the salt rock properties (rho 2.17 g/cc, Vp 4500 m/s, **Vs 2600 m/s** default; 2250 with `--salt-legacy-vs`),
 - the closure walls that seal traps against salt,
 - a `salt_labels` volume (0/1) in the MDIO store.
 
@@ -17,6 +17,9 @@ Switches:
   b4f4259 bit for bit.
 - `--salt-legacy-top-offset` (`RockPhysicsConfig::salt_legacy_top_offset`)
   uses legacy's absolute top offset (see Deviations).
+- `--salt-legacy-vs` (`RockPhysicsConfig::salt_legacy_vs`) restores salt
+  Vs = 2250 m/s (master f15b87ac); default is 2600. Density and Vp stay
+  2.17 / 4500. See [`synthoseis_rpm::salt_elastic`].
 - `--fault-labels-through-salt` keeps fault labels inside the salt (master
   2b3850ba); by default they are masked (see Fault labels and salt).
 - The planar geometry and `--legacy-toy-depth` never have salt. Passing
@@ -63,8 +66,11 @@ After faulting, `Faults.py` calls, when `include_salt` is set:
    - Lithology is set to 2 inside salt. The age volume is rebuilt from the
      dragged maps.
    - In `Seismic.py`, `lith == 2` voxels get `rho = 2.17`, `vp = 4500`,
-     `vs = 2250` after the layer loop. The base forward-fill runs after
-     that, and the final scaling factors skip salt.
+     `vs = 2250` after the layer loop. The Rust default raises Vs to
+     **2600** (Falcon-Suarez et al. 2024 grain ≈ 2.6 km/s; Vp/Vs ≈ 1.73,
+     Poisson ≈ 0.25); `--salt-legacy-vs` keeps 2250. Vp 4500 and ρ 2.17
+     match Jones & Davison (2014) / Yan et al. (2016). The base
+     forward-fill runs after that, and the final scaling factors skip salt.
 4. **Closures.**
    - The salt gaps become `-1` in the closure maps (NaN → 0 → `/digi`).
    - `Closures._flood_fill` walls them off. Gap cells get `-1 + max_column`,
@@ -82,7 +88,7 @@ After faulting, `Faults.py` calls, when `include_salt` is set:
 | shape | incremental 3D convex hull of the 218 points. Per column, the salt is the sample run `[k0, k1)` inside every hull facet | bit-exact mask (a hull meets each vertical line in one segment) |
 | drag | lift `L`, scipy `gaussian_filter(sigma=3)` on `L` (default) or on `m+L` (`--salt-smooth-all-horizons`); kernel weights as IEEE bits, `reflect`, axis 0 then 1; push-down | bit-exact vs scipy either way |
 | geometry | the dragged maps are rounded to whole samples, as the layered geometry already does, and fed to label fill, faults and the depth model | Rust has whole-sample horizons |
-| properties | `VoxelKind::Salt` → `SALT` (2.17, 4500, 2250 as f32) before the forward-fill. It overrides water, layers and closures | as legacy |
+| properties | `VoxelKind::Salt` → `salt_elastic(legacy_vs)` (2.17, 4500, **2600** as f32; 2250 with `--salt-legacy-vs`) before the forward-fill. It overrides water, layers and closures | default Vs differs from legacy 2250; opt-out restores it |
 | closures | salt-aware fills in all three closure modes (segmented default, `--closures-unsegmented`, `--closures-per-layer`). A column is a gap when the unit's top sample is salt. Gap cells get `-1 + max_column`, ring cells `top + max_column`, and both stay open | bit-exact vs `_flood_fill` |
 | MDIO | `data/salt_labels` (uint8 0/1, fill 0), written chunk by chunk on every path (classic, chunked, streaming, overlap, strip-stitch, multi-process). Each path checks it against the salt body on read-back | new output |
 
@@ -307,15 +313,16 @@ python rust/synthoseis-core/examples/plot_salt_demo.py /tmp/saltd /tmp/salts OUT
     strip-stitch and multi-process paths do this chunk by chunk, with one
     chunk in memory (`salt::verify_salt_labels`); a test corrupts one voxel
     and checks that it is caught.
-- **Multi-process:** `--no-salt`, `--salt-legacy-top-offset` and
-  `--salt-smooth-all-horizons` are
-  forwarded to workers; multi-process equals a single process for both and
+- **Multi-process:** `--no-salt`, `--salt-legacy-top-offset`,
+  `--salt-smooth-all-horizons` and `--salt-legacy-vs` are
+  forwarded to workers; multi-process equals a single process for each and
   for the default.
 - **GPU:** matches CPU with salt (`lithology_gpu.rs`, two salt cases).
 - **Invalid combinations exit 2:**
-  - `--no-salt` or `--salt-legacy-top-offset` with `--toy-geometry planar`
-    or `--legacy-toy-depth`;
-  - `--salt-legacy-top-offset` with `--no-salt`.
+  - `--no-salt`, `--salt-legacy-top-offset`, `--salt-smooth-all-horizons` or
+    `--salt-legacy-vs` with `--toy-geometry planar` or `--legacy-toy-depth`;
+  - `--salt-legacy-top-offset`, `--salt-smooth-all-horizons` or
+    `--salt-legacy-vs` with `--no-salt`.
 - **Planar and `--legacy-toy-depth`:** unchanged (no salt); their goldens
   pass untouched.
 - **CI smoke** (`rust-ci.yml`): default (checks the summary line and

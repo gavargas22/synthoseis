@@ -234,6 +234,11 @@ enum Commands {
         /// --legacy-toy-depth. See docs/salt-bodies.md.
         #[arg(long, default_value_t = false)]
         salt_smooth_all_horizons: bool,
+        /// Legacy switch: salt Vs = 2250 m/s (master f15b87ac), instead of
+        /// the default 2600. Density and Vp stay 2.17 / 4500. Rejected with
+        /// --no-salt, planar, or --legacy-toy-depth. See docs/salt-bodies.md.
+        #[arg(long, default_value_t = false)]
+        salt_legacy_vs: bool,
         /// Legacy switch: write the depth-sampled seismic as time (each depth
         /// sample = one 4 ms sample, an implied constant 2000 m/s), master
         /// f3720fb2 bit for bit. Default: convert to two-way time from the
@@ -628,16 +633,18 @@ fn apply_lithology(
 }
 
 /// `--no-salt` / `--salt-legacy-top-offset` / `--salt-smooth-all-horizons` /
-/// `--fault-labels-through-salt`: salt exists only in the layered geometry,
-/// so all are rejected with the planar geometry (and `--legacy-toy-depth`);
-/// the offset, smooth-all and fault-label switches are rejected with
-/// `--no-salt`, and the fault-label switch without faults.
+/// `--salt-legacy-vs` / `--fault-labels-through-salt`: salt exists only in
+/// the layered geometry, so all are rejected with the planar geometry (and
+/// `--legacy-toy-depth`); the offset, smooth-all, legacy-vs and fault-label
+/// switches are rejected with `--no-salt`, and the fault-label switch
+/// without faults.
 fn apply_salt(
     mut rock: synthoseis_core::RockPhysicsConfig,
     geometry: synthoseis_core::ToyGeometry,
     no_salt: bool,
     legacy_top_offset: bool,
     smooth_all_horizons: bool,
+    salt_legacy_vs: bool,
     fault_labels_through_salt: bool,
     faults: usize,
 ) -> Result<synthoseis_core::RockPhysicsConfig, String> {
@@ -657,10 +664,10 @@ fn apply_salt(
     }
     rock.fault_labels_through_salt = fault_labels_through_salt;
     if geometry == synthoseis_core::ToyGeometry::Planar
-        && (no_salt || legacy_top_offset || smooth_all_horizons)
+        && (no_salt || legacy_top_offset || smooth_all_horizons || salt_legacy_vs)
     {
         return Err(
-            "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons have no effect with the planar geometry or --legacy-toy-depth (no salt)"
+            "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons / --salt-legacy-vs have no effect with the planar geometry or --legacy-toy-depth (no salt)"
                 .into(),
         );
     }
@@ -670,9 +677,13 @@ fn apply_salt(
     if no_salt && smooth_all_horizons {
         return Err("--salt-smooth-all-horizons has no effect with --no-salt".into());
     }
+    if no_salt && salt_legacy_vs {
+        return Err("--salt-legacy-vs has no effect with --no-salt".into());
+    }
     rock.salt = !no_salt;
     rock.salt_legacy_top_offset = legacy_top_offset;
     rock.salt_smooth_all_horizons = smooth_all_horizons;
+    rock.salt_legacy_vs = salt_legacy_vs;
     Ok(rock)
 }
 
@@ -729,6 +740,7 @@ fn main() {
             no_salt,
             salt_legacy_top_offset,
             salt_smooth_all_horizons,
+            salt_legacy_vs,
             legacy_depth_as_time,
             dt_ms,
             twt_samples,
@@ -839,6 +851,7 @@ fn main() {
                     no_salt,
                     salt_legacy_top_offset,
                     salt_smooth_all_horizons,
+                    salt_legacy_vs,
                     fault_labels_through_salt,
                     faults,
                 )

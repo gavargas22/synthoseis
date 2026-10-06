@@ -28,6 +28,7 @@ fn master_cfg(c: &E2eConfig) -> E2eConfig {
     c.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
     // Master hashes predate lift-only drag (ccce5cc9 salt-on = smooth-all).
     c.rock_physics.salt_smooth_all_horizons = true;
+    c.rock_physics.salt_legacy_vs = true;
     c
 }
 

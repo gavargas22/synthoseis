@@ -348,6 +348,14 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
                 "lift-only"
             }
         );
+        println!(
+            "salt properties: rho 2.17, Vp 4500, Vs {}",
+            if cfg.rock_physics.salt_legacy_vs {
+                "2250 (--salt-legacy-vs)"
+            } else {
+                "2600"
+            }
+        );
     } else if g == synthoseis_core::ToyGeometry::Layered {
         println!("salt: off (--no-salt, master b4f4259)");
     }

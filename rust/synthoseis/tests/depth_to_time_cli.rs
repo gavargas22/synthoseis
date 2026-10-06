@@ -100,8 +100,8 @@ const MASTERD2T_RICH: u64 = 0xc747_5878_6ba7_0f95;
 const MASTERD2T_RICH_TRAILING: u64 = 0xc64a_edda_ee03_ff02;
 const MASTERD2T_MP: u64 = 0x5f5f_85af_e374_3e75;
 // The same runs in time mode (the default since this branch).
-const TIME_PLAIN: u64 = 0xf6e5_0563_6edd_f658;
-const TIME_RICH: u64 = 0x7608_198b_26f4_8be8;
+const TIME_PLAIN: u64 = 0x7cb4_4527_0f96_e215;
+const TIME_RICH: u64 = 0x1c50_ba40_abdc_b247;
 const TIME_MP: u64 = 0xd1d0_5a88_d109_29df;
 
 #[test]
@@ -116,7 +116,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
     ] {
         let legacy = dir.path().join(format!("{name}-legacy.mdio"));
         let out = run(
-            &with(base, &["--legacy-depth-as-time", "--salt-smooth-all-horizons"]),
+            &with(base, &["--legacy-depth-as-time", "--salt-smooth-all-horizons", "--salt-legacy-vs"]),
             &legacy,
         );
         assert!(out.status.success(), "{name}: {out:?}");

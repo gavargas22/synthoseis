@@ -325,6 +325,7 @@ fn mask_removed_count(cases: &[(u64, usize, bool, bool)], every_path: bool) {
         if legacy_minimum {
             cfg.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
             cfg.rock_physics.salt_smooth_all_horizons = true;
+            cfg.rock_physics.salt_legacy_vs = true;
         }
         let cfg = if whole_voxels { whole(&cfg) } else { cfg };
         let m = mask_cubes(&cfg);
@@ -679,6 +680,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
     });
     demo.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
     demo.rock_physics.salt_smooth_all_horizons = true;
+    demo.rock_physics.salt_legacy_vs = true;
     let mut f = FilterConfig::legacy(4.0, 30.0, 3);
     f.noise = NoiseConfig { snr_db: Some(12.5), ..NoiseConfig::default() };
     let bp = E2eConfig { filters: f, ..demo.clone() };

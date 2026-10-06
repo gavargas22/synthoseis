@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use synthoseis_geo::faults::{FaultModel, FaultTile};
 use synthoseis_rpm::{
-    backus_mix, voxel_properties, Elastic32, Fluid, LayerShifts, VoxelKind, SALT, WATER,
+    backus_mix, voxel_properties, Elastic32, Fluid, LayerShifts, VoxelKind, WATER,
 };
 use synthoseis_seismic::{subcell_column, SubLayer, SubcellColumn};
 
@@ -353,7 +353,7 @@ impl RpmModel {
     ) -> Elastic32 {
         let (h, hc) = match kind {
             PartKind::Water => return WATER,
-            PartKind::Salt => return SALT,
+            PartKind::Salt => return self.salt_props,
             PartKind::Below => return Elastic32::default(),
             PartKind::Interval { h, hc } => (h, hc),
         };
@@ -389,11 +389,11 @@ impl RpmModel {
             None
         };
         match at {
-            Some(kk) => voxel_properties(depth, kk, vk, &pm.shifts, self.mixing),
+            Some(kk) => voxel_properties(depth, kk, vk, &pm.shifts, self.mixing, self.salt_props),
             None => {
                 let z = &self.maps[c * self.nh..(c + 1) * self.nh];
                 let tv = (z[h + 1] as f32 - z[0] as f32) * self.step;
-                voxel_properties(&[tv], 0, vk, &pm.shifts, self.mixing)
+                voxel_properties(&[tv], 0, vk, &pm.shifts, self.mixing, self.salt_props)
             }
         }
     }

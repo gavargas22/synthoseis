@@ -178,7 +178,11 @@ minimum").
 
 **Salt drag is lift-only by default.** Horizon maps use `m + G_σ3(L)` so
 far-field beds are not blurred; `--salt-smooth-all-horizons` restores the
-previous `G_σ3(m+L)` (= master ccce5cc9 with salt on). See
+previous `G_σ3(m+L)` (= master ccce5cc9 with salt on).
+
+**Salt Vs defaults to 2600 m/s** (ρ 2.17, Vp 4500 unchanged). Opt out with
+`--salt-legacy-vs` for Vs 2250 (= master f15b87ac salt-on). Labels are
+unchanged; stacks change at salt contacts (AVO). See
 [`docs/salt-bodies.md`](../docs/salt-bodies.md).
 
 
