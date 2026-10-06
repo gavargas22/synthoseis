@@ -16,7 +16,7 @@ use synthoseis_seismic::{
     reflectivity_time_column_with_twt, subcell_reflectivity, twt_column, SubcellColumn, TwtScratch, ZoeppritzForm,
 };
 
-use crate::partial_voxels::PvReflectivity;
+use crate::partial_voxels::{PartialVoxelStats, PvReflectivity};
 use crate::pipeline::{E2eConfig, TimeAxis};
 use crate::rock_physics::{elastic_model, ColumnScratch, ElasticModel, RpmModel};
 use crate::salt::SaltBody;
@@ -206,6 +206,34 @@ pub fn tile_twt(
     j1: usize,
     axis: &TimeAxis,
 ) -> Vec<f64> {
+    tile_twt_stats(
+        model,
+        labels,
+        shape,
+        i0,
+        i1,
+        j0,
+        j1,
+        axis,
+        &mut PartialVoxelStats::default(),
+    )
+}
+
+/// [`tile_twt`] that also adds the partial-voxel counters of every column
+/// it builds to `stats` (unchanged on the whole-voxel path), so the run
+/// summary needs a single pass over the columns.
+#[allow(clippy::too_many_arguments)]
+pub fn tile_twt_stats(
+    model: &ElasticModel,
+    labels: &[u8],
+    shape: [usize; 3],
+    i0: usize,
+    i1: usize,
+    j0: usize,
+    j1: usize,
+    axis: &TimeAxis,
+    stats: &mut PartialVoxelStats,
+) -> Vec<f64> {
     let nz = shape[2];
     if let Some(m) = partial_time_path(model) {
         // Partial voxels: the slowness-sum T of the fuse (spec §1.4), so
@@ -224,6 +252,7 @@ pub fn tile_twt(
                 t.extend_from_slice(&col.t_cells);
             }
         }
+        stats.add(&scratch.partial.stats);
         return t;
     }
     let n = (i1 - i0) * (j1 - j0) * nz;
@@ -475,29 +504,64 @@ pub struct TimeColumnSummary {
 
 /// Column summary for `cfg` (`None` on the legacy axis).
 pub fn time_column_summary(cfg: &E2eConfig) -> Option<TimeColumnSummary> {
-    let axis = cfg.time_axis()?;
+    run_summary(cfg).time
+}
+
+/// Both run summaries the CLI prints, from one label and model build and a
+/// single pass over the columns: the time-column summary (time mode) and
+/// the partial-voxel counters (partial voxels on). In time mode the
+/// counters come from the same `tile_twt` pass that builds every column's
+/// traveltime; on the legacy axis (and with the `constant_twt_vp` test hook)
+/// the partial pass is the only pass.
+#[derive(Debug, Clone, Default)]
+pub struct RunSummary {
+    pub time: Option<TimeColumnSummary>,
+    pub partial: Option<crate::partial_model::PartialVoxelSummary>,
+}
+
+pub fn run_summary(cfg: &E2eConfig) -> RunSummary {
+    let axis = cfg.time_axis();
+    let reflectivity = cfg.effective_partial_voxels();
+    if axis.is_none() && reflectivity.is_none() {
+        return RunSummary::default();
+    }
     let (labels, shape) = crate::pipeline_stream::generate_labels(cfg);
     let model = elastic_model(cfg, &labels, shape);
-    let [ni, nj, nz] = shape;
-    let t_last = (axis.nt - 1) as f64 * axis.dt_ms;
-    let mut s = TimeColumnSummary {
-        base_twt_ms: [f64::INFINITY, f64::NEG_INFINITY],
-        ..Default::default()
-    };
-    for i in 0..ni {
-        let t = tile_twt(&model, &labels, shape, i, i + 1, 0, nj, &axis);
-        for col in t.chunks_exact(nz + 1) {
-            let base = col[nz];
-            s.columns += 1;
-            s.base_twt_ms = [s.base_twt_ms[0].min(base), s.base_twt_ms[1].max(base)];
-            if base < t_last {
-                s.short += 1;
-                s.max_shortfall_ms = s.max_shortfall_ms.max(t_last - base);
-            } else if base > t_last {
-                s.long += 1;
-                s.max_excess_ms = s.max_excess_ms.max(base - t_last);
+    let mut stats = PartialVoxelStats::default();
+    let mut out = RunSummary::default();
+    let shared = axis.is_some() && partial_time_path(&model).is_some();
+    if let Some(axis) = axis {
+        let [ni, nj, nz] = shape;
+        let t_last = (axis.nt - 1) as f64 * axis.dt_ms;
+        let mut s = TimeColumnSummary {
+            base_twt_ms: [f64::INFINITY, f64::NEG_INFINITY],
+            ..Default::default()
+        };
+        for i in 0..ni {
+            let t = tile_twt_stats(&model, &labels, shape, i, i + 1, 0, nj, &axis, &mut stats);
+            for col in t.chunks_exact(nz + 1) {
+                let base = col[nz];
+                s.columns += 1;
+                s.base_twt_ms = [s.base_twt_ms[0].min(base), s.base_twt_ms[1].max(base)];
+                if base < t_last {
+                    s.short += 1;
+                    s.max_shortfall_ms = s.max_shortfall_ms.max(t_last - base);
+                } else if base > t_last {
+                    s.long += 1;
+                    s.max_excess_ms = s.max_excess_ms.max(base - t_last);
+                }
             }
         }
+        out.time = Some(s);
     }
-    Some(s)
+    if let Some(reflectivity) = reflectivity {
+        if !shared {
+            crate::partial_model::partial_stats_pass(cfg, &model, &labels, shape, &mut stats);
+        }
+        out.partial = Some(crate::partial_model::PartialVoxelSummary {
+            stats,
+            reflectivity,
+        });
+    }
+    out
 }

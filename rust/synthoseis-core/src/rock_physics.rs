@@ -157,10 +157,12 @@ pub struct RockPhysicsConfig {
     /// salt and have no seismic expression inside it. CLI
     /// `--fault-labels-through-salt`. See `docs/salt-bodies.md`.
     pub fault_labels_through_salt: bool,
-    /// Partial voxels (spec-partial-voxels; off by default until PR B2):
+    /// Partial voxels (spec-partial-voxels; **on by default** since PR B2):
     /// exact vertical volume fractions with Backus mixing (cell mode) or
-    /// sub-cell reflectivity (time mode). CLI `--partial-voxel-reflectivity`
-    /// / `--legacy-whole-voxels`. See [`crate::partial_voxels`].
+    /// sub-cell reflectivity (time mode). Opt out with
+    /// `PartialVoxelConfig::whole_voxels()` (`legacy_whole_voxels = true`,
+    /// = the d8b96e69 default). CLI `--partial-voxel-reflectivity` /
+    /// `--legacy-whole-voxels`. See [`crate::partial_voxels`].
     pub partial_voxels: crate::partial_voxels::PartialVoxelConfig,
 }
 

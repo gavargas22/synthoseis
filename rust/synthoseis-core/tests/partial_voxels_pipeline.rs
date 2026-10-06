@@ -1,11 +1,12 @@
 //! Partial voxels wired through the pipeline (spec "partial voxels" PR B1,
-//! §3.3, §3.6, §4, §5.5, §5.6). The switch is off by default in B1; these
-//! tests turn it on through `RockPhysicsConfig::partial_voxels`.
+//! §3.3, §3.6, §4, §5.5, §5.6). Partial voxels are the library default
+//! since PR B2; the `rich` fixture opts out (`PartialVoxelConfig::whole_voxels`,
+//! = the d8b96e69 default) and the tests turn the switch on explicitly.
 //! * Switch on: every path (classic, chunked, streaming, overlap,
 //!   strip-stitch 2/3/4, multiprocess 1/2/3, geometry-once) writes the same
 //!   bytes for every chunk shape, in time mode (S and C) and on the legacy
 //!   axis (C), with the RICH flags, salt and faults.
-//! * Switch off is the default; on differs from off, S from C.
+//! * The default is on (= the explicit S / C); on differs from off, S from C.
 //! * The three root attributes are written only when on.
 //! * Depth, fault and salt labels are identical on vs off; time labels move
 //!   by at most one sample where the traveltime changes.
@@ -30,6 +31,7 @@ fn bits(v: &[f32]) -> Vec<u32> {
 
 /// RICH flags (bandpass 4-30 Hz, 12.5 dB noise, salt, layered geometry)
 /// with `faults` faults; time mode with `nt` samples, or the legacy axis.
+/// Whole voxels (the opt-out): the tests switch partial voxels on.
 fn rich(seed: u64, shape: [usize; 3], faults: usize, time: TimeConfig) -> E2eConfig {
     let mut filters = FilterConfig::legacy(4.0, 30.0, 3);
     filters.noise = NoiseConfig {
@@ -44,6 +46,10 @@ fn rich(seed: u64, shape: [usize; 3], faults: usize, time: TimeConfig) -> E2eCon
         faults: FaultConfig::with_count(faults),
         filters,
         time,
+        rock_physics: RockPhysicsConfig {
+            partial_voxels: PartialVoxelConfig::whole_voxels(),
+            ..RockPhysicsConfig::default()
+        },
         ..E2eConfig::default()
     }
 }
@@ -52,7 +58,7 @@ fn with_pv(cfg: &E2eConfig, r: Option<PvReflectivity>) -> E2eConfig {
     let mut c = cfg.clone();
     c.rock_physics.partial_voxels = match r {
         Some(r) => PartialVoxelConfig::with(r),
-        None => PartialVoxelConfig::default(),
+        None => PartialVoxelConfig::whole_voxels(),
     };
     c
 }
@@ -253,17 +259,44 @@ fn switch_on_tiling_invariance_legacy_axis() {
     assert_tiling_invariant(&cfg, &CHUNKS, true);
 }
 
-/// The default is off and equals an explicit off; on differs from off and
-/// S from C; the attrs are written only when on; the planar geometry and an
-/// explicit S on the legacy axis are rejected by validation.
+/// The library default is on (PR B2) and equals the explicit S in time mode
+/// and C on the legacy axis; `whole_voxels()` is off; on differs from off
+/// and S from C; the attrs are written only when on; the planar geometry
+/// and an explicit S on the legacy axis are rejected by validation.
 #[test]
-fn switch_default_off_and_modes_differ() {
-    let base = rich(30, [10, 12, 48], 0, TimeConfig::default());
+fn switch_default_on_and_modes_differ() {
+    assert!(PartialVoxelConfig::default().enabled());
+    assert_eq!(PartialVoxelConfig::default(), PartialVoxelConfig::on());
+    assert!(!PartialVoxelConfig::whole_voxels().enabled());
     assert_eq!(
-        base.rock_physics.partial_voxels,
+        E2eConfig::default().rock_physics.partial_voxels,
         PartialVoxelConfig::default()
     );
+    let base = rich(30, [10, 12, 48], 0, TimeConfig::default());
     assert_eq!(base.effective_partial_voxels(), None);
+    for time in [TimeConfig::default(), TimeConfig::legacy()] {
+        let mut dflt = rich(30, [10, 12, 48], 0, time.clone());
+        dflt.rock_physics.partial_voxels = PartialVoxelConfig::default();
+        let r = if time.enabled {
+            PvReflectivity::Subcell
+        } else {
+            PvReflectivity::Cell
+        };
+        assert_eq!(dflt.effective_partial_voxels(), Some(r));
+        let explicit = generate_tiny_cube(&with_pv(&dflt, Some(r)));
+        let d = generate_tiny_cube(&dflt);
+        assert_eq!(
+            bits(&d.angle_stack),
+            bits(&explicit.angle_stack),
+            "default = explicit {r:?}"
+        );
+        let whole = generate_tiny_cube(&with_pv(&dflt, None));
+        assert_ne!(
+            bits(&d.angle_stack),
+            bits(&whole.angle_stack),
+            "default vs whole voxels"
+        );
+    }
     let off = generate_tiny_cube(&base);
     let s = generate_tiny_cube(&with_pv(&base, Some(PvReflectivity::Subcell)));
     let c = generate_tiny_cube(&with_pv(&base, Some(PvReflectivity::Cell)));

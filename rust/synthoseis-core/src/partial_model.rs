@@ -1,8 +1,8 @@
 //! Partial voxels in the rock-physics model and the fuse (spec
-//! partial-voxels §3.3–§3.6, PR B1). Off unless
-//! [`crate::partial_voxels::PartialVoxelConfig::enabled`] (library default
-//! and, until PR B2, the CLI default): with it off nothing here runs and
-//! every output is byte-identical to whole voxels.
+//! partial-voxels §3.3–§3.6, PR B1). On by default since PR B2 (library and
+//! CLI); with [`crate::partial_voxels::PartialVoxelConfig::legacy_whole_voxels`]
+//! nothing here runs and every output is byte-identical to whole voxels
+//! (the d8b96e69 default).
 //!
 //! * [`PartialModel`] rides on [`RpmModel::partial`]: the continuous horizon
 //!   offsets `δ = z − round(z)` (f32 per horizon per column, spec §3.1), the
@@ -440,12 +440,24 @@ impl std::fmt::Display for PartialVoxelSummary {
 /// Partial-voxel counters of the whole run of `cfg` (`None` when partial
 /// voxels are off): one pass over every column, deterministic (sums).
 pub fn partial_voxel_summary(cfg: &E2eConfig) -> Option<PartialVoxelSummary> {
-    let reflectivity = cfg.effective_partial_voxels()?;
-    let (labels, shape) = crate::pipeline_stream::generate_labels(cfg);
-    let model = crate::rock_physics::elastic_model(cfg, &labels, shape);
-    let ElasticModel::Rpm(m) = &model else {
-        return None;
+    crate::time_mode::run_summary(cfg).partial
+}
+
+/// One pass over every column of `model` (tiled by the fault tile) adding
+/// the partial-voxel counters to `stats`; a no-op without partial state.
+pub fn partial_stats_pass(
+    cfg: &E2eConfig,
+    model: &ElasticModel,
+    labels: &[u8],
+    shape: [usize; 3],
+    stats: &mut PartialVoxelStats,
+) {
+    let ElasticModel::Rpm(m) = model else {
+        return;
     };
+    if m.partial.is_none() {
+        return;
+    }
     let [ni, nj, nk] = shape;
     let [ci, cj] = crate::pipeline_stream::fault_tile(cfg);
     let mut scratch = ColumnScratch::default();
@@ -472,10 +484,7 @@ pub fn partial_voxel_summary(cfg: &E2eConfig) -> Option<PartialVoxelSummary> {
             }
         }
     }
-    Some(PartialVoxelSummary {
-        stats: scratch.partial.stats,
-        reflectivity,
-    })
+    stats.add(&scratch.partial.stats);
 }
 
 /// Root MDIO attributes of a partial-voxel store (spec §4): `voxel_model`

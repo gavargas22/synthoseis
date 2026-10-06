@@ -285,8 +285,10 @@ pub fn run_e2e(
 /// keeping master's output): `dt`, `nt`, kernel, and the short / long
 /// column percentages with the worst shortfall / excess (spec §2).
 pub fn print_time_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
-    // Partial voxels (spec §3.6): one summary line, only when enabled.
-    if let Some(s) = synthoseis_core::partial_model::partial_voxel_summary(cfg) {
+    // One pass for both summaries (spec §3.6, §8 B2 nit). Partial voxels:
+    // one line, only when enabled.
+    let summary = synthoseis_core::time_mode::run_summary(cfg);
+    if let Some(s) = &summary.partial {
         println!("{s}");
     }
     let Some(axis) = cfg.time_axis() else {
@@ -299,7 +301,7 @@ pub fn print_time_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         axis.kernel.as_str(),
         axis.dz
     );
-    if let Some(s) = synthoseis_core::time_column_summary(cfg) {
+    if let Some(s) = summary.time {
         let pct = |n: usize| 100.0 * n as f64 / s.columns.max(1) as f64;
         println!(
             "time columns: base TWT {:.1}-{:.1} ms vs trace end {:.1} ms; short {:.1}% (worst shortfall {:.1} ms, zero-filled below the model base), long {:.1}% (worst excess {:.1} ms, truncated)",

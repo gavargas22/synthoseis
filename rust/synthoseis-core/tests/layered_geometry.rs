@@ -26,6 +26,16 @@ fn ah(v: &[f32]) -> u64 {
     fnv(v.iter().flat_map(|x| x.to_bits().to_le_bytes()))
 }
 
+/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
+/// default): partial voxels are the library default since PR B2, and this
+/// golden asserts master (whole-voxel) output.
+fn whole(c: &E2eConfig) -> E2eConfig {
+    let mut c = c.clone();
+    c.rock_physics.partial_voxels =
+        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
+    c
+}
+
 fn demo(seed: u64, shape: [usize; 3], faults: usize) -> E2eConfig {
     E2eConfig {
         time: synthoseis_core::TimeConfig::legacy(),
@@ -165,7 +175,8 @@ fn shifts_and_closure_fluids_trigger_end_to_end() {
 
 /// Default settings on the standard 64x64x128 demo cube: shifts reach at
 /// least one layer and closures carry hydrocarbons. Golden hashes pin the
-/// layered default (labels, 15 deg stack).
+/// layered default (labels, 15 deg stack) with whole voxels (d8b96e69) and
+/// with the partial-voxel default (PR B2).
 #[test]
 fn default_demo_cube_goldens() {
     let c = demo(7, [64, 64, 128], 4);
@@ -182,7 +193,7 @@ fn default_demo_cube_goldens() {
         m.layers.len()
     );
     assert!(shifted >= 1 && hc >= 1);
-    let (v, _) = generate_chunked(&c);
+    let (v, _) = generate_chunked(&whole(&c));
     // Horizons sit on whole samples and the base lies below the cube, so the
     // only unfilled (255) samples are the water column above the seabed.
     let nk = 128;
@@ -203,7 +214,19 @@ fn default_demo_cube_goldens() {
     );
     assert_eq!(fnv(v.labels.iter().copied()), LAYERED_LABELS);
     assert_eq!(ah(&v.angle_stack), LAYERED_STACK15);
+    // Partial-voxel default (PR B2, legacy axis = cell): the depth labels
+    // are unchanged, the stack differs.
+    let (d, _) = generate_chunked(&c);
+    assert_eq!(fnv(d.labels.iter().copied()), LAYERED_LABELS);
+    assert_eq!(
+        ah(&d.angle_stack),
+        LAYERED_STACK15_PV,
+        "{:#018x}",
+        ah(&d.angle_stack)
+    );
 }
+
+const LAYERED_STACK15_PV: u64 = 0x19f1_aa16_41c9_def1;
 
 const LAYERED_LABELS: u64 = 0x021e_4d94_9085_f056;
 const LAYERED_STACK15: u64 = 0x5d4c_ba89_7f5a_ef44;

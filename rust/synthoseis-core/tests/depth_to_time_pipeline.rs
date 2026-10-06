@@ -18,6 +18,16 @@ use synthoseis_core::{
     TwtKernel, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
 };
 
+/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
+/// default): partial voxels are the library default since PR B2, and this
+/// golden asserts master (whole-voxel) output.
+fn whole(c: &E2eConfig) -> E2eConfig {
+    let mut c = c.clone();
+    c.rock_physics.partial_voxels =
+        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
+    c
+}
+
 fn fnv(bytes: impl IntoIterator<Item = u8>) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     for b in bytes {
@@ -280,11 +290,15 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
 /// `--fault-labels-through-salt` turns the mask off on every path.
 /// Seed 30 (the #34 salt case): its 3 faults never reach the salt, so the
 /// overlap is 0 and the mask must change nothing. Seed 7 (the demo
-/// seed): 79 fault ∩ salt voxels removed.
+/// seed): 79 fault ∩ salt voxels removed with whole voxels (the d8b96e69
+/// default, `whole`), PV_SEED7 with the partial-voxel default (PR B2: the
+/// time-domain cubes are sampled through the partial traveltime).
 #[test]
 fn time_mode_fault_salt_mask_removed_count_every_path() {
-    for (seed, want) in [(30u64, 0usize), (7, 79)] {
+    const PV_SEED7: usize = 85;
+    for (seed, want, whole_voxels) in [(30u64, 0usize, true), (7, 79, true), (7, PV_SEED7, false)] {
         let cfg = rich(seed, [24, 24, 128], None, 3);
+        let cfg = if whole_voxels { whole(&cfg) } else { cfg };
         let m = mask_cubes(&cfg);
         let removed = assert_mask_removes_overlap(&format!("seed {seed} in-memory"), &m.masked, &m.through, &m.salt);
         assert_eq!(removed, want, "seed {seed}: fault ∩ salt overlap of the unmasked output");
@@ -622,14 +636,14 @@ fn time_mode_fuse_tile_cost_within_1_3x() {
 /// (`FAULTS_THROUGH`). The time-mode default differs.
 #[test]
 fn legacy_depth_as_time_reproduces_master_f3720fb2() {
-    let demo = E2eConfig {
+    let demo = whole(&E2eConfig {
         seed: 7,
         inline_count: 64,
         crossline_count: 64,
         samples: 256,
         time: TimeConfig::legacy(),
         ..E2eConfig::default()
-    };
+    });
     let mut f = FilterConfig::legacy(4.0, 30.0, 3);
     f.noise = NoiseConfig { snr_db: Some(12.5), ..NoiseConfig::default() };
     let bp = E2eConfig { filters: f, ..demo.clone() };

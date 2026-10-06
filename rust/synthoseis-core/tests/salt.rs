@@ -22,6 +22,16 @@ use synthoseis_core::salt::{
 };
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
+/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
+/// default): partial voxels are the library default since PR B2, and this
+/// golden asserts master (whole-voxel) output.
+fn whole(c: &E2eConfig) -> E2eConfig {
+    let mut c = c.clone();
+    c.rock_physics.partial_voxels =
+        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
+    c
+}
+
 #[derive(Deserialize)]
 struct GeometryCase {
     shape: [usize; 3],
@@ -327,7 +337,9 @@ fn demo(salt: bool) -> E2eConfig {
 /// vs 2250) in the elastic model, whatever the layer label.
 #[test]
 fn salt_voxels_take_legacy_properties() {
-    let cfg = demo(true);
+    // Whole voxels: with partial voxels (the PR B2 default) the cells that
+    // straddle the salt top are Backus mixes of salt and sediment.
+    let cfg = whole(&demo(true));
     let body = salt_body(&cfg).expect("salt on by default");
     let [ni, nj, nk] = cfg.shape();
     assert!(body.voxels(nk) > 500, "salt voxels {}", body.voxels(nk));

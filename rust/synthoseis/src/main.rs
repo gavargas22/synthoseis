@@ -233,25 +233,30 @@ enum Commands {
         /// See docs/salt-bodies.md.
         #[arg(long, default_value_t = false)]
         fault_labels_through_salt: bool,
-        /// Whole-voxel rasterisation, byte for byte as master (the default
-        /// until partial voxels are switched on by default). Rejected with
-        /// --toy-geometry planar / --legacy-toy-depth (whole-voxel by
-        /// construction). See docs/partial-voxels.md.
+        /// Opt out of partial voxels (on by default since PR B2): whole-voxel
+        /// rasterisation, byte for byte as master d8b96e69's default. Stacks
+        /// change by default without it. Rejected with --toy-geometry planar
+        /// / --legacy-toy-depth (whole-voxel by construction). See
+        /// docs/partial-voxels.md.
         #[arg(long, default_value_t = false)]
         legacy_whole_voxels: bool,
-        /// Partial voxels: exact vertical volume fractions of every depth
-        /// cell (layered geometry). `subcell`: every sub-cell interface at
-        /// its exact two-way time (time mode only); `cell`: Backus voxels
-        /// with the cell-to-cell reflectivity (any axis). Off by default.
-        /// See docs/partial-voxels.md.
+        /// Partial voxels (on by default for the layered geometry): exact
+        /// vertical volume fractions of every depth cell. `subcell` (the
+        /// time-mode default): every sub-cell interface at its exact two-way
+        /// time (time mode only); `cell` (the --legacy-depth-as-time
+        /// default): Backus voxels with the cell-to-cell reflectivity. Opt
+        /// out with --legacy-whole-voxels. See docs/partial-voxels.md.
         #[arg(long)]
         partial_voxel_reflectivity: Option<String>,
     },
 }
 
 /// `--legacy-whole-voxels` / `--partial-voxel-reflectivity` (partial-voxels
-/// spec §2). Partial voxels are off unless `--partial-voxel-reflectivity`
-/// is given (PR B2 flips the default).
+/// spec §2, §4). Partial voxels are on by default for the layered geometry
+/// (subcell in time mode, cell on the legacy axis); `--legacy-whole-voxels`
+/// opts out. The planar geometry and `--legacy-toy-depth` are whole-voxel
+/// by construction. The resolved config always carries an explicit
+/// reflectivity, so multi-process workers receive it verbatim.
 fn parse_partial_voxels(
     legacy_whole_voxels: bool,
     reflectivity: Option<&str>,
@@ -264,7 +269,15 @@ fn parse_partial_voxels(
         return Err("--legacy-whole-voxels has no effect with --toy-geometry planar or --legacy-toy-depth (whole-voxel by construction)".into());
     }
     let Some(r) = reflectivity else {
-        return Ok(PartialVoxelConfig::default());
+        if legacy_whole_voxels || planar {
+            return Ok(PartialVoxelConfig::whole_voxels());
+        }
+        let r = if time_enabled {
+            PvReflectivity::Subcell
+        } else {
+            PvReflectivity::Cell
+        };
+        return Ok(PartialVoxelConfig::with(r));
     };
     if legacy_whole_voxels {
         return Err("--partial-voxel-reflectivity has no effect with --legacy-whole-voxels".into());

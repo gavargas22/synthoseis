@@ -18,6 +18,16 @@
 use synthoseis_core::pipeline::{generate_tiny_cube, E2eConfig, FaultConfig, FilterConfig, NoiseConfig, RockPhysicsConfig};
 use synthoseis_core::{generate_chunked, generate_reflectivity, run_e2e_chunked};
 
+/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
+/// default): partial voxels are the library default since PR B2, and this
+/// golden asserts master (whole-voxel) output.
+fn whole(c: &E2eConfig) -> E2eConfig {
+    let mut c = c.clone();
+    c.rock_physics.partial_voxels =
+        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
+    c
+}
+
 fn angle_hash(v: &[f32]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for x in v {
@@ -100,6 +110,7 @@ fn with_trailing(fc: FilterConfig, on: bool) -> FilterConfig {
 
 /// Assert both the chunked and the classic whole-cube path hash to `want`.
 fn check(c: &E2eConfig, want: u64, what: &str) {
+    let c = &whole(c);
     let (v, _) = generate_chunked(c);
     assert_eq!(angle_hash(&v.angle_stack), want, "chunked {what}: {:#018x}", angle_hash(&v.angle_stack));
     assert_eq!(angle_hash(&generate_tiny_cube(c).angle_stack), want, "classic {what}");

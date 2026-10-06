@@ -20,6 +20,16 @@ use synthoseis_core::pipeline::{E2eConfig, FaultConfig, FilterConfig, RockPhysic
 use synthoseis_core::rock_physics::{elastic_model, ElasticModel, Fluid};
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
+/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
+/// default): partial voxels are the library default since PR B2, and this
+/// golden asserts master (whole-voxel) output.
+fn whole(c: &E2eConfig) -> E2eConfig {
+    let mut c = c.clone();
+    c.rock_physics.partial_voxels =
+        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
+    c
+}
+
 #[derive(Deserialize)]
 struct Chain {
     seed: u64,
@@ -361,7 +371,7 @@ fn model_uses_markov_lithology_end_to_end() {
     assert_eq!(toy.effective_lithology(), ToyLithology::Alternating);
 
     // Previous layered default (master after #30) under `alternating`.
-    let demo = |rp: RockPhysicsConfig| layered(7, [64, 64, 128], rp);
+    let demo = |rp: RockPhysicsConfig| whole(&layered(7, [64, 64, 128], rp));
     let alt = demo(RockPhysicsConfig {
         lithology: ToyLithology::Alternating,
         closures_unsegmented: true,
