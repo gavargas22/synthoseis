@@ -115,6 +115,7 @@ fn check(c: &E2eConfig, want: u64, what: &str) {
 fn check_master(c: &E2eConfig, want: u64, what: &str) {
     let mut c = c.clone();
     c.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
+    c.rock_physics.salt_smooth_all_horizons = true;
     check(&c, want, what);
 }
 
@@ -193,9 +194,9 @@ fn salt_default_rich_is_pinned() {
     assert!(!rich(FilterConfig::default()).effective_salt());
     let fixed = FilterConfig::legacy(4.0, 30.0, 3);
     let cases: Vec<(&str, E2eConfig, u64)> = vec![
-        ("filters off", rich_salt(FilterConfig::default()), 0x0427bd22f58bb87e),
-        ("legacy 4-30 lateral 3 (fixed)", rich_salt(fixed.clone()), 0x5cac37c5c26d06e1),
-        ("legacy 4-30 lateral 3 --bandpass-trailing-sample", rich_salt(with_trailing(fixed, true)), 0xf47229efbffaa6c7),
+        ("filters off", rich_salt(FilterConfig::default()), 0x377ced1c4114190b),
+        ("legacy 4-30 lateral 3 (fixed)", rich_salt(fixed.clone()), 0xfea4317819c830f4),
+        ("legacy 4-30 lateral 3 --bandpass-trailing-sample", rich_salt(with_trailing(fixed, true)), 0xa7bdffb37ab2c290),
     ];
     for (name, c, want) in cases {
         check(&c, want, &format!("salt-default rich {name}"));
@@ -255,3 +256,4 @@ fn padlen_check_counts_filtered_samples() {
     assert!(run_e2e_chunked(&short(28, true)).is_ok());
     assert!(run_e2e_chunked(&short(27, true)).is_err());
 }
+

@@ -178,7 +178,7 @@ fn scaled_minimum_survival() {
         "32x32x128 f0: seeds with a kept trap: {with_trap_500}/12 at 500, {with_trap}/12 scaled"
     );
     assert!(with_trap >= 8, "{with_trap}/12");
-    assert_eq!(with_trap_500, 3);
+    assert_eq!(with_trap_500, 8);
     assert_kept_volume(&[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)]);
 }
 
@@ -212,7 +212,8 @@ fn assert_kept_volume(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
 
 /// §6.4: the salt case of `tests/rock_physics.rs` (24×20×128, seed 102, 4
 /// faults, sand 0.4) keeps 5 compartments on the default (T = 20), the
-/// closures walled against the salt flank among them; master's 500 kept 0.
+/// closures walled against the salt flank among them; fixed 500 keeps 2
+/// under lift-only drag (0 under smooth-all).
 #[test]
 fn salt_case_keeps_walled_closures_on_the_default() {
     let mut c = cfg([24, 20, 128], 4, 102);
@@ -223,10 +224,10 @@ fn salt_case_keeps_walled_closures_on_the_default() {
     let mut sizes = k.sizes.clone();
     sizes.sort_unstable_by(|a, b| b.cmp(a));
     eprintln!("salt case compartments {sizes:?}");
-    assert_eq!(sizes, [419, 391, 187, 134, 46, 9, 2, 2, 1]);
+    assert_eq!(sizes, [1070, 632, 364, 351, 138, 6, 2, 1, 1, 1, 1, 1]);
     assert_eq!((k.minimum, k.kept()), (20, 5));
     let legacy = closure_census(&with_minimum(&c, ClosureMinimum::LEGACY), &labels, sh).unwrap();
-    assert_eq!(legacy.kept(), 0);
+    assert_eq!(legacy.kept(), 2);
     // The kept closures reach the model as hydrocarbon or brine contacts.
     let m = rpm(&c, &labels, sh);
     let contacts = m

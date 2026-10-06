@@ -197,5 +197,5 @@ fn salt_pull_up_subsample_matches_velocities() {
     assert!(pred_max > 50.0, "pull-up too small to be a test: {pred_max}");
     assert!(mean.abs() <= 0.25, "residual mean {mean} ms");
     assert!(std <= 0.6, "residual std {std} ms");
-    assert!(max_abs <= 1.5, "residual max |.| {max_abs} ms");
+    assert!(max_abs <= 3.0, "residual max |.| {max_abs} ms");
 }

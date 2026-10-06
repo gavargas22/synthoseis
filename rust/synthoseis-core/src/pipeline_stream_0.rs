@@ -119,7 +119,7 @@ pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
                 None => (maps, nh),
                 Some(body) => {
                     let [ni, nj, _] = cfg.shape();
-                    let mut dragged = crate::salt::drag_horizon_maps(&maps, [ni, nj, nh], &body);
+                    let mut dragged = crate::salt::drag_horizon_maps(&maps, [ni, nj, nh], &body, cfg.rock_physics.salt_smooth_all_horizons);
                     // Whole samples, as the layered geometry (see
                     // `layered_horizon_maps`); rounding keeps the order.
                     for v in &mut dragged {
@@ -149,7 +149,7 @@ pub fn toy_horizon_maps_continuous(cfg: &E2eConfig) -> Option<(Vec<f64>, usize)>
                 None => Some(crate::toy_geometry::layered_horizon_maps_continuous(cfg.seed, cfg.shape())),
                 Some(body) => {
                     let [ni, nj, _] = cfg.shape();
-                    let mut dragged = crate::salt::drag_horizon_maps(&maps, [ni, nj, nh], &body);
+                    let mut dragged = crate::salt::drag_horizon_maps(&maps, [ni, nj, nh], &body, cfg.rock_physics.salt_smooth_all_horizons);
                     crate::toy_geometry::min_cascade(&mut dragged, nh);
                     Some((dragged, nh))
                 }

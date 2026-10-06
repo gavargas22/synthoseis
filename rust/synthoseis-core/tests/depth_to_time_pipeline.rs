@@ -311,8 +311,9 @@ fn time_mode_fault_salt_mask_removed_count_every_path() {
 /// `(seed, removed, whole voxels, legacy minimum)`.
 const MASK_CASES: &[(u64, usize, bool, bool)] = &[
     (30, 0, true, false),
-    (7, 79, true, false),
-    (7, 84, false, false),
+    (7, 66, true, false),
+    (7, 66, false, false),
+    // Master bad1daa8 pin: LEGACY minimum + smooth-all (= ccce5cc9 salt-on).
     (7, 85, false, true),
 ];
 
@@ -323,6 +324,7 @@ fn mask_removed_count(cases: &[(u64, usize, bool, bool)], every_path: bool) {
         let mut cfg = rich(seed, [24, 24, 128], None, 3);
         if legacy_minimum {
             cfg.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
+            cfg.rock_physics.salt_smooth_all_horizons = true;
         }
         let cfg = if whole_voxels { whole(&cfg) } else { cfg };
         let m = mask_cubes(&cfg);
@@ -676,6 +678,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
         ..E2eConfig::default()
     });
     demo.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
+    demo.rock_physics.salt_smooth_all_horizons = true;
     let mut f = FilterConfig::legacy(4.0, 30.0, 3);
     f.noise = NoiseConfig { snr_db: Some(12.5), ..NoiseConfig::default() };
     let bp = E2eConfig { filters: f, ..demo.clone() };
@@ -702,3 +705,4 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
         assert_ne!(fnv_f32(&w.angle_stack), angle, "{name}: time mode must differ");
     }
 }
+

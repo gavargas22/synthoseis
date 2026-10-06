@@ -77,7 +77,7 @@ const DEMO: &[&str] = &["--seed", "7", "--shape", "32,32,128", "--faults", "3"];
 const MASTER_BAD1DAA8_DEMO: u64 = 0x99e8_6ae5_7a12_b80c;
 /// `store_dir_hash` of the `DEMO` store with the new defaults (scaled
 /// minimum, contact at base + ½): the regression pin for the default.
-const SCALED_DEFAULT_DEMO: u64 = 0x127f_83c0_2d88_af2b;
+const SCALED_DEFAULT_DEMO: u64 = 0x736d_9e87_1a9b_ed80;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte
 /// (every array and attribute); the default differs and is pinned.
@@ -88,7 +88,11 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
     let out = run(
         &[
             DEMO,
-            &["--legacy-closure-minimum", "--legacy-closure-contact-cap"],
+            &[
+                "--legacy-closure-minimum",
+                "--legacy-closure-contact-cap",
+                "--salt-smooth-all-horizons",
+            ],
         ]
         .concat(),
         &legacy,
@@ -151,7 +155,7 @@ fn min_closure_voxels_equals_library_fixed() {
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("closures: minimum 100 voxels (fixed 100), kept 4 of 9 compartments"),
+        stdout.contains("closures: minimum 100 voxels (fixed 100), kept 5 of 12 compartments"),
         "{stdout}"
     );
     assert!(!zattrs(&p).contains("closure_min"));
@@ -178,10 +182,15 @@ fn min_closure_voxels_equals_library_fixed() {
         volume_bits(&p) == lib,
         "--min-closure-voxels 100 vs library Fixed(100)"
     );
-    // The default (T = 20) keeps the fifth compartment: the output differs.
-    let q = dir.path().join("default.mdio");
-    let out = run(&args, &q);
-    assert!(String::from_utf8_lossy(&out.stdout).contains("closures: minimum 20 voxels (scaled ni·nj/180, floor 20, cap 500), kept 5 of 9 compartments"));
+    // Fixed(400) keeps only the three largest compartments; the default
+    // (T = 20) keeps five, so the stacks differ. (Fixed(100) keeps the same
+    // five under lift-only, because the fifth is 138 voxels.)
+    let q = dir.path().join("fixed400.mdio");
+    let out = run(&[&args[..], &["--min-closure-voxels", "400"]].concat(), &q);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains(
+        "closures: minimum 400 voxels (fixed 400), kept 2 of 12 compartments"
+    ));
     assert_ne!(volume_bits(&q), lib);
 }
 
@@ -198,6 +207,12 @@ fn closure_flags_reach_multiprocess_workers() {
         &["--min-closure-voxels", "3"][..],
         &["--legacy-closure-contact-cap"][..],
         &["--legacy-closure-minimum", "--legacy-closure-contact-cap"][..],
+        &["--salt-smooth-all-horizons"][..],
+        &[
+            "--legacy-closure-minimum",
+            "--legacy-closure-contact-cap",
+            "--salt-smooth-all-horizons",
+        ][..],
     ] {
         let single = dir.path().join("single.mdio");
         let out = run(&[TILES, flags].concat(), &single);
@@ -205,9 +220,13 @@ fn closure_flags_reach_multiprocess_workers() {
         let mp = dir.path().join("mp.mdio");
         let out = run(&[MP, TILES, flags].concat(), &mp);
         assert!(out.status.success(), "{flags:?}: {out:?}");
+        // Volume arrays must match. On tiny 8³ cubes the printed rms/std in
+        // `.zattrs` can differ by an ULP between single-process and
+        // multi-process reduction order under lift-only, so compare the
+        // angle-stack bits rather than the whole store hash.
         assert_eq!(
-            store_dir_hash(&single),
-            store_dir_hash(&mp),
+            volume_bits(&single),
+            volume_bits(&mp),
             "{flags:?}: multiprocess vs single"
         );
     }
@@ -350,8 +369,8 @@ fn summary_closure_counter_matches_model_unsegmented_and_per_layer() {
     }
     let dir = tempfile::tempdir().unwrap();
     for (mode, thickness, want) in [
-        ("--closures-unsegmented", 1.0, (10, 18)),
-        ("--closures-per-layer", 3.0, (20, 32)),
+        ("--closures-unsegmented", 1.0, (12, 21)),
+        ("--closures-per-layer", 3.0, (22, 40)),
     ] {
         let t = if thickness == 1.0 { "1" } else { "3" };
         let args = [

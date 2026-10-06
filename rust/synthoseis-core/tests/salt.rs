@@ -17,9 +17,10 @@ use serde::Deserialize;
 use synthoseis_core::closure_segments::unit_closure_runs_salt;
 use synthoseis_core::pipeline::{E2eConfig, FaultConfig, RockPhysicsConfig};
 use synthoseis_core::salt::{
-    drag_horizon_maps, hull_runs, keyed_draws, salt_body, salt_geometry, top_offset_scale,
-    SaltBody, SALT_PAD,
+    drag_horizon_maps, drag_horizon_maps_before_pushdown, hull_runs, keyed_draws, salt_body,
+    salt_geometry, top_offset_scale, SaltBody, SALT_PAD,
 };
+use synthoseis_core::toy_geometry::layered_horizon_maps;
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
 #[derive(Deserialize)]
@@ -128,8 +129,9 @@ fn salt_geometry_matches_legacy() {
 }
 
 /// Bit-exact: legacy `update_depth_maps_with_salt_segments_drag` (shift,
-/// scipy `gaussian_filter(sigma = 3)` of every horizon, push-down),
-/// including maps smaller than the kernel radius.
+/// scipy `gaussian_filter(sigma = 3)` of every horizon = smooth-all, then
+/// push-down), including maps smaller than the kernel radius. Runs under
+/// `smooth_all = true` (`--salt-smooth-all-horizons`).
 #[test]
 fn salt_drag_matches_legacy() {
     let fx = fixture();
@@ -138,7 +140,7 @@ fn salt_drag_matches_legacy() {
         let [ni, nj, nk] = d.shape;
         let salt = body([ni, nj, nk + SALT_PAD], &d.runs);
         let maps = f64s(&d.maps);
-        let got = drag_horizon_maps(&maps, [ni, nj, d.nh], &salt);
+        let got = drag_horizon_maps(&maps, [ni, nj, d.nh], &salt, true);
         for (k, (g, w)) in got.iter().zip(&d.dragged).enumerate() {
             assert_eq!(
                 g.to_bits(),
@@ -159,6 +161,186 @@ fn salt_drag_matches_legacy() {
     );
     assert!(moved > 100);
 }
+
+#[derive(Deserialize)]
+struct LiftOnlyFixture {
+    drag: Vec<DragCase>,
+}
+
+fn lift_only_fixture() -> LiftOnlyFixture {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/salt_reference_lift_only.json");
+    serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+}
+
+/// Bit-exact: lift-only rule `m + gaussian_filter(L, 3)` then push-down,
+/// against scipy (sibling fixture), including maps smaller than the kernel.
+#[test]
+fn salt_drag_lift_only_matches_scipy() {
+    let fx = lift_only_fixture();
+    assert_eq!(fx.drag.len(), fixture().drag.len());
+    for (n, d) in fx.drag.iter().enumerate() {
+        let [ni, nj, nk] = d.shape;
+        let salt = body([ni, nj, nk + SALT_PAD], &d.runs);
+        let maps = f64s(&d.maps);
+        let got = drag_horizon_maps(&maps, [ni, nj, d.nh], &salt, false);
+        for (k, (g, w)) in got.iter().zip(&d.dragged).enumerate() {
+            assert_eq!(
+                g.to_bits(),
+                *w,
+                "lift-only case {n} value {k}: {g} vs {}",
+                f64::from_bits(*w)
+            );
+        }
+    }
+}
+
+/// Far-field gate (spec §5.2): before push-down, lift-only leaves never-touch
+/// horizons and L∞ ≥ 13 cells bit-identical to the undragged maps.
+#[test]
+fn salt_drag_lift_only_far_field_bit_identical() {
+    for seed in [7u64, 1] {
+        let cfg = E2eConfig {
+            seed,
+            inline_count: 64,
+            crossline_count: 64,
+            samples: 256,
+            geometry: ToyGeometry::Layered,
+            ..E2eConfig::default()
+        };
+        assert!(!cfg.rock_physics.salt_smooth_all_horizons);
+        let body = salt_body(&cfg).expect("salt on");
+        let (maps, nh) = layered_horizon_maps(seed, [64, 64, 256]);
+        let shape = [64, 64, nh];
+        let n = 64 * 64;
+        let dragged =
+            drag_horizon_maps_before_pushdown(&maps, shape, &body, false);
+        let hi = body.grid[2] as i64 - 1;
+        for h in 0..nh {
+            let mut lifted = vec![false; n];
+            let mut any = false;
+            for c in 0..n {
+                let k = (maps[c * nh + h] as i64).clamp(0, hi) as usize;
+                if body.contains(c, k) {
+                    lifted[c] = true;
+                    any = true;
+                }
+            }
+            // Chebyshev distance to nearest lifted cell (∞ if none).
+            let mut dist = vec![usize::MAX; n];
+            if any {
+                for c in 0..n {
+                    if !lifted[c] {
+                        continue;
+                    }
+                    let (ci, cj) = (c / 64, c % 64);
+                    for t in 0..n {
+                        let (ti, tj) = (t / 64, t % 64);
+                        let d = ci.abs_diff(ti).max(cj.abs_diff(tj));
+                        dist[t] = dist[t].min(d);
+                    }
+                }
+            }
+            for c in 0..n {
+                let same = dragged[c * nh + h].to_bits() == maps[c * nh + h].to_bits();
+                if !any {
+                    assert!(same, "seed {seed} h {h} c {c}: never-touch moved");
+                } else if dist[c] >= 13 {
+                    assert!(
+                        same,
+                        "seed {seed} h {h} c {c}: L∞={} cell moved",
+                        dist[c]
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Near-flank sanity (spec §5.3): seed 7, 64², mean uplift at bins 1..6
+/// within 1.0 sample of the probe lift-only row; ≤ 2 % of cells in bins
+/// 1..4 move down by > 0.5 sample.
+#[test]
+fn salt_drag_lift_only_near_flank_sanity() {
+    // Probe lift-only mean uplift by Chebyshev distance (seed 7, 64×64×256).
+    const PROBE: [f64; 6] = [5.92, 4.02, 2.66, 1.50, 0.77, 0.38];
+    let seed = 7u64;
+    let cfg = E2eConfig {
+        seed,
+        inline_count: 64,
+        crossline_count: 64,
+        samples: 256,
+        geometry: ToyGeometry::Layered,
+        ..E2eConfig::default()
+    };
+    let body = salt_body(&cfg).expect("salt on");
+    let (maps, nh) = layered_horizon_maps(seed, [64, 64, 256]);
+    let shape = [64, 64, nh];
+    let n = 64 * 64;
+    let dragged = drag_horizon_maps_before_pushdown(&maps, shape, &body, false);
+    let hi = body.grid[2] as i64 - 1;
+    let mut sum = [0.0f64; 7];
+    let mut cnt = [0usize; 7];
+    let mut down = 0usize;
+    let mut near = 0usize;
+    for h in 0..nh {
+        let mut lifted = vec![false; n];
+        let mut any = false;
+        for c in 0..n {
+            let k = (maps[c * nh + h] as i64).clamp(0, hi) as usize;
+            if body.contains(c, k) {
+                lifted[c] = true;
+                any = true;
+            }
+        }
+        if !any {
+            continue;
+        }
+        let mut dist = vec![usize::MAX; n];
+        for c in 0..n {
+            if !lifted[c] {
+                continue;
+            }
+            let (ci, cj) = (c / 64, c % 64);
+            for t in 0..n {
+                let (ti, tj) = (t / 64, t % 64);
+                let d = ci.abs_diff(ti).max(cj.abs_diff(tj));
+                dist[t] = dist[t].min(d);
+            }
+        }
+        for c in 0..n {
+            let d = dist[c];
+            if d == 0 || d == usize::MAX || d > 6 {
+                continue;
+            }
+            // Uplift = undragged − dragged (k positive down).
+            let up = maps[c * nh + h] - dragged[c * nh + h];
+            sum[d] += up;
+            cnt[d] += 1;
+            if d <= 4 {
+                near += 1;
+                if up < -0.5 {
+                    down += 1;
+                }
+            }
+        }
+    }
+    for d in 1..=6 {
+        assert!(cnt[d] > 0, "bin {d} empty");
+        let mean = sum[d] / cnt[d] as f64;
+        assert!(
+            (mean - PROBE[d - 1]).abs() <= 1.0,
+            "bin {d}: mean uplift {mean} vs probe {}",
+            PROBE[d - 1]
+        );
+    }
+    let frac = down as f64 / near as f64;
+    assert!(
+        frac <= 0.02,
+        "downward >0.5 sample in bins 1..4: {frac:.3} (limit 0.02)"
+    );
+}
+
 
 /// Bit-exact: closure depth with salt gaps (legacy `_flood_fill` walls):
 /// gap and ring cells are never closed, and traps against the salt flank
@@ -625,7 +807,7 @@ fn fault_labels_exclude_salt() {
     };
     // (fault voxels through salt, masked fault voxels, salt voxels)
     for (cfg, through_n, masked_n, salt_n) in
-        [(demo_cube, 33_812, 32_193, 18_535), (seed11, 4_074, 3_919, 2_851)]
+        [(demo_cube, 33_812, 32_193, 18_535), (seed11, 4_010, 3_855, 2_851)]
     {
         assert!(cfg.effective_fault_salt_mask());
         let salt = synthoseis_core::salt::generate_salt_labels(&cfg).unwrap();
@@ -666,3 +848,132 @@ fn fault_labels_exclude_salt() {
         }
     }
 }
+
+/// Spec §5.4: under lift-only, label change more than 8 columns from any
+/// salt column vs `--no-salt` is ≤ 0.1 % (was ~2.5 % under smooth-all).
+#[test]
+fn salt_lift_only_far_field_label_change_under_0_1_pct() {
+    let base = |salt: bool| E2eConfig {
+        seed: 7,
+        inline_count: 64,
+        crossline_count: 64,
+        samples: 256,
+        faults: FaultConfig::with_count(3),
+        rock_physics: RockPhysicsConfig {
+            salt,
+            ..RockPhysicsConfig::default()
+        },
+        geometry: ToyGeometry::Layered,
+        ..E2eConfig::default()
+    };
+    let lift = generate_labels(&base(true)).0;
+    let none = generate_labels(&base(false)).0;
+    let body = salt_body(&base(true)).expect("salt");
+    let [ni, nj, nk] = [64usize, 64, 256];
+    let n = ni * nj;
+    let mut salt_col = vec![false; n];
+    for c in 0..n {
+        salt_col[c] = (0..nk).any(|k| body.contains(c, k));
+    }
+    let mut far = 0usize;
+    let mut changed = 0usize;
+    for c in 0..n {
+        let (ci, cj) = (c / nj, c % nj);
+        let d = (0..n)
+            .filter(|&t| salt_col[t])
+            .map(|t| {
+                let (ti, tj) = (t / nj, t % nj);
+                ci.abs_diff(ti).max(cj.abs_diff(tj))
+            })
+            .min()
+            .unwrap_or(usize::MAX);
+        if d <= 8 {
+            continue;
+        }
+        for k in 0..nk {
+            far += 1;
+            if lift[c * nk + k] != none[c * nk + k] {
+                changed += 1;
+            }
+        }
+    }
+    let frac = changed as f64 / far.max(1) as f64;
+    eprintln!(
+        "lift-only far-field label change: {changed}/{far} = {:.4}%",
+        100.0 * frac
+    );
+    assert!(frac <= 0.001, "far-field label change {frac} > 0.1%");
+}
+
+/// Spec §5.5: salt case bit-identical across tiling paths in both drag modes.
+#[test]
+fn salt_drag_modes_invariant_across_paths() {
+    use synthoseis_core::{
+        run_e2e_multiprocess, run_e2e_streaming, run_e2e_streaming_overlapped,
+        run_e2e_strip_stitched,
+    };
+    use synthoseis_io::MdioStore;
+    fn volume_hash(p: &std::path::Path) -> u64 {
+        let v = MdioStore::open(p).unwrap().read_volume().unwrap();
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for x in v {
+            for b in x.to_bits().to_le_bytes() {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
+    for smooth_all in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let make = |store: &std::path::Path| E2eConfig {
+            seed: 102,
+            inline_count: 24,
+            crossline_count: 20,
+            samples: 128,
+            faults: FaultConfig::with_count(4),
+            rock_physics: RockPhysicsConfig {
+                sand_layer_fraction: Some(0.4),
+                salt_smooth_all_horizons: smooth_all,
+                ..RockPhysicsConfig::default()
+            },
+            geometry: ToyGeometry::Layered,
+            chunk_shape: Some([5, 7, 32]),
+            store_path: Some(store.to_path_buf()),
+            ..E2eConfig::default()
+        };
+        let classic = dir.path().join("c.mdio");
+        synthoseis_core::pipeline::run_e2e(&make(&classic)).unwrap();
+        let h0 = volume_hash(&classic);
+        for (name, go) in [
+            ("streaming", {
+                let p = dir.path().join("s.mdio");
+                run_e2e_streaming(&make(&p)).unwrap();
+                p
+            }),
+            ("overlap", {
+                let p = dir.path().join("o.mdio");
+                run_e2e_streaming_overlapped(&make(&p)).unwrap();
+                p
+            }),
+            ("strip3", {
+                let p = dir.path().join("t.mdio");
+                run_e2e_strip_stitched(&make(&p), 3).unwrap();
+                p
+            }),
+            ("mp2", {
+                let p = dir.path().join("m.mdio");
+                run_e2e_multiprocess(&make(&p), 2).unwrap();
+                p
+            }),
+        ] {
+            assert_eq!(
+                volume_hash(&go),
+                h0,
+                "smooth_all={smooth_all}: {name} vs classic"
+            );
+        }
+    }
+}
+
+

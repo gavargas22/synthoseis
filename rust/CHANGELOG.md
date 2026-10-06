@@ -6,6 +6,17 @@ Output-changing defaults are listed here with their opt-out flag.
 
 ### Changed
 
+- **Salt horizon drag is lift-only by default** (spec "lift-only salt
+  smoothing"). Today's (and legacy's) rule was `G_σ3(m + L)` with
+  `L = −2r · salt_mask`, which also blurred the undragged map far from
+  salt. The default is now `m + G_σ3(L)`: same flank drag, far-field maps
+  bit-identical to the undragged maps before push-down. The salt body /
+  hull is unchanged. **Stacks and labels change** wherever salt is on.
+  - Opt-out: **`--salt-smooth-all-horizons`** /
+    `RockPhysicsConfig::salt_smooth_all_horizons = true` restores master
+    ccce5cc9 salt-on output bit for bit.
+  - Summary: `drag: lift-only` or `drag: smooth-all (--salt-smooth-all-horizons)`.
+
 - **Closure minimum scaled with the cube** (spec "cube-size-scaled closure
   minimum"). A closure compartment needs `clamp(round(ni·nj / 180), 20,
   500)` whole cells to get a fluid draw instead of a fixed 500 (legacy

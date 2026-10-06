@@ -176,6 +176,11 @@ Library: `RockPhysicsConfig::closure_minimum` (`ClosureMinimum::Scaled` /
 [`docs/rock-physics-port.md`](../docs/rock-physics-port.md) ("Closure
 minimum").
 
+**Salt drag is lift-only by default.** Horizon maps use `m + G_σ3(L)` so
+far-field beds are not blurred; `--salt-smooth-all-horizons` restores the
+previous `G_σ3(m+L)` (= master ccce5cc9 with salt on). See
+[`docs/salt-bodies.md`](../docs/salt-bodies.md).
+
 
 ## Multi-worker job partition (local)
 

@@ -29,6 +29,10 @@ Sections:
   radius, top, tip depth, first-circle centre and radius, base-circle depth,
   centre and radius.
 
+Also writes the sibling ``salt_reference_lift_only.json``: same drag maps
+and salt runs, with ``m + gaussian_filter(L, 3)`` then push-down (the
+default lift-only rule).
+
 Usage (repo root; numpy, scipy, scikit-image installed)::
 
     python tests/fixtures/generate_salt_reference.py
@@ -131,6 +135,56 @@ def drag_case(maps, salt_runs, shape):
         "maps": bits(maps),
         "runs": salt_runs,
         "dragged": bits(dragged),
+    }
+
+
+def push_down_remove_negative_thickness(maps):
+    """Legacy / Rust ``enforce_nonnegative_thicknesses``: from the base up,
+    never fix horizons 0 / 1; pull the shallower horizon down onto the deeper.
+    """
+    out = maps.copy()
+    ni, nj, nh = maps.shape
+    if nh < 3:
+        return out
+    for i in range(nh - 1, 1, -1):
+        thick = out[:, :, i] - out[:, :, i - 1]
+        if thick.min() < 0.0:
+            for a in range(ni):
+                for b in range(nj):
+                    t = out[a, b, i] - out[a, b, i - 1]
+                    if t < 0.0:
+                        t = 0.0
+                    out[a, b, i - 1] = out[a, b, i] - t
+    return out
+
+
+def lift_only_drag_case(maps, salt_runs, shape):
+    """``m_out = m + gaussian_filter(L, 3)`` then push-down (default rule)."""
+    ni, nj, nk = shape
+    salt = mask_of(salt_runs, (ni, nj, nk + PAD)).astype(bool)
+    nh = maps.shape[2]
+    hi = nk + PAD - 1
+    out = np.zeros_like(maps, dtype=np.float64)
+    rel = 0
+    for h in range(nh):
+        m = maps[:, :, h].astype(np.float64)
+        k = np.clip(m.astype(np.int64), 0, hi)
+        lab = np.zeros((ni, nj), dtype=bool)
+        for i in range(ni):
+            for j in range(nj):
+                lab[i, j] = salt[i, j, int(k[i, j])]
+        if lab.any():
+            rel += 1
+        L = np.zeros((ni, nj), dtype=np.float64)
+        L[lab] = -2.0 * rel
+        out[:, :, h] = m + ndimage.gaussian_filter(L, sigma=3, mode="reflect")
+    out = push_down_remove_negative_thickness(out)
+    return {
+        "shape": [ni, nj, nk],
+        "nh": int(nh),
+        "maps": bits(maps),
+        "runs": salt_runs,
+        "dragged": bits(out),
     }
 
 
@@ -289,10 +343,29 @@ def main():
     }
     path = Path(__file__).with_name("salt_reference.json")
     path.write_text(json.dumps(out, separators=(",", ":")) + "\n")
+    # Sibling: same drag maps/runs under the lift-only rule.
+    lift_drag = []
+    for d in drag:
+        ni, nj, nk = d["shape"]
+        nh = d["nh"]
+        maps = np.asarray(d["maps"], dtype=np.uint64).view(np.float64).reshape(ni, nj, nh)
+        lift_drag.append(lift_only_drag_case(maps, d["runs"], (ni, nj, nk)))
+    lift_path = Path(__file__).with_name("salt_reference_lift_only.json")
+    lift_out = {
+        "meta": {
+            "generator": "tests/fixtures/generate_salt_reference.py (lift-only sibling)",
+            "rule": "m_out = m + gaussian_filter(L, sigma=3), L=-2r*salt_mask; then push-down",
+            "source_drag_cases": "salt_reference.json drag section (same maps and runs)",
+            "pad": PAD,
+        },
+        "drag": lift_drag,
+    }
+    lift_path.write_text(json.dumps(lift_out, separators=(",", ":")) + "\n")
     dragged = sum(len(d["maps"]) for d in drag)
     salt_vox = sum(int(m.sum()) for m in masks)
     print(f"wrote {path} ({path.stat().st_size} bytes); geometry {len(geometry)} ({salt_vox} salt voxels), "
           f"drag {len(drag)} ({dragged} map values), fill {len(fill)} ({tries} tries), population {len(pop['radius'])}")
+    print(f"wrote {lift_path} ({lift_path.stat().st_size} bytes); lift-only drag {len(lift_drag)}")
 
 
 if __name__ == "__main__":

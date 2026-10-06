@@ -40,6 +40,17 @@ fn legacy_closures<'a>(args: &[&'a str]) -> Vec<&'a str> {
     if !args.iter().any(picks) {
         v.push("--legacy-closure-minimum");
     }
+    // Master goldens predate lift-only drag: restore ccce5cc9 salt-on
+    // smoothing unless salt is off (the flag exits 2 with --no-salt).
+    let no_salt = args.iter().any(|a| {
+        matches!(
+            *a,
+            "--no-salt" | "--salt-smooth-all-horizons" | "--legacy-toy-depth"
+        ) || (*a == "planar")
+    });
+    if !no_salt {
+        v.push("--salt-smooth-all-horizons");
+    }
     v
 }
 
@@ -400,10 +411,13 @@ fn invalid_lithology_flags_exit_2() {
         (&["--closures-unsegmented", "--no-fluids"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids"),
         (&["--closures-unsegmented", "--closures-per-layer"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids or --closures-per-layer"),
         (&["--closures-unsegmented", "--toy-geometry", "planar"], "--closures-unsegmented has no effect with the planar geometry"),
-        (&["--no-salt", "--toy-geometry", "planar"], "--no-salt / --salt-legacy-top-offset have no effect with the planar geometry"),
-        (&["--no-salt", "--legacy-toy-depth"], "--no-salt / --salt-legacy-top-offset have no effect with the planar geometry or --legacy-toy-depth"),
+        (&["--no-salt", "--toy-geometry", "planar"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons have no effect with the planar geometry"),
+        (&["--no-salt", "--legacy-toy-depth"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons have no effect with the planar geometry or --legacy-toy-depth"),
         (&["--salt-legacy-top-offset", "--toy-geometry", "planar"], "have no effect with the planar geometry"),
         (&["--salt-legacy-top-offset", "--no-salt"], "--salt-legacy-top-offset has no effect with --no-salt"),
+        (&["--salt-smooth-all-horizons", "--no-salt"], "--salt-smooth-all-horizons has no effect with --no-salt"),
+        (&["--salt-smooth-all-horizons", "--toy-geometry", "planar"], "--salt-smooth-all-horizons have no effect with the planar geometry"),
+        (&["--salt-smooth-all-horizons", "--legacy-toy-depth"], "--salt-smooth-all-horizons have no effect with the planar geometry or --legacy-toy-depth"),
         (&["--fault-labels-through-salt", "--faults", "2", "--toy-geometry", "planar"], "--fault-labels-through-salt has no effect with the planar geometry"),
         (&["--fault-labels-through-salt", "--faults", "2", "--legacy-toy-depth"], "--fault-labels-through-salt has no effect with the planar geometry or --legacy-toy-depth"),
         (&["--fault-labels-through-salt", "--faults", "2", "--no-salt"], "--fault-labels-through-salt has no effect with --no-salt"),
@@ -651,4 +665,33 @@ fn fault_labels_through_salt_flag_reproduces_master_2b3850ba() {
         assert!(run_master(&with(base, &["--no-salt"]), &p).status.success());
         assert_eq!(fault_labels_hash(&p), b4, "{name}: --no-salt fault labels vs master b4f4259");
     }
+}
+
+/// `--salt-smooth-all-horizons` restores master ccce5cc9 salt-on output on
+/// the demo cube (time mode, partial voxels, 3 faults); the default
+/// (lift-only) differs and prints `drag: lift-only`.
+
+/// `--salt-smooth-all-horizons` restores master ccce5cc9 salt-on angle
+/// stacks on the demo cube; the default (lift-only) differs and prints
+/// `drag: lift-only`.
+#[test]
+fn salt_smooth_all_horizons_reproduces_ccce5cc9_demo() {
+    let dir = tempfile::tempdir().unwrap();
+    const DEMO: &[&str] = &["--seed", "7", "--shape", "32,32,128", "--faults", "3"];
+    /// Angle-stack hash of DEMO under ccce5cc9 defaults (= smooth-all).
+    const CCCE5CC9_DEMO: u64 = 0xe43f_d5c4_e35d_71c0;
+    let smooth = dir.path().join("smooth.mdio");
+    let out = run_time(&with(DEMO, &["--salt-smooth-all-horizons"]), &smooth);
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("drag: smooth-all (--salt-smooth-all-horizons)"),
+        "{stdout}"
+    );
+    assert_eq!(store_hash(&smooth), CCCE5CC9_DEMO, "{:#018x}", store_hash(&smooth));
+    let lift = dir.path().join("lift.mdio");
+    let out = run_time(DEMO, &lift);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("drag: lift-only"));
+    assert_ne!(store_hash(&lift), store_hash(&smooth));
 }

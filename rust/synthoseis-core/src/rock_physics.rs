@@ -222,6 +222,12 @@ pub struct RockPhysicsConfig {
     /// `min(nk / 1250, 1)`. CLI
     /// `--salt-legacy-top-offset`.
     pub salt_legacy_top_offset: bool,
+    /// Legacy switch: smooth every horizon map after the salt-flank lift
+    /// (`G(m+L)`), instead of the default lift-only rule `m + G(L)`. The
+    /// default keeps far-field maps bit-identical to the undragged maps
+    /// (before push-down). CLI `--salt-smooth-all-horizons`. See
+    /// [`crate::salt::drag_horizon_maps`].
+    pub salt_smooth_all_horizons: bool,
     /// Legacy switch: keep fault labels inside the salt body (master
     /// 2b3850ba). By default `data/fault_labels` is `fault AND NOT salt`
     /// ([`E2eConfig::effective_fault_salt_mask`]): faults die out against
@@ -259,6 +265,7 @@ impl Default for RockPhysicsConfig {
             closures_unsegmented: false,
             salt: true,
             salt_legacy_top_offset: false,
+            salt_smooth_all_horizons: false,
             fault_labels_through_salt: false,
             partial_voxels: crate::partial_voxels::PartialVoxelConfig::default(),
         }
