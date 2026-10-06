@@ -618,6 +618,7 @@ fn rich(chunks: [usize; 3]) -> E2eConfig {
 /// default shifts active in the 160-sample case) with its Markov lithology
 /// (default and with explicit sand fraction / unit thickness).
 #[test]
+#[ignore = "nightly: full tiling x strip x overlap x process matrix (about 40 s optimized)"]
 fn default_model_invariant_to_tiling_workers_and_paths() {
     let dir = tempdir().unwrap();
     let read = |p: &std::path::Path| bits(&MdioStore::open(p).unwrap().read_volume().unwrap());

@@ -1,0 +1,28 @@
+name: nightly
+
+# Slow sweeps and wall-clock checks, kept out of the per-PR run. Tests that
+# run here are tagged `#[ignore = "nightly: ..."]` (no test is ignored for
+# any other reason). The test profile stays a debug-assertion,
+# overflow-checked build; only the optimisation level is raised.
+on:
+  schedule:
+    # 08:17 UTC = 03:17 CDT / 02:17 CST.
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+jobs:
+  ignored-tests:
+    name: nightly tests (cargo test -- --ignored)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CARGO_PROFILE_TEST_OPT_LEVEL: "2"
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo test -- --ignored
+        run: cargo test --workspace -- --ignored

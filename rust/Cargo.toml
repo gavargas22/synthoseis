@@ -37,3 +37,12 @@ thiserror = "2"
 rand = "0.8"
 tempfile = "3"
 num-complex = "0.4"
+
+# `cargo test` builds optimised (opt-level 2) but keeps the dev profile's
+# `debug-assertions` and `overflow-checks` (some index math is only
+# guarded by overflow checks). Dependencies get the same level.
+[profile.test]
+opt-level = 2
+
+[profile.test.package."*"]
+opt-level = 2

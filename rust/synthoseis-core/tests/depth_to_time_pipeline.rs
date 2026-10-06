@@ -163,6 +163,7 @@ const TILING_CHUNKS: [[usize; 3]; 4] = [[1, 1, 0], [5, 7, 0], [3, 20, 16], [8, 5
 /// nt = nz and nt = nz + 37 (the long trace runs past every column's base:
 /// half-space zeros). Columns are both short and long at nt = nz.
 #[test]
+#[ignore = "nightly: time-mode tiling sweep, 2 seeds x 2 nt x 4 chunk shapes"]
 fn time_mode_tiling_invariance_rich() {
     let shape = [16, 20, 64];
     let mut short_and_long = false;
@@ -238,6 +239,7 @@ fn assert_mask_removes_overlap(what: &str, masked: &[u8], through: &[u8], salt: 
 /// on both sides of chunk edges (spec §5.4, §8), and every path is
 /// bit-identical with the mask on.
 #[test]
+#[ignore = "nightly: fault/salt mask across chunk edges, every writer path"]
 fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
     let cfg = rich(4, [24, 24, 128], None, 3);
     let m = mask_cubes(&cfg);
