@@ -22,16 +22,6 @@ use synthoseis_core::salt::{
 };
 use synthoseis_core::{generate_chunked, generate_labels, ToyGeometry};
 
-/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
-/// default): partial voxels are the library default since PR B2, and this
-/// golden asserts master (whole-voxel) output.
-fn whole(c: &E2eConfig) -> E2eConfig {
-    let mut c = c.clone();
-    c.rock_physics.partial_voxels =
-        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
-    c
-}
-
 #[derive(Deserialize)]
 struct GeometryCase {
     shape: [usize; 3],
@@ -334,13 +324,30 @@ fn demo(salt: bool) -> E2eConfig {
 }
 
 /// Salt voxels take the legacy salt properties (rho 2.17, vp 4500,
-/// vs 2250) in the elastic model, whatever the layer label.
+/// vs 2250) in the elastic model, whatever the layer label, on the default
+/// config (partial voxels on since PR B2). Salt occupies
+/// `ζ ∈ [lo + ½, hi + ½]` of each column (continuous hull bounds, cell `k`
+/// = `[k, k+1)`):
+/// * cells fully inside that interval are pure salt: exactly the legacy
+///   properties;
+/// * cells that straddle a salt bound are Backus mixes of salt and the
+///   host sediment: never the pure salt triple, made of a salt sub-layer
+///   (the salt part of the cell) and host sub-layers, with density and
+///   P modulus between the host's and the salt's (the Backus bounds: rho
+///   is the arithmetic and M = rho·vp² the harmonic mean of the parts), so
+///   the check does not assume the host is slower than salt;
+/// * every salt column has at least one straddling cell;
+/// * cells that do not touch the salt never carry salt properties;
+/// * the salt labels are the whole-voxel ones (centre rule).
 #[test]
 fn salt_voxels_take_legacy_properties() {
-    // Whole voxels: with partial voxels (the PR B2 default) the cells that
-    // straddle the salt top are Backus mixes of salt and sediment.
-    let cfg = whole(&demo(true));
+    let cfg = demo(true);
+    assert!(
+        cfg.effective_partial_voxels().is_some(),
+        "partial voxels on by default"
+    );
     let body = salt_body(&cfg).expect("salt on by default");
+    let bounds = body.hull_bounds();
     let [ni, nj, nk] = cfg.shape();
     assert!(body.voxels(nk) > 500, "salt voxels {}", body.voxels(nk));
     let (labels, shape) = generate_labels(&cfg);
@@ -349,22 +356,121 @@ fn salt_voxels_take_legacy_properties() {
     let n = ni * nj * nk;
     let (mut vp, mut vs, mut rho) = (vec![0f32; n], vec![0f32; n], vec![0f32; n]);
     model.tile_properties(&labels, shape, 0, ni, 0, nj, &mut vp, &mut vs, &mut rho);
-    let mut count = 0;
-    for c in 0..ni * nj {
+    let synthoseis_core::rock_physics::ElasticModel::Rpm(rpm) = &model else {
+        panic!("default model is the rock-physics model")
+    };
+    let salt = (2.17f32, 4500.0f32, 2250.0f32);
+    let modulus = |rho: f32, vp: f32| rho as f64 * vp as f64 * vp as f64;
+    let (mut labelled, mut inside, mut straddling, mut salt_columns) = (0, 0, 0, 0);
+    let mut scratch = synthoseis_core::rock_physics::ColumnScratch::default();
+    let (mut crho, mut cvp, mut cvs) = (vec![0f32; nk], vec![0f32; nk], vec![0f32; nk]);
+    assert_eq!(bounds.len(), ni * nj);
+    for (c, column) in bounds.iter().enumerate() {
+        // Sub-layers of the column (the parts each cell is mixed from).
+        let (i, j) = (c / nj, c % nj);
+        let tile = rpm.partial_tile(i, i + 1, j, j + 1);
+        let col = &labels[c * nk..(c + 1) * nk];
+        rpm.column_partial(
+            i,
+            j,
+            col,
+            &tile,
+            &mut scratch,
+            &mut crho,
+            &mut cvp,
+            &mut cvs,
+        );
+        let cells: Vec<_> = scratch.partial.cells().collect();
+        assert_eq!(cells.len(), nk);
+        let mut column_straddling = 0;
+        let mut column_salt = false;
         for k in 0..nk {
             let v = c * nk + k;
+            let props = (rho[v], vp[v], vs[v]);
             if body.contains(c, k) {
-                count += 1;
-                assert_eq!((rho[v], vp[v], vs[v]), (2.17f32, 4500.0, 2250.0));
+                labelled += 1;
+            }
+            // Salt part of cell k: [k, k+1) ∩ [lo + ½, hi + ½].
+            let overlap = column.map_or(0.0, |(lo, hi)| {
+                ((k + 1) as f64).min(hi + 0.5) - (k as f64).max(lo + 0.5)
+            });
+            column_salt |= overlap > 0.0;
+            if overlap >= 1.0 {
+                inside += 1;
+                assert!(
+                    body.contains(c, k),
+                    "column {c} cell {k}: inside the hull but not labelled salt"
+                );
+                assert_eq!(props, salt, "column {c} cell {k}: pure salt");
+            } else if overlap > 0.0 {
+                straddling += 1;
+                column_straddling += 1;
+                assert_ne!(
+                    props, salt,
+                    "column {c} cell {k}: straddling cell (salt part {overlap:.3}) is pure salt"
+                );
+                assert_eq!(
+                    (crho[k], cvp[k], cvs[k]),
+                    props,
+                    "column {c} cell {k}: column and tile paths agree"
+                );
+                let parts = cells[k];
+                let salt_frac: f64 = parts
+                    .iter()
+                    .filter(|p| (p.rho, p.vp, p.vs) == salt)
+                    .map(|p| p.frac)
+                    .sum();
+                assert!(
+                    (salt_frac - overlap).abs() < 1e-6,
+                    "column {c} cell {k}: salt sub-layer {salt_frac} vs salt part {overlap}"
+                );
+                assert!(
+                    parts
+                        .iter()
+                        .any(|p| p.frac > 0.0 && (p.rho, p.vp, p.vs) != salt),
+                    "column {c} cell {k}: no host sub-layer"
+                );
+                // Backus bounds: between the host's and the salt's values.
+                let live = parts.iter().filter(|p| p.frac > 0.0);
+                let (r0, r1) = live.clone().fold((f32::MAX, f32::MIN), |(a, b), p| {
+                    (a.min(p.rho), b.max(p.rho))
+                });
+                let (m0, m1) = live.fold((f64::MAX, f64::MIN), |(a, b), p| {
+                    let m = modulus(p.rho, p.vp);
+                    (a.min(m), b.max(m))
+                });
+                let (r, m) = (rho[v], modulus(rho[v], vp[v]));
+                let tol = 1e-5;
+                assert!(
+                    r >= r0 * (1.0 - tol as f32) && r <= r1 * (1.0 + tol as f32),
+                    "column {c} cell {k}: rho {r} outside the parts' [{r0}, {r1}]"
+                );
+                assert!(
+                    m >= m0 * (1.0 - tol) && m <= m1 * (1.0 + tol),
+                    "column {c} cell {k}: P modulus {m} outside the parts' [{m0}, {m1}]"
+                );
             } else {
                 assert!(
-                    vp[v] != 4500.0 || vs[v] != 2250.0,
-                    "non-salt voxel with salt properties"
+                    vp[v] != salt.1 || vs[v] != salt.2,
+                    "column {c} cell {k}: non-salt cell with salt properties"
                 );
             }
         }
+        if column_salt {
+            salt_columns += 1;
+            assert!(
+                column_straddling > 0,
+                "salt column {c}: no straddling (partial-salt) cell"
+            );
+        }
     }
-    assert_eq!(count, body.voxels(nk));
+    assert_eq!(labelled, body.voxels(nk), "salt labels");
+    println!(
+        "salt cells: {labelled} labelled, {inside} fully inside, {straddling} straddling \
+         in {salt_columns} salt columns"
+    );
+    assert!(inside > 500, "fully-inside salt cells {inside}");
+    assert!(salt_columns > 0, "no salt columns");
 }
 
 /// Salt is on by default for the layered geometry only; `salt: false`

@@ -18,15 +18,8 @@ use synthoseis_core::{
     TwtKernel, WorkingSetStats, DEFAULT_INCIDENCE_DEG,
 };
 
-/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
-/// default): partial voxels are the library default since PR B2, and this
-/// golden asserts master (whole-voxel) output.
-fn whole(c: &E2eConfig) -> E2eConfig {
-    let mut c = c.clone();
-    c.rock_physics.partial_voxels =
-        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
-    c
-}
+mod common;
+use common::whole;
 
 fn fnv(bytes: impl IntoIterator<Item = u8>) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;

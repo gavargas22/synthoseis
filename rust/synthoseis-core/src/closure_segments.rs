@@ -319,7 +319,9 @@ pub fn segmented_sand_unit_fluids_salt(
     min_voxels: usize,
     salt: Option<&crate::salt::SaltBody>,
 ) -> (Vec<(usize, LayerFluids)>, Vec<Compartment>) {
-    segmented_sand_unit_fluids_with(labels, shape, intervals, sand, seed, max_column, min_voxels, salt, false)
+    segmented_sand_unit_fluids_with(
+        labels, shape, intervals, sand, seed, max_column, min_voxels, salt, false,
+    )
 }
 
 /// [`segmented_sand_unit_fluids_salt`] with the contact switch:

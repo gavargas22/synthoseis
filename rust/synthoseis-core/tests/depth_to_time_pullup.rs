@@ -29,15 +29,8 @@
 
 use synthoseis_core::pipeline::E2eConfig;
 
-/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
-/// default): partial voxels are the library default since PR B2, and this
-/// golden asserts master (whole-voxel) output.
-fn whole(c: &E2eConfig) -> E2eConfig {
-    let mut c = c.clone();
-    c.rock_physics.partial_voxels =
-        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
-    c
-}
+mod common;
+use common::whole;
 
 const UP: usize = 16;
 const DOM_MIN: f64 = 2.0;

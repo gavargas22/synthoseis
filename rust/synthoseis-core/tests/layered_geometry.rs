@@ -13,6 +13,9 @@ use synthoseis_core::toy_geometry::{
 };
 use synthoseis_core::{generate_chunked, generate_labels, generate_reflectivity, ToyGeometry, ToyLithology};
 
+mod common;
+use common::whole;
+
 fn fnv(bytes: impl Iterator<Item = u8>) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
@@ -24,16 +27,6 @@ fn fnv(bytes: impl Iterator<Item = u8>) -> u64 {
 
 fn ah(v: &[f32]) -> u64 {
     fnv(v.iter().flat_map(|x| x.to_bits().to_le_bytes()))
-}
-
-/// The opt-out (`PartialVoxelConfig::whole_voxels`, = the d8b96e69 library
-/// default): partial voxels are the library default since PR B2, and this
-/// golden asserts master (whole-voxel) output.
-fn whole(c: &E2eConfig) -> E2eConfig {
-    let mut c = c.clone();
-    c.rock_physics.partial_voxels =
-        synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
-    c
 }
 
 fn demo(seed: u64, shape: [usize; 3], faults: usize) -> E2eConfig {
