@@ -335,8 +335,8 @@ fn faults_merge_juxtaposed_closures_and_switch_restores_ef2dc42() {
     // while ef2dc42's unclamped contact fills it. On this cube 256 of
     // 61,440 stack samples differ (max |Δ| 0.041 vs stack rms 0.070;
     // labels identical). That comes from the #33 clamp, not from partial
-    // voxels. Strata will decide in the closure-minimum spec whether the
-    // clamp should use the true sub-cell base.
+    // voxels. Strata's closure-minimum spec moves the clamp to base + ½ cell
+    // in a separate PR; revisit this `whole` pin when that lands.
     let flat = |u| {
         whole(&E2eConfig {
             faults: FaultConfig::with_count(0),
