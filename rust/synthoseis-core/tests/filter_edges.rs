@@ -445,45 +445,60 @@ fn bandpass_truth_gate() {
     assert_eq!(ch.samples.len(), nt, "all {nt} samples touched");
 }
 
-/// §7.4 shift invariance (the #39 note): the model moved down by 4, 16
-/// and 40 samples (more water) gives the shifted output in the top 60
-/// samples to ≤ 1e-8 of peak; the legacy edges are off by > 10 %.
-
-/// §7.3 keep-ricker + bandpass (no noise): with `Pt = h` the Ricker
-/// precursor above time 0 reaches the forward bandpass, so the default
-/// matches a `Pb = 2048` reference to ≤ 1e-6 of peak (filter-edge spec
-/// §4.2, PR #50 review nit 1).
+/// §7.6 keep-ricker + bandpass (no noise): with `Pt = h` the Ricker
+/// precursor above time 0 reaches the forward bandpass. The reference is
+/// the same per-column chain with long pads on both ends (2048 top and
+/// bottom, reflectivity to the model base), so a regression to `Pt = 0`
+/// fails the ≤ 1e-6 bound (seed 7: 4.09e-6). Filter-edge spec §4.2.
 #[test]
 fn keep_ricker_bandpass_truth_gate() {
     let mut c = bandpass(&demo(7, 3), 1);
     c.filters.keep_ricker = true;
     let nt = c.output_samples();
     let axis = axis_of(&c);
-    let pbp = bp_4_30(&axis).edge_pad().unwrap();
-    let pads = EdgePads::for_chain(&axis, &c.ricker(), Some(pbp), false);
-    assert_eq!(pads.top, 8, "Pt = h with keep-ricker + bandpass");
+    let f = bp_4_30(&axis);
+    let pbp = f.edge_pad().unwrap();
+    let w = c.ricker();
+    let pads = EdgePads::for_chain(&axis, &w, Some(pbp), false);
     assert_eq!(pads.bottom, 8 + pbp);
-    let mut reference = c.clone();
-    reference.time.edge_pad_override = Some(2048);
-    let (def, truth) = (stack(&c), stack(&reference));
-    let pk = peak(&truth);
+    let def = stack(&c);
+    let long = EdgePads {
+        top: 2048,
+        bottom: 2048,
+    };
+    let chain = TraceChain {
+        wavelet: &w,
+        noise: None,
+        bandpass: Some(&f),
+        pads: long,
+    };
+    let mut cs = ChainScratch::default();
+    let mut truth = vec![0f32; def.len()];
+    for (col, x) in raw_columns(&c, nt + long.bottom).iter().enumerate() {
+        finish_trace_padded(
+            x,
+            nt,
+            &chain,
+            col as u64,
+            &mut cs,
+            &mut truth[col * nt..(col + 1) * nt],
+        );
+    }
     let err = def
         .iter()
         .zip(&truth)
         .fold(0.0f64, |m, (a, b)| m.max((*a as f64 - *b as f64).abs()))
-        / pk;
+        / peak(&truth);
     println!(
-        "keep-ricker truth gate seed 7 bp 4-30: Pt = {}, Pb = {}; max |default − truth| = {err:.2e} of peak",
-        pads.top,
-        pads.bottom
+        "keep-ricker truth gate seed 7 bp 4-30: Pt = {}, Pb = {}; max |default − truth (Pt = Pb = 2048)| = {err:.2e} of peak",
+        pads.top, pads.bottom
     );
     assert!(err <= 1e-6, "keep-ricker default vs truth {err:e} of peak");
-    // Without the top pad the precursor is dropped: a Pt = 0 chain (forced
-    // by zeroing the wavelet for EdgePads only) would differ; the production
-    // pad is what the truth gate above checks.
-    let _ = nt;
 }
 
+/// §7.4 shift invariance (the #39 note): the model moved down by 4, 16
+/// and 40 samples (more water) gives the shifted output in the top 60
+/// samples to ≤ 1e-8 of peak; the legacy edges are off by > 10 %.
 #[test]
 fn bandpass_shift_invariance() {
     let c = demo(7, 3);
@@ -937,8 +952,7 @@ fn nightly_truth_gate_64() {
     );
 }
 
-
-/// Second-order sections of a Butterworth bandpass (matched-z bilinear
+/// Second-order sections of a Butterworth bandpass (prewarped bilinear
 /// transform, same poles as [`butterworth_bandpass`]). Used only as a
 /// numerically stable f64 reference for the nightly edge_pad gate: the
 /// production filter stays in transfer-function (`ba`) form.
@@ -987,7 +1001,10 @@ fn butterworth_sos(lo: f64, hi: f64, dt_ms: f64, n: usize) -> Vec<[f64; 5]> {
     }
     let kbp = bw.powi(n as i32);
     let fs2 = (4.0, 0.0);
-    let mut pz: Vec<C64> = pbp.iter().map(|&q| c_div(c_add(fs2, q), c_sub(fs2, q))).collect();
+    let mut pz: Vec<C64> = pbp
+        .iter()
+        .map(|&q| c_div(c_add(fs2, q), c_sub(fs2, q)))
+        .collect();
     let mut den = (1.0, 0.0);
     for &q in &pbp {
         den = c_mul(den, c_sub(fs2, q));

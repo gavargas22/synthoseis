@@ -26,9 +26,9 @@ Output-changing defaults are listed here with their opt-out flag.
     sideways)` or `filter edges: legacy 1c22b653 (--legacy-filter-edges)`.
     Store attribute `filter_edges = "physical"` (omitted with the opt-out).
   - The bandpass no longer needs more than 27 samples per trace in time
-    mode. With `--keep-ricker` the top pad is `h` = 8 so the Ricker
+    mode. With `--keep-ricker` the top pad is `h` (8 at 4 ms, 16 at 2 ms) so the Ricker
     precursor above time 0 reaches the bandpass.
-  - Orders ≥ 6 at dt ≤ 2 ms with corners ≤ ~4 Hz carry ~1e-3 of peak of
+  - Order 6 at 2 ms carries up to ~7e-4 of peak (6–20 Hz: 3.5e-4) of
     transfer-function (`ba`) round-off in both edge modes; use order ≤ 5
     or dt 4 ms (SOS conversion is a deferred follow-up).
   - API: `IirFilter::edge_pad()` (1e-6 tail, cap 8192),

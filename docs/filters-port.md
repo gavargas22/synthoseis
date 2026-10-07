@@ -248,15 +248,15 @@ What it changes (seed 7, 32 × 32 × 128, 15°):
   physically correct answer (a 2,048-sample pad down to the model base) by
   rel. RMS 0.17 and up to 48 % of peak; the new default matches it to 3e-8 of
   peak (the f32 rounding of the output).
-- **`--keep-ricker` + bandpass (no noise):** the top pad is `h` = 8 samples
+- **`--keep-ricker` + bandpass (no noise):** the top pad is `h` (8 at 4 ms, 16 at 2 ms)
   so the Ricker precursor above time 0 reaches the forward bandpass (with
   `Pt = 0` the error was up to 7.6e-5 of peak).
 - **Noise**: strength at the first and last sample 0.99 / 0.97 of mid-trace
   (was 0.16 at the first sample).
 - **Labels**: unchanged everywhere.
 
-**Order ≥ 6 at dt ≤ 2 ms:** with corners ≤ ~4 Hz the transfer-function
-(`ba`) recursion carries ~1e-3 of peak of f64 round-off in **both** edge
+**Order 6 at 2 ms:** the transfer-function (`ba`) recursion carries up to
+~7e-4 of peak of f64 round-off (6–20 Hz: 3.5e-4) in **both** edge
 modes (physical and `--legacy-filter-edges`). Use order ≤ 5 or dt 4 ms. The
 nightly edge_pad sweep gates against an SOS-form reference (≤ 1e-5 for
 orders 2–5, ≤ 5e-3 for order 6 as the documented `ba` floor). Converting
