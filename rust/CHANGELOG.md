@@ -6,6 +6,32 @@ Output-changing defaults are listed here with their opt-out flag.
 
 ### Changed
 
+- **Physical filter edges in time mode** (spec "filter edge handling").
+  The filters now see water above time 0 and the model's own reflectivity
+  below the window (then the half-space below the model base), instead of
+  zero padding (Ricker), a 27-sample odd mirror (bandpass) and window-only
+  noise. The bandpass filters all `nt` samples (the #36 dead last sample is
+  gone in time mode), noise is drawn in the pads too, and the cube sides
+  keep reflect. **Stacks change, time mode only**: with the Ricker alone
+  only the last 7 samples of columns that continue below the window move
+  (seed 7: 4.65 % of cells, rel. RMS 0.017); with `--bandpass` every sample
+  moves (rel. RMS 0.17 against the old edges, which were off from the
+  physically correct answer by that much). **Labels, salt_labels and
+  fault_labels are unchanged**; the legacy depth axis is unchanged.
+  - Opt-out: **`--legacy-filter-edges`** /
+    `TimeConfig::legacy_filter_edges = true` restores master 1c22b653 bit
+    for bit on every path (exit 2 with `--legacy-depth-as-time` /
+    `--legacy-toy-depth`).
+  - Summary: `filter edges: physical (water above, model below; reflect
+    sideways)` or `filter edges: legacy 1c22b653 (--legacy-filter-edges)`.
+    Store attribute `filter_edges = "physical"` (omitted with the opt-out).
+  - The bandpass no longer needs more than 27 samples per trace in time
+    mode.
+  - API: `IirFilter::edge_pad()` (1e-6 tail, cap 8192),
+    `IirFilter::filtfilt_padded_f32`, `WeightedNoise::sample_pad`,
+    `time_mode::{EdgePads, TraceChain, finish_trace_padded,
+    fuse_tile_time_chain}`.
+
 - **Salt Vs defaults to 2600 m/s** (spec "salt Vs ≈ 2600"). Density and Vp
   stay 2.17 / 4500. Legacy and master f15b87ac used Vs 2250 (Vp/Vs = 2.0,
   Poisson 0.33); real halite is closer to Vp/Vs ≈ 1.7–1.8. **Angle stacks

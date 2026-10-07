@@ -68,11 +68,20 @@ const MP: &[&str] = &[
 // equal master d8b96e69 run with the switch on (`--partial-voxel-reflectivity
 // subcell`, and `cell` with `--legacy-depth-as-time`); the opt-out equals
 // master d8b96e69's default (PR B2 evidence, whole store trees `diff -r`).
-const DEFAULT_PLAIN: u64 = 0x82bf_e625_85ee_8c92;
+//
+// Time-mode rows moved with the physical filter edges (filter-edge spec
+// §6: the last 7 samples of columns that continue below the window); the
+// `_1C22` values are master 1c22b653's, reproduced with
+// `--legacy-filter-edges`. The labels part of the hash does not move.
+const DEFAULT_PLAIN: u64 = 0xc5f1_6ffa_eed0_333e;
 const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0xa2f4_7082_3b85_5563;
-const DEFAULT_MP: u64 = 0x28e5_1787_5502_bb1d;
-const WHOLE_PLAIN: u64 = 0x6420_9caa_660f_d978;
-const WHOLE_MP: u64 = 0x28e5_1787_5502_bb1d;
+const DEFAULT_MP: u64 = 0x91c3_c68d_c372_80f1;
+const WHOLE_PLAIN: u64 = 0x38d8_efe5_ef93_16a4;
+const WHOLE_MP: u64 = 0x91c3_c68d_c372_80f1;
+const DEFAULT_PLAIN_1C22: u64 = 0x82bf_e625_85ee_8c92;
+const DEFAULT_MP_1C22: u64 = 0x28e5_1787_5502_bb1d;
+const WHOLE_PLAIN_1C22: u64 = 0x6420_9caa_660f_d978;
+const WHOLE_MP_1C22: u64 = 0x28e5_1787_5502_bb1d;
 
 #[test]
 fn default_is_partial_and_legacy_whole_voxels_opts_out() {
@@ -119,7 +128,7 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
         );
         assert_eq!(attrs(&d)["voxel_model"], "partial-z", "{name}");
         assert_eq!(attrs(&d)["partial_voxel_reflectivity"], mode, "{name}");
-        assert_eq!(store_hash(&d), pinned, "{name}: new default");
+        assert_eq!(store_hash(&d), pinned, "{name}: new default {:#018x}", store_hash(&d));
         let e = dir.path().join(format!("{name}-explicit.mdio"));
         assert!(run(
             &with(&base, &["--partial-voxel-reflectivity", explicit]),
@@ -152,8 +161,24 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
             assert_eq!(
                 store_hash(&l),
                 w,
-                "{name}: --legacy-whole-voxels = d8b96e69 default"
+                "{name}: --legacy-whole-voxels (physical filter edges) {:#018x}",
+                store_hash(&l)
             );
+        }
+        // `--legacy-filter-edges` restores master 1c22b653 (whose
+        // `--legacy-whole-voxels` is the d8b96e69 default) in time mode.
+        let legacy_edges = match name {
+            "time" => Some((DEFAULT_PLAIN_1C22, WHOLE_PLAIN_1C22)),
+            "mp" => Some((DEFAULT_MP_1C22, WHOLE_MP_1C22)),
+            _ => None,
+        };
+        if let Some((d_1c22, w_1c22)) = legacy_edges {
+            for (extra, want) in [(&[][..], d_1c22), (&["--legacy-whole-voxels"][..], w_1c22)] {
+                let p = dir.path().join(format!("{name}-1c22.mdio"));
+                let args = with(&with(&base, extra), &["--legacy-filter-edges"]);
+                assert!(run(&args, &p).status.success(), "{name} {extra:?}");
+                assert_eq!(store_hash(&p), want, "{name} {extra:?}: --legacy-filter-edges = 1c22b653");
+            }
         }
     }
     // Planar is whole-voxel by construction: no attrs, no summary line.

@@ -99,20 +99,29 @@ const MASTERD2T_PLAIN: u64 = 0x90e7_47af_ef37_a8e5;
 const MASTERD2T_RICH: u64 = 0xc747_5878_6ba7_0f95;
 const MASTERD2T_RICH_TRAILING: u64 = 0xc64a_edda_ee03_ff02;
 const MASTERD2T_MP: u64 = 0x5f5f_85af_e374_3e75;
-// The same runs in time mode (the default since this branch).
-const TIME_PLAIN: u64 = 0x7cb4_4527_0f96_e215;
-const TIME_RICH: u64 = 0x1c50_ba40_abdc_b247;
-const TIME_MP: u64 = 0xd1d0_5a88_d109_29df;
+// The same runs in time mode (the default since this branch), as written
+// by master 1c22b653 (before the physical filter edges); reproduced with
+// `--legacy-filter-edges` (filter-edge spec §6 item 4).
+const TIME_PLAIN_1C22: u64 = 0x7cb4_4527_0f96_e215;
+const TIME_RICH_1C22: u64 = 0x1c50_ba40_abdc_b247;
+const TIME_MP_1C22: u64 = 0xd1d0_5a88_d109_29df;
+// The time-mode default with the physical filter edges (filter-edge spec
+// §6, moved): PLAIN and MP change only in the last 7 samples of columns
+// that continue below the window; RICH (bandpass + noise) changes on every
+// sample.
+const TIME_PLAIN: u64 = 0x71d2_8e4a_722e_b8f9;
+const TIME_RICH: u64 = 0x0d20_ed82_22ad_ea6d;
+const TIME_MP: u64 = 0x252f_e055_c471_f1b3;
 
 #[test]
 fn legacy_depth_as_time_reproduces_master_f3720fb2() {
     let dir = tempfile::tempdir().expect("tempdir");
     let rich_trailing = with(RICH, &["--bandpass-trailing-sample"]);
     for (name, base, master, time) in [
-        ("plain", PLAIN, MASTERD2T_PLAIN, Some(TIME_PLAIN)),
-        ("rich", RICH, MASTERD2T_RICH, Some(TIME_RICH)),
+        ("plain", PLAIN, MASTERD2T_PLAIN, Some((TIME_PLAIN, TIME_PLAIN_1C22))),
+        ("rich", RICH, MASTERD2T_RICH, Some((TIME_RICH, TIME_RICH_1C22))),
         ("rich-trailing", &rich_trailing[..], MASTERD2T_RICH_TRAILING, None),
-        ("mp", MP, MASTERD2T_MP, Some(TIME_MP)),
+        ("mp", MP, MASTERD2T_MP, Some((TIME_MP, TIME_MP_1C22))),
     ] {
         let legacy = dir.path().join(format!("{name}-legacy.mdio"));
         let out = run(
@@ -129,12 +138,17 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
             assert!(attrs.get(k).is_none(), "{name}: legacy store has {k}");
         }
         assert_eq!(s.config().digi, 4.0);
-        let Some(time) = time else { continue };
+        let Some((time, time_1c22)) = time else { continue };
         let default = dir.path().join(format!("{name}-time.mdio"));
         let out = run(base, &default);
         assert!(out.status.success(), "{name}: {out:?}");
-        assert_eq!(store_hash(&default), time, "{name}: time-mode default");
+        assert_eq!(store_hash(&default), time, "{name}: time-mode default {:#018x}", store_hash(&default));
         assert_ne!(time, master, "{name}: time mode must differ from the legacy axis");
+        let edges = dir.path().join(format!("{name}-time-1c22.mdio"));
+        let out = run(&with(base, &["--legacy-filter-edges"]), &edges);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert_eq!(store_hash(&edges), time_1c22, "{name}: --legacy-filter-edges vs master 1c22b653");
+        assert_ne!(time, time_1c22, "{name}: physical filter edges move the stack");
     }
 }
 
@@ -161,7 +175,9 @@ fn time_mode_attrs_and_summary() {
         assert_eq!(attrs["time_conversion"], "vp-twt", "{name}");
         assert_eq!(attrs["depth_step_m"], 4.0, "{name}");
         assert_eq!(attrs["twt_kernel"], kernel, "{name}");
+        assert_eq!(attrs["filter_edges"], "physical", "{name}");
         let so = stdout(&out);
+        assert!(so.contains("filter edges: physical (water above, model below; reflect sideways)\n"), "{name}: {so}");
         assert!(so.contains(&format!("time axis: two-way time from voxel Vp (vp-twt), dt={dt} ms, nt={nt}, kernel={kernel}")), "{name}: {so}");
         assert!(so.contains("time columns: base TWT") && so.contains("% (worst shortfall") && so.contains("% (worst excess"), "{name}: {so}");
     }
@@ -179,6 +195,7 @@ fn time_flags_reach_multiprocess_workers() {
         &["--twt-samples", "29"][..],
         &["--twt-kernel", "linear"][..],
         &["--legacy-depth-as-time"][..],
+        &["--legacy-filter-edges"][..],
     ] {
         let single = dir.path().join("single.mdio");
         let out = run(&with(&with(&MP[..1], &MP[4..]), flags), &single);
@@ -206,6 +223,9 @@ fn invalid_time_flags_exit_2() {
         (&["--legacy-toy-depth", "--dt-ms", "2"], "--legacy-toy-depth"),
         (&["--legacy-toy-depth", "--twt-kernel", "sinc"], "--legacy-toy-depth"),
         (&["--bandpass", "4,30", "--bandpass-trailing-sample"], "requires --legacy-depth-as-time"),
+        (&["--bandpass", "4,30", "--bandpass-trailing-sample", "--legacy-filter-edges"], "requires --legacy-depth-as-time"),
+        (&["--legacy-depth-as-time", "--legacy-filter-edges"], "--legacy-filter-edges has no effect with --legacy-depth-as-time or --legacy-toy-depth"),
+        (&["--legacy-toy-depth", "--legacy-filter-edges"], "--legacy-filter-edges has no effect with --legacy-depth-as-time or --legacy-toy-depth"),
         (&["--dt-ms", "9"], "outside 0.5-8.0"),
         (&["--dt-ms", "0.25"], "outside 0.5-8.0"),
         (&["--dt-ms", "4.5"], "too coarse"),
@@ -230,6 +250,7 @@ fn invalid_time_flags_exit_2() {
         &["--legacy-depth-as-time", "--bandpass", "4,30", "--bandpass-trailing-sample"],
         &["--fault-labels-through-salt", "--faults", "2"],
         &["--legacy-depth-as-time", "--fault-labels-through-salt", "--faults", "2"],
+        &["--legacy-filter-edges", "--bandpass", "4,30", "--noise-snr-db", "12.5"],
     ] {
         let out = run(&with(PLAIN, ok), &dir.path().join("ok.mdio"));
         assert!(out.status.success(), "{ok:?}: {out:?}");

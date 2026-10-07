@@ -98,7 +98,25 @@ fn laplace_from_bits(x: u64) -> f64 {
 /// index `g` (one Philox block per voxel; counter = `g`).
 #[inline]
 pub fn laplace_pair(key: [u32; 2], g: u64) -> (f64, f64) {
-    let r = philox4x32_10([g as u32, (g >> 32) as u32, 0, 0], key);
+    laplace_pair_counter(key, window_counter(g))
+}
+
+/// Philox counter of window voxel `g`: `[g_lo, g_hi, 0, 0]` (word 3 = 0).
+#[inline]
+pub fn window_counter(g: u64) -> [u32; 4] {
+    [g as u32, (g >> 32) as u32, 0, 0]
+}
+
+/// Philox counter of edge-pad sample `pad_index` of column `col`:
+/// `[col_lo, col_hi, pad_index, 1]` (word 3 = 1, filter-edge spec §4.4).
+#[inline]
+pub fn pad_counter(col: u64, pad_index: u32) -> [u32; 4] {
+    [col as u32, (col >> 32) as u32, pad_index, 1]
+}
+
+#[inline]
+fn laplace_pair_counter(key: [u32; 2], counter: [u32; 4]) -> (f64, f64) {
+    let r = philox4x32_10(counter, key);
     let a = (r[0] as u64) | ((r[1] as u64) << 32);
     let b = (r[2] as u64) | ((r[3] as u64) << 32);
     (laplace_from_bits(a), laplace_from_bits(b))
@@ -136,6 +154,19 @@ impl WeightedNoise {
     #[inline]
     pub fn sample(&self, g: u64) -> f32 {
         let (n0, n45) = laplace_pair(self.key, g);
+        ((self.w0 * n0 + self.w45 * n45) * self.scale) as f32
+    }
+
+    /// Edge-pad noise sample (filter-edge spec §4.4) for column
+    /// `col = i·nj + j` and pad index `pad_index` (top pad first, then the
+    /// bottom pad). A separate Philox counter domain: counter
+    /// `[col_lo, col_hi, pad_index, 1]`, where word 3 = 1 marks the edge pad
+    /// and every window counter ([`WeightedNoise::sample`]) has word 3 = 0,
+    /// so pad and window draws never share a counter. Same key, weights and
+    /// scale as the window.
+    #[inline]
+    pub fn sample_pad(&self, col: u64, pad_index: u32) -> f32 {
+        let (n0, n45) = laplace_pair_counter(self.key, pad_counter(col, pad_index));
         ((self.w0 * n0 + self.w45 * n45) * self.scale) as f32
     }
 
