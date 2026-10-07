@@ -301,6 +301,7 @@ pub fn print_time_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         axis.kernel.as_str(),
         axis.dz
     );
+    println!("{}", synthoseis_core::time_mode::filter_edges_summary(&axis));
     if let Some(s) = summary.time {
         let pct = |n: usize| 100.0 * n as f64 / s.columns.max(1) as f64;
         println!(

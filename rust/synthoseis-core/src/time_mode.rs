@@ -23,6 +23,153 @@ use crate::salt::SaltBody;
 
 static GPU_FALLBACK_LOG: Once = Once::new();
 
+/// Edge pads of the physical filter-edge rule (filter-edge spec §4.1–4.2),
+/// in output samples: `top` (`Pt`) above time 0 and `bottom` (`Pb`) below
+/// the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EdgePads {
+    pub top: usize,
+    pub bottom: usize,
+}
+
+impl EdgePads {
+    /// The pads for a time chain with `wavelet` (empty = skipped), the
+    /// bandpass edge pad `bandpass_pad` (`IirFilter::edge_pad`, `None` =
+    /// no bandpass) and `noise`: `Pb = h + Pbp` with `h = (len − 1) / 2`,
+    /// or `axis.edge_pad_override` (test hook). Top pad: `Pt = Pb` with
+    /// noise; `Pt = h` with a kept Ricker + bandpass and no noise (the
+    /// Ricker precursor above time 0 must reach the bandpass); else 0
+    /// (zero reflectivity above time 0 and a zero start state are exact).
+    pub fn for_chain(axis: &TimeAxis, wavelet: &[f64], bandpass_pad: Option<usize>, noise: bool) -> Self {
+        let h = if wavelet.is_empty() { 0 } else { (wavelet.len() - 1) / 2 };
+        let bottom = axis.edge_pad_override.unwrap_or(h + bandpass_pad.unwrap_or(0));
+        let top = if noise {
+            bottom
+        } else if h > 0 && bandpass_pad.is_some() {
+            h
+        } else {
+            0
+        };
+        EdgePads { top, bottom }
+    }
+
+    /// Samples of the padded per-column buffer, `Pt + nt + Pb`.
+    pub fn len(&self, nt: usize) -> usize {
+        self.top + nt + self.bottom
+    }
+
+    /// `true` when there is no pad.
+    pub fn is_empty(&self) -> bool {
+        self.top == 0 && self.bottom == 0
+    }
+}
+
+/// The per-column time chain of the physical edge rule (filter-edge spec
+/// §4): raw reflectivity over `Pt + nt + Pb` samples, noise in the window
+/// (today's keys) and in the pads (Philox word 3 = 1), the wavelet as a
+/// "same" convolution over the padded buffer, and the forward-backward
+/// bandpass over it; the window is kept.
+#[derive(Debug, Clone, Copy)]
+pub struct TraceChain<'a> {
+    /// Wavelet (empty = skipped).
+    pub wavelet: &'a [f64],
+    /// Noise at this angle (`None` = off).
+    pub noise: Option<synthoseis_seismic::WeightedNoise>,
+    /// Bandpass (`None` = off).
+    pub bandpass: Option<&'a synthoseis_seismic::IirFilter>,
+    pub pads: EdgePads,
+}
+
+impl<'a> TraceChain<'a> {
+    /// Wavelet-only chain (the default run): `Pb = h`, no top pad. `None`
+    /// under [`TimeAxis::legacy_filter_edges`] (the `1c22b653` zero-padded
+    /// "same" convolution over the window).
+    pub fn wavelet_only(axis: &TimeAxis, wavelet: &'a [f64]) -> Option<Self> {
+        (!axis.legacy_filter_edges).then(|| TraceChain {
+            wavelet,
+            noise: None,
+            bandpass: None,
+            pads: EdgePads::for_chain(axis, wavelet, None, false),
+        })
+    }
+}
+
+/// Per-column scratch of [`TraceChain`] (the padded buffer lives here, not
+/// in a second halo tile).
+#[derive(Debug, Default, Clone)]
+pub struct ChainScratch {
+    buf: Vec<f32>,
+    wide: Vec<f64>,
+    filt: Vec<f64>,
+}
+
+/// Global column index `i·nj + j` of tile-local trace `t` of the tile with
+/// origin `(i0, j0)` and `tj` crosslines in a cube of `nj` crosslines.
+#[derive(Debug, Clone, Copy)]
+struct TileOrigin {
+    i0: usize,
+    j0: usize,
+    tj: usize,
+    nj: usize,
+}
+
+impl TileOrigin {
+    fn col(&self, t: usize) -> u64 {
+        ((self.i0 + t / self.tj) * self.nj + self.j0 + t % self.tj) as u64
+    }
+}
+
+/// Finish one column under the physical edge rule: `x` holds the raw time
+/// reflectivity of the window and the bottom pad (`nt + Pb` samples, the
+/// first `nt` bit-identical to the window-only buffer); `col` is the global
+/// column `i·nj + j` (noise keys). Writes the `nt` window samples to `out`.
+pub fn finish_trace_padded(
+    x: &[f64],
+    nt: usize,
+    chain: &TraceChain,
+    col: u64,
+    scratch: &mut ChainScratch,
+    out: &mut [f32],
+) {
+    let EdgePads { top: pt, bottom: pb } = chain.pads;
+    assert_eq!(x.len(), nt + pb, "padded reflectivity length");
+    let buf = &mut scratch.buf;
+    buf.clear();
+    // Above time 0: water, zero reflectivity (Pt zeros). The f32 cast
+    // covers every sample (spec §4.3).
+    buf.resize(pt, 0.0);
+    buf.extend(x.iter().map(|&v| v as f32));
+    if let Some(n) = &chain.noise {
+        // Window: today's keys g = col·nt + k (bit-identical to
+        // `generate_noise`); pads: word 3 = 1, top pad first.
+        let g0 = col * nt as u64;
+        for (k, v) in buf[pt..pt + nt].iter_mut().enumerate() {
+            *v += n.sample(g0 + k as u64);
+        }
+        for (p, v) in buf[..pt].iter_mut().enumerate() {
+            *v += n.sample_pad(col, p as u32);
+        }
+        for (q, v) in buf[pt + nt..].iter_mut().enumerate() {
+            *v += n.sample_pad(col, (pt + q) as u32);
+        }
+    }
+    if !chain.wavelet.is_empty() {
+        // "same" convolution over the padded buffer: zero outside it is now
+        // right, the buffer already holds the real continuation.
+        scratch.wide.clear();
+        scratch.wide.extend(buf.iter().map(|&v| v as f64));
+        let conv = synthoseis_seismic::convolve_same_1d(&scratch.wide, chain.wavelet);
+        for (b, &c) in buf.iter_mut().zip(conv.iter()) {
+            *b = c as f32;
+        }
+    }
+    if let Some(f) = chain.bandpass {
+        f.filtfilt_padded_f32(buf, pt, nt, &mut scratch.filt)
+            .expect("padded buffer holds the window");
+    }
+    out[..nt].copy_from_slice(&buf[pt..pt + nt]);
+}
+
 /// Fuse one tile in time mode from `(ti, tj, nz)` property buffers into
 /// `(ti, tj, nt)` output (spec §3.1 steps 2–4 and 6): per trace, the
 /// cumulative two-way time from Vp, Zoeppritz on the depth interfaces (same
@@ -31,6 +178,12 @@ static GPU_FALLBACK_LOG: Once = Once::new();
 /// sees), then the wavelet in time (`f32 -> f64 convolve_same_1d -> f32`,
 /// exactly like the depth fuse). An empty wavelet leaves the raw time
 /// reflectivity.
+///
+/// Physical filter edges (default): the reflectivity is computed `h` =
+/// `(len − 1) / 2` samples past the window, so the wavelet sees the model
+/// below the window ([`TraceChain::wavelet_only`]); with
+/// [`TimeAxis::legacy_filter_edges`] the wavelet is zero-padded at the
+/// window end (`1c22b653`).
 ///
 /// The GPU fuse is not ported to time mode: with `--gpu` this runs on the
 /// CPU and logs it once (spec §6).
@@ -46,17 +199,43 @@ pub fn fuse_props_tile_time(
     form: ZoeppritzForm,
     tile_out: &mut [f32],
 ) {
+    log_gpu_fallback();
+    let chain = TraceChain::wavelet_only(axis, wavelet);
+    let origin = TileOrigin { i0: 0, j0: 0, tj: 1, nj: 1 };
+    props_tile_time(vp, vs, rho, nz, axis, wavelet, chain.as_ref(), origin, angle_deg, form, tile_out);
+}
+
+fn log_gpu_fallback() {
     if synthoseis_gpu::prefer_gpu() {
         GPU_FALLBACK_LOG.call_once(|| {
             eprintln!("gpu: depth-to-time mode fuses on the CPU (time-mode WGSL kernel not ported; --legacy-depth-as-time keeps the GPU path)");
         });
     }
+}
+
+/// [`fuse_props_tile_time`] body: `chain == None` is the legacy
+/// (`1c22b653`) window-only chain with `wavelet`.
+#[allow(clippy::too_many_arguments)]
+fn props_tile_time(
+    vp: &[f32],
+    vs: &[f32],
+    rho: &[f32],
+    nz: usize,
+    axis: &TimeAxis,
+    wavelet: &[f64],
+    chain: Option<&TraceChain>,
+    origin: TileOrigin,
+    angle_deg: f64,
+    form: ZoeppritzForm,
+    tile_out: &mut [f32],
+) {
     let nt = axis.nt;
     let n_traces = vp.len() / nz;
     assert!(vp.len() == n_traces * nz && vs.len() == vp.len() && rho.len() == vp.len());
     assert!(tile_out.len() >= n_traces * nt);
     let mut scratch = TwtScratch::default();
-    let mut x = vec![0.0f64; nt];
+    let mut cs = ChainScratch::default();
+    let mut x = vec![0.0f64; nt + chain.map_or(0, |c| c.pads.bottom)];
     let mut twt = vec![0.0f64; nz + 1];
     for t in 0..n_traces {
         let r = t * nz..(t + 1) * nz;
@@ -73,13 +252,18 @@ pub fn fuse_props_tile_time(
             &mut scratch,
             &mut x,
         );
-        finish_trace(&mut x, wavelet, &mut tile_out[t * nt..(t + 1) * nt]);
+        let out = &mut tile_out[t * nt..(t + 1) * nt];
+        match chain {
+            None => finish_trace(&mut x, wavelet, out),
+            Some(c) => finish_trace_padded(&x, nt, c, origin.col(t), &mut cs, out),
+        }
     }
 }
 
 /// Cast the raw time reflectivity `x` to f32 (as the depth fuse's rfc) and
 /// apply the wavelet in time into `out` (`f32 -> f64 convolve_same_1d ->
-/// f32`); an empty wavelet leaves the raw reflectivity.
+/// f32`); an empty wavelet leaves the raw reflectivity. The legacy
+/// (`1c22b653`) window-only chain.
 fn finish_trace(x: &mut [f64], wavelet: &[f64], out: &mut [f32]) {
     for v in x.iter_mut() {
         *v = *v as f32 as f64;
@@ -114,7 +298,7 @@ pub fn partial_time_path(model: &ElasticModel) -> Option<&RpmModel> {
 /// then either every sub-cell interface at its exact time (`subcell`) or
 /// the Backus voxels' cell-to-cell reflectivity at the same T (`cell`),
 /// inserted with the windowed sinc; then the same f32 cast and wavelet as
-/// [`fuse_props_tile_time`].
+/// [`fuse_props_tile_time`] (and the same edge rule).
 #[allow(clippy::too_many_arguments)]
 pub fn fuse_tile_time_partial(
     m: &RpmModel,
@@ -128,11 +312,28 @@ pub fn fuse_tile_time_partial(
     angle_deg: f64,
     tile_out: &mut [f32],
 ) {
-    if synthoseis_gpu::prefer_gpu() {
-        GPU_FALLBACK_LOG.call_once(|| {
-            eprintln!("gpu: depth-to-time mode fuses on the CPU (time-mode WGSL kernel not ported; --legacy-depth-as-time keeps the GPU path)");
-        });
-    }
+    log_gpu_fallback();
+    let axis = m.time.expect("time axis");
+    let chain = TraceChain::wavelet_only(&axis, wavelet);
+    partial_tile_time(m, labels, shape, i0, i1, j0, j1, wavelet, chain.as_ref(), angle_deg, tile_out);
+}
+
+/// [`fuse_tile_time_partial`] body: `chain == None` is the legacy
+/// window-only chain with `wavelet`.
+#[allow(clippy::too_many_arguments)]
+fn partial_tile_time(
+    m: &RpmModel,
+    labels: &[u8],
+    shape: [usize; 3],
+    i0: usize,
+    i1: usize,
+    j0: usize,
+    j1: usize,
+    wavelet: &[f64],
+    chain: Option<&TraceChain>,
+    angle_deg: f64,
+    tile_out: &mut [f32],
+) {
     let axis = m.time.expect("time axis");
     let pm = m.partial.as_ref().expect("partial state");
     let [_, nj, nz] = shape;
@@ -144,7 +345,8 @@ pub fn fuse_tile_time_partial(
     let mut col = SubcellColumn::default();
     let mut r = Vec::new();
     let mut ts = TwtScratch::default();
-    let mut x = vec![0.0f64; nt];
+    let mut cs = ChainScratch::default();
+    let mut x = vec![0.0f64; nt + chain.map_or(0, |c| c.pads.bottom)];
     for i in i0..i1 {
         for j in j0..j1 {
             let g = (i * nj + j) * nz;
@@ -168,9 +370,63 @@ pub fn fuse_tile_time_partial(
                 ),
             }
             let t = (i - i0) * tj + (j - j0);
-            finish_trace(&mut x, wavelet, &mut tile_out[t * nt..(t + 1) * nt]);
+            let out = &mut tile_out[t * nt..(t + 1) * nt];
+            match chain {
+                None => finish_trace(&mut x, wavelet, out),
+                Some(c) => finish_trace_padded(&x, nt, c, (i * nj + j) as u64, &mut cs, out),
+            }
         }
     }
+}
+
+/// Fuse the tile `[i0, i1) x [j0, j1)` of a time-mode model through the
+/// physical edge chain `chain` (wavelet, noise and bandpass on the padded
+/// per-column buffer) into `(ti, tj, nt)` `tile_out`. Whole-voxel and
+/// partial-voxel paths; every step is per column and keyed by global
+/// indices, so halo recompute is exact.
+///
+/// # Panics
+/// On the legacy axis (no time axis) or a legacy-toy model.
+#[allow(clippy::too_many_arguments)]
+pub fn fuse_tile_time_chain(
+    model: &ElasticModel,
+    labels: &[u8],
+    shape: [usize; 3],
+    i0: usize,
+    i1: usize,
+    j0: usize,
+    j1: usize,
+    chain: &TraceChain,
+    angle_deg: f64,
+    tile_out: &mut [f32],
+) {
+    log_gpu_fallback();
+    let ElasticModel::Rpm(m) = model else {
+        panic!("fuse_tile_time_chain: time mode needs the rock-physics model");
+    };
+    let axis = m.time.expect("time axis");
+    if partial_time_path(model).is_some() {
+        partial_tile_time(m, labels, shape, i0, i1, j0, j1, chain.wavelet, Some(chain), angle_deg, tile_out);
+        return;
+    }
+    let nz = shape[2];
+    let n = (i1 - i0) * (j1 - j0) * nz;
+    let (mut vp, mut vs, mut rho) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
+    model.tile_properties(labels, shape, i0, i1, j0, j1, &mut vp, &mut vs, &mut rho);
+    let origin = TileOrigin { i0, j0, tj: j1 - j0, nj: shape[1] };
+    props_tile_time(
+        &vp,
+        &vs,
+        &rho,
+        nz,
+        &axis,
+        chain.wavelet,
+        Some(chain),
+        origin,
+        angle_deg,
+        model.zoeppritz_form(),
+        tile_out,
+    );
 }
 
 /// Two-way times `T_0 … T_nz` (ms) of one column from its Vp (`nz + 1`
@@ -462,18 +718,35 @@ pub fn generate_salt_labels_output(cfg: &E2eConfig) -> Option<Vec<u8>> {
 }
 
 /// Root MDIO attributes of a time-mode store (spec §2): `time_conversion`
-/// `"vp-twt"`, `depth_step_m` and `twt_kernel`. The legacy axis writes none.
+/// `"vp-twt"`, `depth_step_m` and `twt_kernel`, plus `filter_edges`
+/// `"physical"` with the physical filter edges (filter-edge spec §5). The
+/// legacy axis writes none, and `--legacy-filter-edges` writes no
+/// `filter_edges`, so its stores stay byte-identical to `1c22b653`.
 pub fn write_time_attrs(store: &synthoseis_io::MdioStore, cfg: &E2eConfig) -> Result<(), String> {
     let Some(axis) = cfg.time_axis() else {
         return Ok(());
     };
-    store
-        .set_root_attrs(&[
-            ("time_conversion", serde_json::json!("vp-twt")),
-            ("depth_step_m", serde_json::json!(axis.dz)),
-            ("twt_kernel", serde_json::json!(axis.kernel.as_str())),
-        ])
-        .map_err(|e| e.to_string())
+    let mut attrs = vec![
+        ("time_conversion", serde_json::json!("vp-twt")),
+        ("depth_step_m", serde_json::json!(axis.dz)),
+        ("twt_kernel", serde_json::json!(axis.kernel.as_str())),
+    ];
+    if !axis.legacy_filter_edges {
+        attrs.push(("filter_edges", serde_json::json!(FILTER_EDGES_PHYSICAL)));
+    }
+    store.set_root_attrs(&attrs).map_err(|e| e.to_string())
+}
+
+/// `filter_edges` root attribute value of the physical edge rule.
+pub const FILTER_EDGES_PHYSICAL: &str = "physical";
+
+/// Run summary line of the filter edge rule (time mode).
+pub fn filter_edges_summary(axis: &TimeAxis) -> &'static str {
+    if axis.legacy_filter_edges {
+        "filter edges: legacy 1c22b653 (--legacy-filter-edges)"
+    } else {
+        "filter edges: physical (water above, model below; reflect sideways)"
+    }
 }
 
 /// Two-way time (ms) at a fractional depth-sample position `s` of a column

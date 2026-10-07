@@ -98,8 +98,11 @@ enum Commands {
         shape: Option<String>,
         /// Legacy post-convolution Butterworth bandpass `LOW,HIGH[,ORDER]` in Hz
         /// (port of Seismic.apply_bandlimits; zero-phase filtfilt, order 4 by
-        /// default). Off by default. Requires single-worker `--e2e --chunked`
-        /// and more than 6*ORDER+3 samples per trace.
+        /// default). Off by default. Requires single-worker `--e2e --chunked`.
+        /// In time mode it runs over the model below the window (physical
+        /// filter edges); with `--legacy-depth-as-time` or
+        /// `--legacy-filter-edges` it needs more than 6*ORDER+3 samples per
+        /// trace.
         #[arg(long)]
         bandpass: Option<String>,
         /// Legacy lateral box filter size N (port of
@@ -258,6 +261,16 @@ enum Commands {
         /// with the bandpass-only chain). Time mode only.
         #[arg(long)]
         twt_kernel: Option<String>,
+        /// Legacy switch: the filter edge rules of master 1c22b653 in time
+        /// mode (zero-padded Ricker at the window end, odd-mirror bandpass
+        /// over NT-1 samples with the last sample zeroed, noise in the
+        /// window only), bit for bit. Default: physical edges (water above
+        /// time 0, the model's own reflectivity below the window, noise
+        /// drawn in the pads; reflect at the cube sides). Stacks only;
+        /// labels are unchanged. Rejected with --legacy-depth-as-time /
+        /// --legacy-toy-depth. See docs/filters-port.md.
+        #[arg(long, default_value_t = false)]
+        legacy_filter_edges: bool,
         /// Legacy switch: keep fault labels inside the salt body (master
         /// 2b3850ba). By default data/fault_labels is fault AND NOT salt.
         /// See docs/salt-bodies.md.
@@ -366,11 +379,13 @@ fn apply_closures(
 }
 
 /// `--legacy-depth-as-time` / `--dt-ms` / `--twt-samples` / `--twt-kernel`
-/// (spec §2). The time options are rejected with either legacy switch
+/// / `--legacy-filter-edges` (depth-to-time spec §2, filter-edge spec §5).
+/// The time options are rejected with either legacy switch
 /// (`--legacy-toy-depth` implies the legacy axis), and
-/// `--bandpass-trailing-sample` is legacy-axis only: in time mode the dead
-/// last sample `nt - 1` is zeroed whenever the bandpass replaces the Ricker
-/// (spec §3.7), and there is no dead sample when the Ricker is on.
+/// `--bandpass-trailing-sample` is legacy-axis only: in time mode the
+/// bandpass filters all `nt` samples (physical edges), and under
+/// `--legacy-filter-edges` the dead last sample `nt - 1` is zeroed whenever
+/// the bandpass replaces the Ricker (spec §3.7).
 fn parse_time(
     legacy_depth_as_time: bool,
     legacy_toy_depth: bool,
@@ -378,6 +393,7 @@ fn parse_time(
     twt_samples: Option<usize>,
     twt_kernel: Option<&str>,
     bandpass_trailing_sample: bool,
+    legacy_filter_edges: bool,
 ) -> Result<synthoseis_core::TimeConfig, String> {
     let time_opts = dt_ms.is_some() || twt_samples.is_some() || twt_kernel.is_some();
     if (legacy_depth_as_time || legacy_toy_depth) && time_opts {
@@ -386,16 +402,25 @@ fn parse_time(
                 .into(),
         );
     }
+    if (legacy_depth_as_time || legacy_toy_depth) && legacy_filter_edges {
+        return Err(
+            "--legacy-filter-edges has no effect with --legacy-depth-as-time or --legacy-toy-depth (the legacy axis keeps its filter edges)"
+                .into(),
+        );
+    }
     if legacy_depth_as_time || legacy_toy_depth {
         return Ok(synthoseis_core::TimeConfig::legacy());
     }
     if bandpass_trailing_sample {
         return Err(
-            "--bandpass-trailing-sample requires --legacy-depth-as-time (in time mode the dead last sample nt-1 is zeroed whenever the bandpass replaces the Ricker)"
+            "--bandpass-trailing-sample requires --legacy-depth-as-time (in time mode the bandpass filters all nt samples; --legacy-filter-edges zeroes the dead last sample nt-1 whenever the bandpass replaces the Ricker)"
                 .into(),
         );
     }
-    let mut t = synthoseis_core::TimeConfig::default();
+    let mut t = synthoseis_core::TimeConfig {
+        legacy_filter_edges,
+        ..synthoseis_core::TimeConfig::default()
+    };
     if let Some(dt) = dt_ms {
         if !dt.is_finite() {
             return Err(format!("--dt-ms must be finite, got {dt}"));
@@ -745,6 +770,7 @@ fn main() {
             dt_ms,
             twt_samples,
             twt_kernel,
+            legacy_filter_edges,
             fault_labels_through_salt,
             legacy_whole_voxels,
             partial_voxel_reflectivity,
@@ -877,6 +903,7 @@ fn main() {
                 twt_samples,
                 twt_kernel.as_deref(),
                 bandpass_trailing_sample,
+                legacy_filter_edges,
             )
             .unwrap_or_else(|e| {
                 eprintln!("{e}");

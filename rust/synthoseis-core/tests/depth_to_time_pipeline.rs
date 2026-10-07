@@ -511,12 +511,14 @@ fn label_round_trip() {
     }
 }
 
-/// Dead last sample (spec §3.7): with the bandpass replacing the Ricker the
-/// last output sample `nt − 1` is exactly 0 on every trace, and it is the
-/// only sample the zeroing touches (with the zeroing skipped through the
-/// test hook, samples `0 … nt − 2` are bit-identical and the last sample
-/// carries the filtered trace's value). nt = nz and nz + 37, sinc and
-/// linear insertion; the production chunked path matches.
+/// Dead last sample (spec §3.7), kept by `--legacy-filter-edges` only (the
+/// physical filter edges filter all nt samples, filter-edge spec §4.6):
+/// with the bandpass replacing the Ricker the last output sample `nt − 1`
+/// is exactly 0 on every trace, and it is the only sample the zeroing
+/// touches (with the zeroing skipped through the test hook, samples
+/// `0 … nt − 2` are bit-identical and the last sample carries the filtered
+/// trace's value). nt = nz and nz + 37, sinc and linear insertion; the
+/// production chunked path matches.
 #[test]
 fn dead_last_sample() {
     for nt in [None, Some(64 + 37)] {
@@ -524,6 +526,7 @@ fn dead_last_sample() {
             let mut cfg = rich(30, [12, 10, 64], nt, 3);
             cfg.faults = FaultConfig::default();
             cfg.time.kernel = kernel;
+            cfg.time.legacy_filter_edges = true;
             let (labels, shape) = generate_labels(&cfg);
             let [ni, nj, _] = shape;
             let n = cfg.output_samples();

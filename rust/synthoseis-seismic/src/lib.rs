@@ -37,6 +37,7 @@ pub use kernels::{
     uniform_window, weighted_laplace_std, zoeppritz_pp, FilterError, IirFilter, RunningStats,
     WeightedNoise,
 };
+pub use kernels::{pad_counter, window_counter, EDGE_PAD_CAP, EDGE_PAD_TOLERANCE};
 pub use kernels::{
     default_twt_samples, depth_staircase_ok, insert_spikes, linear_split, output_nyquist_ok,
     point_sample_labels, reflectivity_time_column, reflectivity_time_column_with_twt, twt_column, KaiserSinc, TwtKernel, TwtScratch,

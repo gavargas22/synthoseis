@@ -349,6 +349,9 @@ fn faults_merge_juxtaposed_closures_and_switch_restores_ef2dc42() {
                 };
                 c.rock_physics.closure_minimum = minimum;
                 c.rock_physics.legacy_closure_contact_cap = cap && !u;
+                // The master bad1daa8 counts predate the physical filter
+                // edges (filter-edge spec §6 item 4).
+                c.time.legacy_filter_edges = true;
                 c
             };
             let (a, b) = (

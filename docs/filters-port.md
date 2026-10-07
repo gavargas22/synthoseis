@@ -191,6 +191,94 @@ see [`angle-stack-e2e-parity.md`](angle-stack-e2e-parity.md)). Now:
   `legacy_zoeppritz_reproduces_master_33a3a93`) now pass
   `--bandpass-trailing-sample` / `bandpass_trailing_sample: true`.
 
+## Edges (physical filter edges, time mode)
+
+Every filter needs samples beyond the end of a trace or the side of the cube.
+Up to master `1c22b653` each filter made them up its own way. In time mode
+(the default axis) the rule is now one rule: **continue the earth the way the
+physics says, and mirror only where nothing is known** (spec "filter edge
+handling", Strata).
+
+| Filter | Edge rule before (`1c22b653`, `--legacy-filter-edges`) | Edge rule now (time mode) |
+|---|---|---|
+| Ricker wavelet (17 taps, reaches 8 samples) | zero outside the window | zero above time 0 (water); the model's own reflectivity for `h = 8` samples below the window |
+| Butterworth bandpass, forward-backward | odd mirror (`2·x₀ − x`) over `padlen` = 27 samples, SciPy start states | zero above time 0 (water, zero start state); the model's reflectivity for `Pb = h + edge_pad()` samples below (369 for 4–30 Hz order 4 at 4 ms), then the half-space; backward start state `zi·y_end` |
+| #36 dead last sample | sample `nt − 1` left out of the bandpass and written as 0 | filtered like every other sample (it has real data under it now) |
+| Noise (Laplace, Philox) | window samples only | window samples keep their keys; the pads get noise too, from a separate counter domain (Philox word 3 = 1), so the strength is the same up to the trace ends |
+| Lateral box filter (3 or 5) | reflect | **reflect** (unchanged: nothing is known beyond the cube) |
+| Salt drag smoothing (σ = 3) | reflect | **reflect** (unchanged; labels do not move) |
+| Sinc spike insertion | interfaces deeper than the buffer skipped | unchanged; the buffer is now `nt + Pb` long, and the first `nt` samples are bit-identical to before |
+
+How it runs, per column (`time_mode::finish_trace_padded`):
+
+1. The time reflectivity is computed into `nt + Pb` samples with the existing
+   column routines (whole voxels, partial `subcell`, partial `cell`). Below
+   the model base there are no interfaces, so the pad is zero there.
+2. Top pad: `Pt = Pb` with noise; `Pt = h` with a kept Ricker + bandpass and
+   no noise (the Ricker precursor above time 0); else 0. Window samples get
+   `sample(col·nt + k)` (today's field, bit for bit); pad samples get
+   `sample_pad(col, pad_index)`, top pad first. `data_std` is unchanged.
+3. The Ricker (unless skipped) is a "same" convolution over the padded buffer.
+4. The bandpass (`IirFilter::filtfilt_padded_f32`) runs forward-backward over
+   the padded buffer: forward start state zero, or `zi·x₀` when `Pt > 0`;
+   backward start state `zi·y_end`. No odd extension, no `padlen`, so any
+   `nt ≥ 1` works (the "needs more than 27 filtered samples" check stays with
+   the legacy edges).
+5. The `nt` window samples are kept. The lateral filter then runs as before.
+
+`IirFilter::edge_pad()` is the smallest `n` such that the forward-backward
+impulse response stays below 1e-6 of its peak from `n` on (computed once per
+design in f64; capped at 8,192 samples, with an error for an unstable design).
+Measured: 369 (4–30 Hz), 421 (3–35 Hz), 366 (6–20 Hz) at 4 ms, order 4.
+
+Every step is per column and keyed by global indices, so halo recompute,
+tiling, strips and processes stay bit-identical. The padded buffer lives in
+the per-column scratch; `WorkingSetStats` counts the filtered halo at its
+padded length.
+
+What it changes (seed 7, 32 × 32 × 128, 15°):
+
+- **Default run** (Ricker only): only samples 121–127 of columns whose model
+  continues below the window (4.65 % of cells, rel. RMS 0.017). The max change
+  is seed-dependent (median 3.9 % of peak across seeds 1–30; up to 35 % where
+  a strong reflector such as a salt top sits just below the window, seed 17).
+  Columns whose padded reflectivity is zero below the window are unchanged
+  bit for bit.
+- **`--bandpass 4,30`**: every sample. The old edges were off from the
+  physically correct answer (a 2,048-sample pad down to the model base) by
+  rel. RMS 0.17 and up to 48 % of peak; the new default matches it to 3e-8 of
+  peak (the f32 rounding of the output).
+- **`--keep-ricker` + bandpass (no noise):** the top pad is `h` (8 at 4 ms, 16 at 2 ms)
+  so the Ricker precursor above time 0 reaches the forward bandpass (with
+  `Pt = 0` the error was up to 7.6e-5 of peak).
+- **Noise**: strength at the first and last sample 0.99 / 0.97 of mid-trace
+  (was 0.16 at the first sample).
+- **Labels**: unchanged everywhere.
+
+**Order 6 at 2 ms:** the transfer-function (`ba`) recursion carries up to
+~7e-4 of peak of f64 round-off (6–20 Hz: 3.5e-4) in **both** edge
+modes (physical and `--legacy-filter-edges`). Use order ≤ 5 or dt 4 ms. The
+nightly edge_pad sweep gates against an SOS-form reference (≤ 1e-5 for
+orders 2–5, ≤ 5e-3 for order 6 as the documented `ba` floor). Converting
+the physical bandpass to SOS is a deferred follow-up.
+
+**Opt-out:** `--legacy-filter-edges` (CLI, forwarded to multi-process
+workers) / `TimeConfig::legacy_filter_edges = true` (library) restores
+master `1c22b653` bit for bit (apart from the `created` stamp) on every path.
+It is exit 2 with `--legacy-depth-as-time` or `--legacy-toy-depth`: the
+legacy depth axis is a parity mode against the Python generator and keeps
+SciPy's edges. Time-mode stores with the physical edges carry the root
+attribute `filter_edges = "physical"`; legacy-edge stores omit it, so they
+stay byte-identical to `1c22b653`. The run summary prints
+`filter edges: physical (water above, model below; reflect sideways)` or
+`filter edges: legacy 1c22b653 (--legacy-filter-edges)`.
+
+Tests: `synthoseis-seismic/tests/filter_edges.rs` (edge pad, padded
+filtfilt, noise keys), `synthoseis-core/tests/filter_edges.rs` (prefix
+identity, Ricker churn, truth gate, shift invariance, noise stationarity,
+invariance, labels; nightly sweeps) and `synthoseis/tests/filter_edges_cli.rs`
+(`1c22b653` byte identity on every path).
+
 ## Tiling invariance: halos
 
 - **Bandpass.** `filtfilt` works along the trace. Every generation path already
@@ -512,9 +600,9 @@ inter-angle correlation, for both weightings).
   config.
 - The wavelet path (`bandlimit_volumes_wavelets`, dormant in legacy: see the
   Ricker-path note under Trailing sample) and augmentations / RMO.
-- Edge-handling realism (mirrored padding or a taper at the trace ends). It
-  should also remove the dead, zeroed trailing sample that the legacy-parity
-  bandpass leaves in every trace.
+- Edge-handling realism: done in time mode (see [Edges](#edges-physical-filter-edges-time-mode)),
+  including the dead trailing sample. The legacy depth axis keeps SciPy's
+  edges and the trailing-sample rule (parity mode).
 - CLI: `--bandpass` / `--lateral-filter` / `--noise-snr-db` currently require single-worker
   `--e2e --chunked`, like `--faults`. Multi-process children do not receive
   the flags yet. The library API supports every path.
@@ -523,8 +611,9 @@ inter-angle correlation, for both weightings).
 
 ```bash
 cd rust
-# CLI (single worker, chunked); an order-4 bandpass needs >= 29 samples (>= 28 with
-# --bandpass-trailing-sample or --keep-ricker)
+# CLI (single worker, chunked); with the legacy edges (--legacy-depth-as-time or
+# --legacy-filter-edges) an order-4 bandpass needs >= 29 samples (>= 28 with
+# --bandpass-trailing-sample or --keep-ricker); time mode has no minimum
 cargo run -p synthoseis -- run --e2e --chunked --shape 48,48,64 --faults 3 \
     --bandpass 4,30 --lateral-filter 3 --store /tmp/filtered.mdio
 # kernel parity vs the legacy fixtures, then the pipeline invariance tests

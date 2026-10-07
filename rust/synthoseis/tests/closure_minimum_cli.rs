@@ -73,11 +73,15 @@ fn zattrs(p: &Path) -> String {
 /// compartments kept at T = 20, none at 500.
 const DEMO: &[&str] = &["--seed", "7", "--shape", "32,32,128", "--faults", "3"];
 /// `store_dir_hash` of the `DEMO` store written by a master bad1daa8
-/// binary (default flags).
+/// binary (default flags). Reproduced with `--legacy-filter-edges` (the
+/// master filter edges; filter-edge spec §6 item 4).
 const MASTER_BAD1DAA8_DEMO: u64 = 0x99e8_6ae5_7a12_b80c;
 /// `store_dir_hash` of the `DEMO` store with the new defaults (scaled
-/// minimum, contact at base + ½): the regression pin for the default.
-const SCALED_DEFAULT_DEMO: u64 = 0xa91e_7b31_5d63_fcba;
+/// minimum, contact at base + ½, physical filter edges): the regression
+/// pin for the default. Was `0xa91e_7b31_5d63_fcba` (master 1c22b653,
+/// before the physical filter edges moved the last 7 samples of long
+/// columns and added the `filter_edges` attribute).
+const SCALED_DEFAULT_DEMO: u64 = 0x1dba_aaf9_2418_e1fe;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte
 /// (every array and attribute); the default differs and is pinned.
@@ -93,6 +97,7 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
                 "--legacy-closure-contact-cap",
                 "--salt-smooth-all-horizons",
                 "--salt-legacy-vs",
+                "--legacy-filter-edges",
             ],
         ]
         .concat(),
