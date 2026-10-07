@@ -102,11 +102,34 @@ The CLI prints e.g. `salt: top 65.9 samples, radius 12.2 columns, 18535
 voxels in 597 columns`. With `--no-salt` it prints
 `salt: off (--no-salt, master b4f4259)`.
 
-**No velocity pull-up yet.** The Rust port builds the model in depth and
-writes the angle stacks on the depth-sample axis. The fast salt
-(4500 m/s) therefore does not yet pull up the reflections beneath it, as it
-would in two-way time. That effect comes with the depth-to-time conversion
-work, not with this PR. The "push-down" above only adjusts horizon depths.
+**Time output and velocity pull-up.** When salt bodies were first added,
+the stacks were written on the depth-sample axis, so there was no velocity
+pull-up. Since the depth-to-time work ([depth-to-time.md](depth-to-time.md))
+the default output is two-way time, built per column from the voxel Vp. The
+fast salt (4500 m/s) now pulls up the reflections beneath it. The
+"push-down" in the drag step above is different: it only adjusts horizon
+depths.
+
+The salt body is built in depth, and the depth body is what the drag mode
+and the salt switches leave alone. `data/salt_labels` in a time-mode store
+(the default) is that depth mask point-sampled through each column's
+traveltime (depth-to-time §3.4). So:
+
+- **In time, the salt is thinner than in depth**, because it is fast. On
+  the seed-7 32×32×128 cube (3 faults), 2 336 depth salt voxels become
+  1 060 time samples.
+- **Time-domain `salt_labels` can move with two-way time while the depth
+  salt body does not.** Anything that changes the overburden above the salt
+  changes each column's traveltime to the salt, and so which time samples
+  the salt fills. The drag mode is one example. Comparing lift-only with
+  `--salt-smooth-all-horizons` on the same seed-7 cube: the depth
+  `salt_labels` are identical (0 of 2 336 voxels differ), but 63 time
+  samples in 53 columns move (1 060 vs 1 055 salt samples). In the same
+  way, when lift-only became the default, the time-domain `masked_in_salt`
+  count of the seed-11 fault-mask smoke moved from 63 to 72 (whole voxels)
+  and from 68 to 70 (partial voxels), while the depth count stayed at 155.
+  So "the salt body is unchanged" is a statement about depth. To check it,
+  compare depth cubes (`--legacy-depth-as-time`).
 
 ## Deviations (documented, not bugs)
 
@@ -151,9 +174,12 @@ each one below or leaves it out as noted.
    (`m + G(L)`): far-field maps stay bit-identical to the undragged maps
    before push-down (never-touch horizons and cells with Chebyshev distance
    ≥ 13 from any lifted cell). On the demo cube under smooth-all, about
-   2.5 % of labels far from salt still changed; under lift-only that drops
-   to ≤ 0.1 %. Near-flank uplift stays the same shape (RMS |legacy − fix|
-   within 4 columns ≈ 0.35–0.52 samples on 64²).
+   2.5 % of labels far from salt still changed. Under lift-only that drops
+   to 0 (gate ≤ 0.1 %; see "Effect on the demo cube"). Near-flank uplift
+   keeps the same shape (RMS |legacy − fix| within 4 columns ≈ 0.35–0.52
+   samples on 64²). The depth salt body is the same in both modes. The
+   time-domain `salt_labels` can still differ by a sample (see "Time output
+   and velocity pull-up").
 3. **`push_down_remove_negative_thickness` never fixes horizons 0/1.** The
    loop stops at `i = 2`. Kept (the Rust `enforce_nonnegative_thicknesses`
    is the same loop).
@@ -235,29 +261,99 @@ and `examples/plot_salt_demo.py` prints p.
 
 ## Effect on the demo cube (64×64×256, seed 7, 4 faults, defaults)
 
-| | salt | closures (brine / oil / gas) | HC voxels (oil / gas) | CLI store hash |
-|---|---|---|---|---|
-| `--no-salt` (= master b4f4259) | — | 2 / 2 / 2 | 8 022 (5 161 / 2 861) | `0xe69121b8b492872b` (same as the b4f4259 binary) |
-| salt (default) | top 65.9 samples, R 12.2 columns, 18 535 voxels (1.8 %) in 597 columns | 3 / 1 / 2 | 5 645 (3 850 / 1 795) | `0xd63947b9302852f7` |
+Regenerated on master `1c22b653` with the current defaults: two-way time
+output, partial voxels, lift-only drag, salt Vs 2600 and the scaled closure
+minimum. The earlier tables here were measured at #34, on the depth axis
+with whole voxels, smooth-all drag and Vs 2250. They are replaced.
 
-Angle-stack change (relative RMS of the difference):
+| | salt | closures with a fluid draw (brine / oil / gas) | HC voxels (oil / gas) | CLI store hash |
+|---|---|---|---|---|
+| `--no-salt` | — | 2 / 2 / 3 | 8 255 (5 161 / 3 094) | `0xe33574e175a89307` |
+| salt (default) | top 65.9 samples, R 12.2 columns, 18 535 voxels (1.8 %) in 597 columns | 2 / 2 / 4 | 7 610 (4 974 / 2 636) | `0x2b632665f11b7a16` |
+
+At these default flags, `--no-salt` is no longer the b4f4259 store, because
+time output, partial voxels and other defaults have changed since then.
+With the legacy switches the tests add, it still reproduces b4f4259 (see
+Locks).
+
+Angle-stack change, salt vs `--no-salt` (relative RMS of the difference,
+relative to `--no-salt`):
 
 | angle | rel RMS | changed samples |
 |---|---|---|
-| 0° | 0.602 | 582 457 of 1 048 576 |
-| 15° | 0.587 | 592 312 |
-| 30° | 0.506 | 595 721 |
+| 0° | 0.616 | 999 094 of 1 048 576 (95.3 %) |
+| 15° | 0.587 | 999 094 (95.3 %) |
+| 30° | 0.494 | 999 248 (95.3 %) |
 
-- Labels change in 5.9 % of the voxels, 4.7 % of them outside the salt
-  (the salt itself is 1.8 % of the cube).
-- More than 8 columns from any salt column, 2.5 % of labels still change
-  (legacy smooths every horizon, then the maps are rounded). That alone
-  gives a 15° relative RMS of 0.41 there, because one-sample shifts of
-  sharp reflections dominate an RMS difference. Near the salt the relative
-  RMS is 0.87.
-- HC voxels far from the salt are almost unchanged (308 → 302). The
-  closures near the salt are reorganised by the salt, the drag and the
-  walls (7 714 → 5 343).
+- **Labels.** Depth labels change in 2.87 % of the voxels. Changes outside
+  the salt are 1.67 % of the cube; the salt itself is 1.77 %.
+- **Far from salt.** More than 8 columns (Chebyshev) from any salt column
+  (2 466 of 4 096 columns), **no label changes** (0.0000 %). At #34, under
+  smooth-all, 2.5 % changed.
+- **Far-field stacks still differ, but not because of the labels.** The 15°
+  relative RMS there is 0.434 (0.429 at 0°, 0.442 at 30°). With salt on,
+  the partial-voxel horizon maps are the drag of the *rounded* maps
+  (`toy_horizon_maps_continuous`, partial-voxels spec §3.1). Far from salt,
+  every interface therefore sits on a whole sample. `--no-salt` keeps the
+  continuous sub-sample positions instead. The partial-voxel interface cells
+  differ in every far column (about one cell per layer per column, 105 804
+  of 631 296 far-field voxels). With `--legacy-whole-voxels`, the far-field
+  properties and the 15° stack are bit-identical, salt vs `--no-salt`
+  (0 of 631 296 samples differ). Near the salt (≤ 8 columns), the 15°
+  relative RMS is 0.778.
+- **HC voxels.** Far from the salt they are unchanged (127 → 127). Near the
+  salt, the salt, the drag and the walls reorganise the closures
+  (8 128 → 7 483).
+
+### Salt Vs 2600 vs `--salt-legacy-vs` (2250)
+
+Labels, `salt_labels` and `fault_labels` are identical in depth and in
+time (`salt_vs_2600_label_identity`). Vs does not enter the traveltime.
+The stacks change only at salt contacts, and **far angles change more**,
+as the AVO predicts. Demo cube (same flags as above, `--angles 0,15,30`,
+relative to `--salt-legacy-vs`):
+
+| angle | changed samples | rel RMS | max abs Δ |
+|---|---|---|---|
+| 0° | 0 (bit-identical) | 0 | 0 |
+| 15° | 25 782 (2.46 %) | 0.0204 | 0.034 |
+| 30° | 26 120 (2.49 %) | 0.0792 | 0.318 |
+
+- At 30°, the same few percent of cells change about 4× more than at 15°.
+- On a smaller case, the 30° stack changes **7.72 % of the cells, rel RMS
+  0.110** (15°: 7.61 %, 0.026). That case is seed 1,
+  48×40×96, 0 faults, `--mixing backus --toy-lithology alternating`.
+  These are the numbers measured in the #48 review, reproduced here
+  exactly.
+- The seed-7 32×32×128 3-fault cube changes 4.22 % of the cells at 15°,
+  rel RMS 0.0229 (`salt_vs_2600_stack_change`).
+
+Top-salt reflection, shale (ρ 2.10, Vp 2500, Vs 1000) over salt, textbook
+Zoeppritz (`ZoeppritzForm::Exact`, the pipeline default):
+
+| angle | R, Vs 2250 | R, Vs 2600 | change |
+|---|---|---|---|
+| 0° | 0.30070 | 0.30070 | 0 |
+| 15° | 0.28001 | 0.26323 | −6.0 % |
+| 30° | 0.33589 | 0.23563 | −29.8 % |
+
+Over the overburdens in the salt-Vs spec, the 30° top-salt reflection drops
+by **about 30–40 %**: −29.8 % in the case above, up to −40.2 % for the
+spec's deeper shale case. The spec first quoted 65–82 %.
+That figure came from the legacy `det`-typo Zoeppritz kernel (−79.6 % for
+the shale case above), not from the textbook form the pipeline uses.
+
+Reproduce:
+
+```text
+synthoseis run --e2e --chunked --seed 7 --shape 64,64,256 --faults 4 --store OUT.mdio                 # hash: salt default
+synthoseis run --e2e --chunked --seed 7 --shape 64,64,256 --faults 4 --no-salt --store OUT.mdio       # hash: --no-salt
+synthoseis run --e2e --chunked --seed 7 --shape 64,64,256 --faults 4 [--no-salt | --salt-legacy-vs] --angles 0,15,30 --store OUT.mdio
+cargo run --release -p synthoseis-core --example salt_demo -- /tmp/saltd 7 4 64 64 256              # closures, HC voxels, labels
+```
+
+The CLI store hash is the FNV-1a hash of the angle-stack f32 bits (as
+`store_hash` in `rock_physics_cli.rs`).
 
 Figures (on the bench box, not committed), from `examples/salt_demo.rs` and
 `examples/plot_salt_demo.py`:
@@ -314,9 +410,19 @@ python rust/synthoseis-core/examples/plot_salt_demo.py /tmp/saltd /tmp/salts OUT
     chunk in memory (`salt::verify_salt_labels`); a test corrupts one voxel
     and checks that it is caught.
 - **Multi-process:** `--no-salt`, `--salt-legacy-top-offset`,
-  `--salt-smooth-all-horizons` and `--salt-legacy-vs` are
-  forwarded to workers; multi-process equals a single process for each and
-  for the default.
+  `--salt-smooth-all-horizons` and `--salt-legacy-vs` are forwarded to
+  workers.
+  - Real worker processes accept each switch and match one process
+    (`lithology_flags_reach_multiprocess_workers`). That run is on the 8³
+    multi-process cube, which has no salt voxels, so it cannot show a
+    salt effect.
+  - `main.rs::tests::salt_flags_reach_multiprocess_workers` covers salt.
+    It rebuilds each worker's config from the forwarded flags through the
+    CLI parse chain and checks that it round-trips. It then runs the
+    workers' library path on a salt-bearing 12×10×64 cube: multi-process
+    equals one process for the default and for `--salt-legacy-vs`, and the
+    two differ.
+  - The library invariance tests cover multi-process 1/2/3 with salt.
 - **GPU:** matches CPU with salt (`lithology_gpu.rs`, two salt cases).
 - **Invalid combinations exit 2:**
   - `--no-salt`, `--salt-legacy-top-offset`, `--salt-smooth-all-horizons` or
