@@ -40,16 +40,21 @@ fn legacy_closures<'a>(args: &[&'a str]) -> Vec<&'a str> {
     if !args.iter().any(picks) {
         v.push("--legacy-closure-minimum");
     }
-    // Master goldens predate lift-only drag: restore ccce5cc9 salt-on
-    // smoothing unless salt is off (the flag exits 2 with --no-salt).
+    // Master goldens predate lift-only drag and Vs 2600: restore
+    // ccce5cc9-era salt-on (smooth-all + Vs 2250) unless salt is off
+    // (those flags exit 2 with --no-salt).
     let no_salt = args.iter().any(|a| {
         matches!(
             *a,
-            "--no-salt" | "--salt-smooth-all-horizons" | "--legacy-toy-depth"
+            "--no-salt"
+                | "--salt-smooth-all-horizons"
+                | "--salt-legacy-vs"
+                | "--legacy-toy-depth"
         ) || (*a == "planar")
     });
     if !no_salt {
         v.push("--salt-smooth-all-horizons");
+        v.push("--salt-legacy-vs");
     }
     v
 }
@@ -411,13 +416,16 @@ fn invalid_lithology_flags_exit_2() {
         (&["--closures-unsegmented", "--no-fluids"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids"),
         (&["--closures-unsegmented", "--closures-per-layer"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids or --closures-per-layer"),
         (&["--closures-unsegmented", "--toy-geometry", "planar"], "--closures-unsegmented has no effect with the planar geometry"),
-        (&["--no-salt", "--toy-geometry", "planar"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons have no effect with the planar geometry"),
-        (&["--no-salt", "--legacy-toy-depth"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons have no effect with the planar geometry or --legacy-toy-depth"),
+        (&["--no-salt", "--toy-geometry", "planar"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons / --salt-legacy-vs have no effect with the planar geometry"),
+        (&["--no-salt", "--legacy-toy-depth"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons / --salt-legacy-vs have no effect with the planar geometry or --legacy-toy-depth"),
         (&["--salt-legacy-top-offset", "--toy-geometry", "planar"], "have no effect with the planar geometry"),
         (&["--salt-legacy-top-offset", "--no-salt"], "--salt-legacy-top-offset has no effect with --no-salt"),
         (&["--salt-smooth-all-horizons", "--no-salt"], "--salt-smooth-all-horizons has no effect with --no-salt"),
-        (&["--salt-smooth-all-horizons", "--toy-geometry", "planar"], "--salt-smooth-all-horizons have no effect with the planar geometry"),
-        (&["--salt-smooth-all-horizons", "--legacy-toy-depth"], "--salt-smooth-all-horizons have no effect with the planar geometry or --legacy-toy-depth"),
+        (&["--salt-smooth-all-horizons", "--toy-geometry", "planar"], "have no effect with the planar geometry"),
+        (&["--salt-smooth-all-horizons", "--legacy-toy-depth"], "have no effect with the planar geometry or --legacy-toy-depth"),
+        (&["--salt-legacy-vs", "--no-salt"], "--salt-legacy-vs has no effect with --no-salt"),
+        (&["--salt-legacy-vs", "--toy-geometry", "planar"], "have no effect with the planar geometry"),
+        (&["--salt-legacy-vs", "--legacy-toy-depth"], "have no effect with the planar geometry or --legacy-toy-depth"),
         (&["--fault-labels-through-salt", "--faults", "2", "--toy-geometry", "planar"], "--fault-labels-through-salt has no effect with the planar geometry"),
         (&["--fault-labels-through-salt", "--faults", "2", "--legacy-toy-depth"], "--fault-labels-through-salt has no effect with the planar geometry or --legacy-toy-depth"),
         (&["--fault-labels-through-salt", "--faults", "2", "--no-salt"], "--fault-labels-through-salt has no effect with --no-salt"),
@@ -681,7 +689,7 @@ fn salt_smooth_all_horizons_reproduces_ccce5cc9_demo() {
     /// Angle-stack hash of DEMO under ccce5cc9 defaults (= smooth-all).
     const CCCE5CC9_DEMO: u64 = 0xe43f_d5c4_e35d_71c0;
     let smooth = dir.path().join("smooth.mdio");
-    let out = run_time(&with(DEMO, &["--salt-smooth-all-horizons"]), &smooth);
+    let out = run_time(&with(DEMO, &["--salt-smooth-all-horizons", "--salt-legacy-vs"]), &smooth);
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -694,4 +702,33 @@ fn salt_smooth_all_horizons_reproduces_ccce5cc9_demo() {
     assert!(out.status.success(), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).contains("drag: lift-only"));
     assert_ne!(store_hash(&lift), store_hash(&smooth));
+}
+
+/// `--salt-legacy-vs` restores master f15b87ac salt-on angle stacks on the
+/// demo cube (lift-only drag, Vs 2250); the default (Vs 2600) differs and
+/// prints `salt properties: ... Vs 2600`.
+#[test]
+fn salt_legacy_vs_reproduces_f15b87ac_demo() {
+    let dir = tempfile::tempdir().unwrap();
+    const DEMO: &[&str] = &["--seed", "7", "--shape", "32,32,128", "--faults", "3"];
+    /// Angle-stack hash of DEMO under f15b87ac defaults (= lift-only, Vs 2250).
+    const F15B87AC_DEMO: u64 = 0x2a86_81eb_4b10_7b1d;
+    let legacy = dir.path().join("legacy.mdio");
+    let out = run_time(&with(DEMO, &["--salt-legacy-vs"]), &legacy);
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("salt properties: rho 2.17, Vp 4500, Vs 2250 (--salt-legacy-vs)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("drag: lift-only"), "{stdout}");
+    assert_eq!(store_hash(&legacy), F15B87AC_DEMO, "{:#018x}", store_hash(&legacy));
+    let neu = dir.path().join("new.mdio");
+    let out = run_time(DEMO, &neu);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .contains("salt properties: rho 2.17, Vp 4500, Vs 2600")
+    );
+    assert_ne!(store_hash(&neu), store_hash(&legacy));
 }

@@ -6,6 +6,20 @@ Output-changing defaults are listed here with their opt-out flag.
 
 ### Changed
 
+- **Salt Vs defaults to 2600 m/s** (spec "salt Vs ≈ 2600"). Density and Vp
+  stay 2.17 / 4500. Legacy and master f15b87ac used Vs 2250 (Vp/Vs = 2.0,
+  Poisson 0.33); real halite is closer to Vp/Vs ≈ 1.7–1.8. **Angle stacks
+  change at salt contacts (AVO)**; labels / salt_labels / fault_labels and
+  depth→time pull-up are unchanged.
+  - Opt-out: **`--salt-legacy-vs`** /
+    `RockPhysicsConfig::salt_legacy_vs = true` restores Vs 2250 and master
+    f15b87ac salt-on output bit for bit.
+  - Summary: `salt properties: rho 2.17, Vp 4500, Vs 2600` or
+    `… Vs 2250 (--salt-legacy-vs)`.
+  - API: [`synthoseis_rpm::salt_elastic`]`(legacy_vs)` is the single source
+    of truth (core property fill uses it; no divergent `SALT_VS` in
+    `salt.rs`).
+
 - **Salt horizon drag is lift-only by default** (spec "lift-only salt
   smoothing"). Today's (and legacy's) rule was `G_σ3(m + L)` with
   `L = −2r · salt_mask`, which also blurred the undragged map far from

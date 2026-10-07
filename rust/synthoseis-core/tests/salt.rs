@@ -506,7 +506,7 @@ fn demo(salt: bool) -> E2eConfig {
 }
 
 /// Salt voxels take the legacy salt properties (rho 2.17, vp 4500,
-/// vs 2250) in the elastic model, whatever the layer label, on the default
+/// vs 2600) in the elastic model, whatever the layer label, on the default
 /// config (partial voxels on since PR B2). Salt occupies
 /// `ζ ∈ [lo + ½, hi + ½]` of each column (continuous hull bounds, cell `k`
 /// = `[k, k+1)`):
@@ -541,7 +541,7 @@ fn salt_voxels_take_legacy_properties() {
     let synthoseis_core::rock_physics::ElasticModel::Rpm(rpm) = &model else {
         panic!("default model is the rock-physics model")
     };
-    let salt = (2.17f32, 4500.0f32, 2250.0f32);
+    let salt = (2.17f32, 4500.0f32, 2600.0f32);
     let modulus = |rho: f32, vp: f32| rho as f64 * vp as f64 * vp as f64;
     let (mut labelled, mut inside, mut straddling, mut salt_columns) = (0, 0, 0, 0);
     let mut scratch = synthoseis_core::rock_physics::ColumnScratch::default();
@@ -691,6 +691,37 @@ fn salt_default_and_switches() {
             .map(|v| v.to_bits())
             .collect::<Vec<_>>()
     );
+}
+
+/// Spec salt-vs-2600 §5.2: with `--salt-legacy-vs`, pure salt voxels carry
+/// Vs 2250 (whole-voxel path).
+#[test]
+fn salt_voxels_take_legacy_vs_2250() {
+    let mut cfg = demo(true);
+    cfg.rock_physics.salt_legacy_vs = true;
+    // Whole voxels: every labelled-salt cell is pure salt (no Backus mix).
+    cfg.rock_physics.partial_voxels = synthoseis_core::partial_voxels::PartialVoxelConfig::whole_voxels();
+    let (labels, shape) = generate_labels(&cfg);
+    let model = synthoseis_core::rock_physics::elastic_model(&cfg, &labels, shape);
+    let [ni, nj, nk] = shape;
+    let n = ni * nj * nk;
+    let (mut vp, mut vs, mut rho) = (vec![0f32; n], vec![0f32; n], vec![0f32; n]);
+    model.tile_properties(&labels, shape, 0, ni, 0, nj, &mut vp, &mut vs, &mut rho);
+    let body = salt_body(&cfg).unwrap();
+    let want = synthoseis_rpm::salt_elastic(true);
+    let mut n_salt = 0;
+    for c in 0..ni * nj {
+        for k in 0..nk {
+            if body.contains(c, k) {
+                let v = c * nk + k;
+                assert_eq!((rho[v], vp[v], vs[v]), (want.rho, want.vp, want.vs));
+                n_salt += 1;
+            }
+        }
+    }
+    assert!(n_salt > 100, "salt voxels {n_salt}");
+    assert_eq!(want.vs, 2250.0);
+    assert_eq!(synthoseis_rpm::salt_elastic(false).vs, 2600.0);
 }
 
 /// The legacy absolute top offset (`--salt-legacy-top-offset`) puts the
@@ -977,3 +1008,167 @@ fn salt_drag_modes_invariant_across_paths() {
 }
 
 
+
+
+/// Spec salt-vs-2600 §5.3: labels / salt_labels / fault_labels bit-identical
+/// under default Vs 2600 vs `--salt-legacy-vs` (geometry-only).
+#[test]
+fn salt_vs_2600_label_identity() {
+    for (seed, faults) in [(7u64, 3usize), (7, 0), (1, 3)] {
+        let base = |legacy_vs: bool| E2eConfig {
+            seed,
+            inline_count: 32,
+            crossline_count: 32,
+            samples: 128,
+            faults: FaultConfig::with_count(faults),
+            rock_physics: RockPhysicsConfig {
+                salt_legacy_vs: legacy_vs,
+                ..RockPhysicsConfig::default()
+            },
+            geometry: ToyGeometry::Layered,
+            ..E2eConfig::default()
+        };
+        let a = base(false);
+        let b = base(true);
+        let (la, _) = generate_labels(&a);
+        let (lb, _) = generate_labels(&b);
+        assert_eq!(la, lb, "seed {seed} faults {faults}: depth labels");
+        assert_eq!(
+            synthoseis_core::salt::generate_salt_labels(&a).unwrap(),
+            synthoseis_core::salt::generate_salt_labels(&b).unwrap(),
+            "seed {seed}: salt_labels"
+        );
+        if faults > 0 {
+            assert_eq!(
+                synthoseis_core::generate_fault_labels(&a).unwrap(),
+                synthoseis_core::generate_fault_labels(&b).unwrap(),
+                "seed {seed}: fault_labels"
+            );
+        }
+    }
+}
+
+/// Spec salt-vs-2600 §5.4: angle stacks differ under Vs 2600 vs legacy 2250
+/// (≥ 1 % of cells on seed 7 with salt).
+#[test]
+fn salt_vs_2600_stack_change() {
+    let make = |legacy_vs: bool| E2eConfig {
+        seed: 7,
+        inline_count: 32,
+        crossline_count: 32,
+        samples: 128,
+        faults: FaultConfig::with_count(3),
+        rock_physics: RockPhysicsConfig {
+            salt_legacy_vs: legacy_vs,
+            ..RockPhysicsConfig::default()
+        },
+        geometry: ToyGeometry::Layered,
+        chunk_shape: Some([8, 8, 128]),
+        ..E2eConfig::default()
+    };
+    let (va, _) = generate_chunked(&make(false));
+    let (vb, _) = generate_chunked(&make(true));
+    assert_eq!(va.angle_stack.len(), vb.angle_stack.len());
+    let n = va.angle_stack.len();
+    let changed = va
+        .angle_stack
+        .iter()
+        .zip(&vb.angle_stack)
+        .filter(|(x, y)| x.to_bits() != y.to_bits())
+        .count();
+    let frac = changed as f64 / n as f64;
+    let mut sum = 0.0f64;
+    let mut sum2 = 0.0f64;
+    for (&x, &y) in va.angle_stack.iter().zip(&vb.angle_stack) {
+        let d = (x as f64 - y as f64).abs();
+        sum2 += d * d;
+        sum += y as f64 * y as f64;
+    }
+    let rel_rms = (sum2 / n as f64).sqrt() / (sum / n as f64).sqrt().max(1e-30);
+    eprintln!(
+        "Vs 2600 vs 2250: changed {:.2}% cells, rel RMS {rel_rms:.4}",
+        100.0 * frac
+    );
+    assert!(frac >= 0.01, "expected ≥1% stack change, got {frac}");
+    assert!(
+        (0.01..0.05).contains(&rel_rms),
+        "rel RMS {rel_rms} outside 0.01–0.05"
+    );
+}
+
+/// Spec salt-vs-2600 §5.5: shale→salt Zoeppritz, 0° equal, |R_2600| < |R_2250| at 30°.
+#[test]
+fn salt_vs_2600_zoeppritz_smoke() {
+    use synthoseis_seismic::zoeppritz_pp_form;
+    use synthoseis_seismic::ZoeppritzForm;
+    let shale = (2500.0, 1000.0, 2.10);
+    let s2250 = synthoseis_rpm::salt_elastic(true);
+    let s2600 = synthoseis_rpm::salt_elastic(false);
+    let r = |vs2: f32, ang: f64| {
+        zoeppritz_pp_form(
+            shale.0,
+            shale.1,
+            shale.2,
+            s2250.vp as f64,
+            vs2 as f64,
+            s2250.rho as f64,
+            ang,
+            ZoeppritzForm::Exact,
+        )
+    };
+    let r0_a = r(s2250.vs, 0.0);
+    let r0_b = r(s2600.vs, 0.0);
+    assert!((r0_a - r0_b).abs() < 1e-12, "0° must match: {r0_a} vs {r0_b}");
+    let r30_a = r(s2250.vs, 30.0);
+    let r30_b = r(s2600.vs, 30.0);
+    assert!(
+        r30_b.abs() < r30_a.abs(),
+        "|R_2600|={r30_b} should be < |R_2250|={r30_a} at 30°"
+    );
+}
+
+/// Spec salt-vs-2600 §5.6: salt case bit-identical across paths in both Vs modes.
+#[test]
+fn salt_vs_modes_invariant_across_paths() {
+    use synthoseis_core::{run_e2e_multiprocess, run_e2e_streaming};
+    use synthoseis_io::MdioStore;
+    fn volume_hash(p: &std::path::Path) -> u64 {
+        let v = MdioStore::open(p).unwrap().read_volume().unwrap();
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for x in v {
+            for b in x.to_bits().to_le_bytes() {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
+    for legacy_vs in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let make = |store: &std::path::Path| E2eConfig {
+            seed: 102,
+            inline_count: 24,
+            crossline_count: 20,
+            samples: 128,
+            faults: FaultConfig::with_count(4),
+            rock_physics: RockPhysicsConfig {
+                sand_layer_fraction: Some(0.4),
+                salt_legacy_vs: legacy_vs,
+                ..RockPhysicsConfig::default()
+            },
+            geometry: ToyGeometry::Layered,
+            chunk_shape: Some([5, 7, 32]),
+            store_path: Some(store.to_path_buf()),
+            ..E2eConfig::default()
+        };
+        let classic = dir.path().join("c.mdio");
+        synthoseis_core::pipeline::run_e2e(&make(&classic)).unwrap();
+        let h0 = volume_hash(&classic);
+        let stream = dir.path().join("s.mdio");
+        run_e2e_streaming(&make(&stream)).unwrap();
+        assert_eq!(volume_hash(&stream), h0, "legacy_vs={legacy_vs}: streaming");
+        let mp = dir.path().join("mp.mdio");
+        run_e2e_multiprocess(&make(&mp), 2).unwrap();
+        assert_eq!(volume_hash(&mp), h0, "legacy_vs={legacy_vs}: multiprocess");
+    }
+}

@@ -68,13 +68,29 @@ pub struct Elastic32 {
 }
 
 /// Legacy `Seismic.water_properties`: rho 1.028, Vp 1500, Vs 1000.
-/// Legacy salt properties (`Seismic.py`: `rho = 2.17`, `vp = 4500`,
-/// `vs = 2250` for `lith == 2`, stored as float32).
-pub const SALT: Elastic32 = Elastic32 {
-    rho: 2.17,
-    vp: 4500.0,
-    vs: 2250.0,
-};
+/// Salt density and Vp (pure-halite model; Jones & Davison 2014; Yan 2016).
+pub const SALT_RHO: f32 = 2.17;
+pub const SALT_VP: f32 = 4500.0;
+/// Default salt Vs (m/s). Falcon-Suarez et al. 2024 grain ≈ 2.6 km/s;
+/// Vp/Vs ≈ 1.731, Poisson ≈ 0.25. Opt out with [`salt_elastic`]`(true)`.
+pub const SALT_VS: f32 = 2600.0;
+/// Legacy salt Vs (m/s) since #34 / master f15b87ac (`--salt-legacy-vs`).
+pub const SALT_VS_LEGACY: f32 = 2250.0;
+
+/// Salt elastic properties. `legacy_vs = false` (default) → Vs 2600;
+/// `legacy_vs = true` restores Vs 2250 (master f15b87ac salt-on).
+#[inline]
+pub const fn salt_elastic(legacy_vs: bool) -> Elastic32 {
+    Elastic32 {
+        rho: SALT_RHO,
+        vp: SALT_VP,
+        vs: if legacy_vs { SALT_VS_LEGACY } else { SALT_VS },
+    }
+}
+
+/// Default salt properties (Vs 2600). Prefer [`salt_elastic`] when the
+/// `--salt-legacy-vs` / `salt_legacy_vs` flag is known.
+pub const SALT: Elastic32 = salt_elastic(false);
 
 pub const WATER: Elastic32 = Elastic32 {
     rho: 1.028,
@@ -235,9 +251,9 @@ pub enum VoxelKind {
     /// Sediment of `layer` (index into the shift table) with net-to-gross
     /// `ng` (sand fraction; `ng > 0` mixes in `fluid` sand).
     Layer { layer: usize, ng: f32, fluid: Fluid },
-    /// Legacy `lith == 2` (salt body): constant [`SALT`] properties, set
-    /// before the base forward-fill (legacy `Seismic.py`, after the layer
-    /// loop).
+    /// Legacy `lith == 2` (salt body): constant salt properties from
+    /// [`salt_elastic`], set before the base forward-fill (legacy
+    /// `Seismic.py`, after the layer loop).
     Salt,
 }
 
@@ -276,10 +292,11 @@ pub fn voxel_properties(
     kind: VoxelKind,
     shifts: &[LayerShifts],
     mixing: MixingMethod,
+    salt: Elastic32,
 ) -> Elastic32 {
     match kind {
         VoxelKind::Water => WATER,
-        VoxelKind::Salt => SALT,
+        VoxelKind::Salt => salt,
         VoxelKind::Unfilled => Elastic32::default(),
         VoxelKind::Layer { layer, ng, fluid } => {
             let nk = depth.len();
@@ -301,14 +318,15 @@ pub fn voxel_properties(
 /// Legacy property builder for one trace: water, shale for every sediment
 /// voxel, sand of the voxel's fluid mixed in with its net-to-gross, then the
 /// base forward-fill. `depth` is the legacy `faulted_depth` column (metres
-/// below the mudline, float32). Salt voxels ([`VoxelKind::Salt`]) take the
-/// legacy constants before the forward-fill, as legacy does. The final
+/// below the mudline, float32). Salt voxels ([`VoxelKind::Salt`]) take `salt`
+/// ([`salt_elastic`]) before the forward-fill, as legacy does. The final
 /// scaling factors (all 1.0 by default, and skipping salt) are not ported.
 pub fn legacy_column_properties(
     depth: &[f32],
     kinds: &[VoxelKind],
     shifts: &[LayerShifts],
     mixing: MixingMethod,
+    salt: Elastic32,
     rho: &mut [f32],
     vp: &mut [f32],
     vs: &mut [f32],
@@ -316,7 +334,7 @@ pub fn legacy_column_properties(
     let nk = depth.len();
     assert!(kinds.len() == nk && rho.len() == nk && vp.len() == nk && vs.len() == nk);
     for k in 0..nk {
-        let p = voxel_properties(depth, k, kinds[k], shifts, mixing);
+        let p = voxel_properties(depth, k, kinds[k], shifts, mixing, salt);
         rho[k] = p.rho;
         vp[k] = p.vp;
         vs[k] = p.vs;
@@ -324,4 +342,19 @@ pub fn legacy_column_properties(
     forward_fill_zeros(rho);
     forward_fill_zeros(vp);
     forward_fill_zeros(vs);
+}
+
+#[cfg(test)]
+mod salt_elastic_tests {
+    use super::{salt_elastic, SALT, SALT_VS, SALT_VS_LEGACY};
+
+    #[test]
+    fn salt_elastic_default_and_legacy() {
+        let d = salt_elastic(false);
+        assert_eq!((d.rho, d.vp, d.vs), (2.17, 4500.0, SALT_VS));
+        assert_eq!(d, SALT);
+        let l = salt_elastic(true);
+        assert_eq!((l.rho, l.vp, l.vs), (2.17, 4500.0, SALT_VS_LEGACY));
+        assert_ne!(d.vs, l.vs);
+    }
 }

@@ -68,10 +68,10 @@ const MP: &[&str] = &[
 // equal master d8b96e69 run with the switch on (`--partial-voxel-reflectivity
 // subcell`, and `cell` with `--legacy-depth-as-time`); the opt-out equals
 // master d8b96e69's default (PR B2 evidence, whole store trees `diff -r`).
-const DEFAULT_PLAIN: u64 = 0xc836_c615_0deb_5e17;
-const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0x70ae_83fd_155a_5ada;
+const DEFAULT_PLAIN: u64 = 0x82bf_e625_85ee_8c92;
+const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0xa2f4_7082_3b85_5563;
 const DEFAULT_MP: u64 = 0x28e5_1787_5502_bb1d;
-const WHOLE_PLAIN: u64 = 0xbdbc_eead_ab73_5025;
+const WHOLE_PLAIN: u64 = 0x6420_9caa_660f_d978;
 const WHOLE_MP: u64 = 0x28e5_1787_5502_bb1d;
 
 #[test]

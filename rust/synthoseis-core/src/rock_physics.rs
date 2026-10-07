@@ -228,6 +228,10 @@ pub struct RockPhysicsConfig {
     /// (before push-down). CLI `--salt-smooth-all-horizons`. See
     /// [`crate::salt::drag_horizon_maps`].
     pub salt_smooth_all_horizons: bool,
+    /// Legacy switch: salt Vs = 2250 m/s (master f15b87ac), instead of the
+    /// default 2600. Density and Vp stay 2.17 / 4500. CLI `--salt-legacy-vs`.
+    /// See [`synthoseis_rpm::salt_elastic`].
+    pub salt_legacy_vs: bool,
     /// Legacy switch: keep fault labels inside the salt body (master
     /// 2b3850ba). By default `data/fault_labels` is `fault AND NOT salt`
     /// ([`E2eConfig::effective_fault_salt_mask`]): faults die out against
@@ -266,6 +270,7 @@ impl Default for RockPhysicsConfig {
             salt: true,
             salt_legacy_top_offset: false,
             salt_smooth_all_horizons: false,
+            salt_legacy_vs: false,
             fault_labels_through_salt: false,
             partial_voxels: crate::partial_voxels::PartialVoxelConfig::default(),
         }
@@ -806,6 +811,9 @@ pub struct RpmModel {
     /// Salt body (legacy lithology 2; salt properties override every other
     /// voxel kind). `None` without salt.
     pub salt: Option<crate::salt::SaltBody>,
+    /// Resolved salt elastic ([`synthoseis_rpm::salt_elastic`] of
+    /// [`RockPhysicsConfig::salt_legacy_vs`]).
+    pub salt_props: synthoseis_rpm::Elastic32,
     /// Output time axis when the run converts to two-way time
     /// ([`E2eConfig::time_axis`]); `None` on the legacy depth-as-time axis.
     /// Every fuse path reads it from here, so the model, its depth and its
@@ -1082,6 +1090,7 @@ impl RpmModel {
             mixing: rp.mixing,
             zoeppritz: rp.zoeppritz_form(),
             salt,
+            salt_props: synthoseis_rpm::salt_elastic(rp.salt_legacy_vs),
             time: None,
             partial: None,
         }
@@ -1144,6 +1153,7 @@ impl RpmModel {
             &scratch.kinds,
             &self.shifts,
             self.mixing,
+            self.salt_props,
             rho,
             vp,
             vs,

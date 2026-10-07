@@ -16,8 +16,9 @@
 //!    `m + G(L)`; opt-out `--salt-smooth-all-horizons` restores legacy
 //!    `G(m+L)`), and negative thicknesses are removed from the base upwards.
 //!    The horizons drag up against the flanks.
-//! 3. Lithology 2 inside salt; rock physics sets `rho = 2.17`, `vp = 4500`,
-//!    `vs = 2250` there (before the base forward-fill).
+//! 3. Lithology 2 inside salt; rock physics sets `rho = 2.17`, `vp = 4500`
+//!    and `vs = 2600` there (legacy 2250 with `--salt-legacy-vs`; see
+//!    [`synthoseis_rpm::salt_elastic`]) before the base forward-fill.
 //! 4. Closures: salt makes the horizon gaps that `Closures._flood_fill`
 //!    walls off, so traps seal against the salt flank.
 //!
@@ -51,10 +52,9 @@ use crate::rock_physics::keyed_unit;
 pub const SALT_PAD: usize = 10;
 /// Number of samples of the legacy example cube (top offset scale).
 pub const LEGACY_SAMPLES: f64 = 1250.0;
-/// Legacy salt properties (float32 in the output).
-pub const SALT_RHO: f32 = 2.17;
-pub const SALT_VP: f32 = 4500.0;
-pub const SALT_VS: f32 = 2250.0;
+/// Salt elastic properties live in [`synthoseis_rpm::salt_elastic`]
+/// (default Vs 2600; `--salt-legacy-vs` → 2250). Re-exported for docs.
+pub use synthoseis_rpm::{salt_elastic, SALT_RHO, SALT_VP, SALT_VS, SALT_VS_LEGACY};
 
 /// Keyed draw stream of the salt geometry.
 const STREAM_SALT: u64 = 0x5A17;
