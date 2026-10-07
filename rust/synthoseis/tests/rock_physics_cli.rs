@@ -41,20 +41,20 @@ fn legacy_closures<'a>(args: &[&'a str]) -> Vec<&'a str> {
         v.push("--legacy-closure-minimum");
     }
     // Master goldens predate lift-only drag and Vs 2600: restore
-    // ccce5cc9-era salt-on (smooth-all + Vs 2250) unless salt is off
-    // (those flags exit 2 with --no-salt).
-    let no_salt = args.iter().any(|a| {
-        matches!(
-            *a,
-            "--no-salt"
-                | "--salt-smooth-all-horizons"
-                | "--salt-legacy-vs"
-                | "--legacy-toy-depth"
-        ) || (*a == "planar")
-    });
-    if !no_salt {
-        v.push("--salt-smooth-all-horizons");
-        v.push("--salt-legacy-vs");
+    // ccce5cc9-era salt-on (smooth-all + Vs 2250) when the run has salt.
+    // Each salt opt-out is added on its own unless the run already passes
+    // it. Nothing is added when there is no salt to opt out of (those
+    // flags exit 2 there): `--no-salt`, or a salt-free geometry
+    // (`--legacy-toy-depth`, `--toy-geometry planar`).
+    let has = |flag: &'static str| args.contains(&flag);
+    let no_salt = has("--no-salt");
+    let salt_free_geometry = has("--legacy-toy-depth") || has("planar");
+    if !no_salt && !salt_free_geometry {
+        for flag in ["--salt-smooth-all-horizons", "--salt-legacy-vs"] {
+            if !has(flag) {
+                v.push(flag);
+            }
+        }
     }
     v
 }
@@ -375,7 +375,11 @@ fn alternating_lithology_reproduces_master_after_30() {
     assert_ne!(store_hash(&markov), MASTER30_DEEP, "default must use the Markov lithology");
 }
 
-/// Lithology options reach multi-process workers.
+/// Lithology and salt options reach multi-process workers (real worker
+/// processes; workers exit 2 on a flag they reject). The 8³ multi-process
+/// cube has no salt voxels, so the salt switches cannot change its output
+/// here; `main.rs::tests::salt_flags_reach_multiprocess_workers` checks the
+/// salt flags on a salt-bearing cube.
 #[test]
 fn lithology_flags_reach_multiprocess_workers() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -388,6 +392,8 @@ fn lithology_flags_reach_multiprocess_workers() {
         &["--closures-unsegmented"][..],
         &["--no-salt"][..],
         &["--salt-legacy-top-offset"][..],
+        &["--salt-smooth-all-horizons"][..],
+        &["--salt-legacy-vs"][..],
     ] {
         let single = dir.path().join("single.mdio");
         let out = run(&with(&MP[3..], flags), &single);
@@ -674,10 +680,6 @@ fn fault_labels_through_salt_flag_reproduces_master_2b3850ba() {
         assert_eq!(fault_labels_hash(&p), b4, "{name}: --no-salt fault labels vs master b4f4259");
     }
 }
-
-/// `--salt-smooth-all-horizons` restores master ccce5cc9 salt-on output on
-/// the demo cube (time mode, partial voxels, 3 faults); the default
-/// (lift-only) differs and prints `drag: lift-only`.
 
 /// `--salt-smooth-all-horizons` restores master ccce5cc9 salt-on angle
 /// stacks on the demo cube; the default (lift-only) differs and prints

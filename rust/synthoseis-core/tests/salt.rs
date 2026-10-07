@@ -260,9 +260,17 @@ fn salt_drag_lift_only_far_field_bit_identical() {
 /// Near-flank sanity (spec §5.3): seed 7, 64², mean uplift at bins 1..6
 /// within 1.0 sample of the probe lift-only row; ≤ 2 % of cells in bins
 /// 1..4 move down by > 0.5 sample.
+///
+/// Distance metric: Euclidean distance (in columns) from a non-lifted cell
+/// to the nearest lifted cell of the same horizon, binned by rounding to
+/// the nearest integer, exactly as the spec probe that produced `PROBE`.
+/// (The far-field gate above uses Chebyshev L∞ ≥ 13 instead, because the
+/// separable kernel has radius 12 per axis.) With this metric the measured
+/// means equal `PROBE` to two decimals; the ±1.0 gate is the spec's.
 #[test]
 fn salt_drag_lift_only_near_flank_sanity() {
-    // Probe lift-only mean uplift by Chebyshev distance (seed 7, 64×64×256).
+    // Probe lift-only mean uplift by rounded Euclidean distance, bins 1..6
+    // (spec §2.4 "near-flank mean uplift by distance", seed 7, 64×64×256).
     const PROBE: [f64; 6] = [5.92, 4.02, 2.66, 1.50, 0.77, 0.38];
     let seed = 7u64;
     let cfg = E2eConfig {
@@ -296,7 +304,8 @@ fn salt_drag_lift_only_near_flank_sanity() {
         if !any {
             continue;
         }
-        let mut dist = vec![usize::MAX; n];
+        // Squared Euclidean distance to the nearest lifted cell (∞ if none).
+        let mut dist2 = vec![usize::MAX; n];
         for c in 0..n {
             if !lifted[c] {
                 continue;
@@ -304,13 +313,17 @@ fn salt_drag_lift_only_near_flank_sanity() {
             let (ci, cj) = (c / 64, c % 64);
             for t in 0..n {
                 let (ti, tj) = (t / 64, t % 64);
-                let d = ci.abs_diff(ti).max(cj.abs_diff(tj));
-                dist[t] = dist[t].min(d);
+                let (di, dj) = (ci.abs_diff(ti), cj.abs_diff(tj));
+                dist2[t] = dist2[t].min(di * di + dj * dj);
             }
         }
         for c in 0..n {
-            let d = dist[c];
-            if d == 0 || d == usize::MAX || d > 6 {
+            if lifted[c] || dist2[c] == usize::MAX {
+                continue;
+            }
+            // Bin = round(Euclidean distance), as the probe.
+            let d = (dist2[c] as f64).sqrt().round() as usize;
+            if d == 0 || d > 6 {
                 continue;
             }
             // Uplift = undragged − dragged (k positive down).
@@ -328,6 +341,7 @@ fn salt_drag_lift_only_near_flank_sanity() {
     for d in 1..=6 {
         assert!(cnt[d] > 0, "bin {d} empty");
         let mean = sum[d] / cnt[d] as f64;
+        eprintln!("near-flank bin {d}: mean uplift {mean:.2} (probe {:.2}, n={})", PROBE[d - 1], cnt[d]);
         assert!(
             (mean - PROBE[d - 1]).abs() <= 1.0,
             "bin {d}: mean uplift {mean} vs probe {}",
@@ -1007,43 +1021,65 @@ fn salt_drag_modes_invariant_across_paths() {
     }
 }
 
-
-
-
 /// Spec salt-vs-2600 §5.3: labels / salt_labels / fault_labels bit-identical
-/// under default Vs 2600 vs `--salt-legacy-vs` (geometry-only).
+/// under default Vs 2600 vs `--salt-legacy-vs` (geometry-only), for seeds 7
+/// and 1 with 3 and 0 faults: the depth-domain cubes, and the output-domain
+/// (two-way time) cubes the store writes, with partial voxels (default) and
+/// whole voxels. Vs does not enter the traveltime (Vp only), so the time
+/// cubes match too.
 #[test]
 fn salt_vs_2600_label_identity() {
-    for (seed, faults) in [(7u64, 3usize), (7, 0), (1, 3)] {
-        let base = |legacy_vs: bool| E2eConfig {
-            seed,
-            inline_count: 32,
-            crossline_count: 32,
-            samples: 128,
-            faults: FaultConfig::with_count(faults),
-            rock_physics: RockPhysicsConfig {
-                salt_legacy_vs: legacy_vs,
-                ..RockPhysicsConfig::default()
-            },
-            geometry: ToyGeometry::Layered,
-            ..E2eConfig::default()
-        };
-        let a = base(false);
-        let b = base(true);
-        let (la, _) = generate_labels(&a);
-        let (lb, _) = generate_labels(&b);
-        assert_eq!(la, lb, "seed {seed} faults {faults}: depth labels");
-        assert_eq!(
-            synthoseis_core::salt::generate_salt_labels(&a).unwrap(),
-            synthoseis_core::salt::generate_salt_labels(&b).unwrap(),
-            "seed {seed}: salt_labels"
-        );
-        if faults > 0 {
+    use synthoseis_core::partial_voxels::PartialVoxelConfig;
+    use synthoseis_core::rock_physics::elastic_model;
+    use synthoseis_core::time_mode::generate_output_labels;
+    for (seed, faults) in [(7u64, 3usize), (7, 0), (1, 3), (1, 0)] {
+        for (pv_name, pv) in [
+            ("partial", PartialVoxelConfig::default()),
+            ("whole", PartialVoxelConfig::whole_voxels()),
+        ] {
+            let base = |legacy_vs: bool| E2eConfig {
+                seed,
+                inline_count: 32,
+                crossline_count: 32,
+                samples: 128,
+                faults: FaultConfig::with_count(faults),
+                rock_physics: RockPhysicsConfig {
+                    salt_legacy_vs: legacy_vs,
+                    partial_voxels: pv,
+                    ..RockPhysicsConfig::default()
+                },
+                geometry: ToyGeometry::Layered,
+                ..E2eConfig::default()
+            };
+            let a = base(false);
+            let b = base(true);
+            assert!(a.time_enabled(), "default output is two-way time");
+            let tag = format!("seed {seed} faults {faults} {pv_name}");
+            let (la, sa) = generate_labels(&a);
+            let (lb, sb) = generate_labels(&b);
+            assert_eq!(la, lb, "{tag}: depth labels");
+            let salt_a = synthoseis_core::salt::generate_salt_labels(&a).unwrap();
+            assert!(salt_a.contains(&1), "{tag}: salt in the cube");
             assert_eq!(
-                synthoseis_core::generate_fault_labels(&a).unwrap(),
-                synthoseis_core::generate_fault_labels(&b).unwrap(),
-                "seed {seed}: fault_labels"
+                salt_a,
+                synthoseis_core::salt::generate_salt_labels(&b).unwrap(),
+                "{tag}: depth salt_labels"
             );
+            assert_eq!(
+                synthoseis_core::generate_fault_labels(&a),
+                synthoseis_core::generate_fault_labels(&b),
+                "{tag}: depth fault_labels"
+            );
+            // Output domain (time): labels, fault_labels and salt_labels as
+            // written to the store.
+            let oa = generate_output_labels(&a, &la, &elastic_model(&a, &la, sa));
+            let ob = generate_output_labels(&b, &lb, &elastic_model(&b, &lb, sb));
+            assert_eq!(oa.shape, ob.shape, "{tag}: output shape");
+            assert_eq!(oa.labels, ob.labels, "{tag}: time labels");
+            assert_eq!(oa.salt, ob.salt, "{tag}: time salt_labels");
+            assert!(oa.salt.as_ref().is_some_and(|s| s.contains(&1)), "{tag}: time salt");
+            assert_eq!(oa.faults, ob.faults, "{tag}: time fault_labels");
+            assert_eq!(oa.faults.is_some(), faults > 0, "{tag}: fault cube present");
         }
     }
 }
