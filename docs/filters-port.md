@@ -214,8 +214,9 @@ How it runs, per column (`time_mode::finish_trace_padded`):
 1. The time reflectivity is computed into `nt + Pb` samples with the existing
    column routines (whole voxels, partial `subcell`, partial `cell`). Below
    the model base there are no interfaces, so the pad is zero there.
-2. With noise on, `Pt = Pb` zero samples are put above time 0. Window samples
-   get `sample(col·nt + k)` (today's field, bit for bit); pad samples get
+2. Top pad: `Pt = Pb` with noise; `Pt = h` with a kept Ricker + bandpass and
+   no noise (the Ricker precursor above time 0); else 0. Window samples get
+   `sample(col·nt + k)` (today's field, bit for bit); pad samples get
    `sample_pad(col, pad_index)`, top pad first. `data_std` is unchanged.
 3. The Ricker (unless skipped) is a "same" convolution over the padded buffer.
 4. The bandpass (`IirFilter::filtfilt_padded_f32`) runs forward-backward over
@@ -238,15 +239,28 @@ padded length.
 What it changes (seed 7, 32 × 32 × 128, 15°):
 
 - **Default run** (Ricker only): only samples 121–127 of columns whose model
-  continues below the window (4.65 % of cells, rel. RMS 0.017, at most 6 % of
-  peak). Short columns are unchanged bit for bit.
+  continues below the window (4.65 % of cells, rel. RMS 0.017). The max change
+  is seed-dependent (median 3.9 % of peak across seeds 1–30; up to 35 % where
+  a strong reflector such as a salt top sits just below the window, seed 17).
+  Columns whose padded reflectivity is zero below the window are unchanged
+  bit for bit.
 - **`--bandpass 4,30`**: every sample. The old edges were off from the
   physically correct answer (a 2,048-sample pad down to the model base) by
   rel. RMS 0.17 and up to 48 % of peak; the new default matches it to 3e-8 of
   peak (the f32 rounding of the output).
+- **`--keep-ricker` + bandpass (no noise):** the top pad is `h` = 8 samples
+  so the Ricker precursor above time 0 reaches the forward bandpass (with
+  `Pt = 0` the error was up to 7.6e-5 of peak).
 - **Noise**: strength at the first and last sample 0.99 / 0.97 of mid-trace
   (was 0.16 at the first sample).
 - **Labels**: unchanged everywhere.
+
+**Order ≥ 6 at dt ≤ 2 ms:** with corners ≤ ~4 Hz the transfer-function
+(`ba`) recursion carries ~1e-3 of peak of f64 round-off in **both** edge
+modes (physical and `--legacy-filter-edges`). Use order ≤ 5 or dt 4 ms. The
+nightly edge_pad sweep gates against an SOS-form reference (≤ 1e-5 for
+orders 2–5, ≤ 5e-3 for order 6 as the documented `ba` floor). Converting
+the physical bandpass to SOS is a deferred follow-up.
 
 **Opt-out:** `--legacy-filter-edges` (CLI, forwarded to multi-process
 workers) / `TimeConfig::legacy_filter_edges = true` (library) restores

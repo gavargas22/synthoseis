@@ -448,6 +448,42 @@ fn bandpass_truth_gate() {
 /// §7.4 shift invariance (the #39 note): the model moved down by 4, 16
 /// and 40 samples (more water) gives the shifted output in the top 60
 /// samples to ≤ 1e-8 of peak; the legacy edges are off by > 10 %.
+
+/// §7.3 keep-ricker + bandpass (no noise): with `Pt = h` the Ricker
+/// precursor above time 0 reaches the forward bandpass, so the default
+/// matches a `Pb = 2048` reference to ≤ 1e-6 of peak (filter-edge spec
+/// §4.2, PR #50 review nit 1).
+#[test]
+fn keep_ricker_bandpass_truth_gate() {
+    let mut c = bandpass(&demo(7, 3), 1);
+    c.filters.keep_ricker = true;
+    let nt = c.output_samples();
+    let axis = axis_of(&c);
+    let pbp = bp_4_30(&axis).edge_pad().unwrap();
+    let pads = EdgePads::for_chain(&axis, &c.ricker(), Some(pbp), false);
+    assert_eq!(pads.top, 8, "Pt = h with keep-ricker + bandpass");
+    assert_eq!(pads.bottom, 8 + pbp);
+    let mut reference = c.clone();
+    reference.time.edge_pad_override = Some(2048);
+    let (def, truth) = (stack(&c), stack(&reference));
+    let pk = peak(&truth);
+    let err = def
+        .iter()
+        .zip(&truth)
+        .fold(0.0f64, |m, (a, b)| m.max((*a as f64 - *b as f64).abs()))
+        / pk;
+    println!(
+        "keep-ricker truth gate seed 7 bp 4-30: Pt = {}, Pb = {}; max |default − truth| = {err:.2e} of peak",
+        pads.top,
+        pads.bottom
+    );
+    assert!(err <= 1e-6, "keep-ricker default vs truth {err:e} of peak");
+    // Without the top pad the precursor is dropped: a Pt = 0 chain (forced
+    // by zeroing the wavelet for EdgePads only) would differ; the production
+    // pad is what the truth gate above checks.
+    let _ = nt;
+}
+
 #[test]
 fn bandpass_shift_invariance() {
     let c = demo(7, 3);
@@ -761,7 +797,8 @@ fn labels_are_identical_with_and_without_the_legacy_edges() {
 }
 
 /// The test-only `Pb` override reaches the chain; the default pads are
-/// `h` (Ricker only), `h + Pbp` / 0 (bandpass), `Pb` / `Pb` (noise).
+/// `h` / 0 (Ricker only), `Pbp` / 0 (bandpass, Ricker skipped), `h + Pbp` /
+/// `h` (keep-ricker + bandpass), `Pb` / `Pb` (noise).
 #[test]
 fn edge_pads_follow_the_chain() {
     let c = demo(7, 3);
@@ -780,6 +817,15 @@ fn edge_pads_follow_the_chain() {
             bottom: pbp
         }
     );
+    // keep-ricker + bandpass, no noise: Pt = h (the Ricker precursor above
+    // time 0 must reach the forward bandpass).
+    assert_eq!(
+        EdgePads::for_chain(&axis, &w, Some(pbp), false),
+        EdgePads {
+            top: 8,
+            bottom: 8 + pbp
+        }
+    );
     assert_eq!(
         EdgePads::for_chain(&axis, &w, Some(pbp), true),
         EdgePads {
@@ -792,7 +838,7 @@ fn edge_pads_follow_the_chain() {
     assert_eq!(
         EdgePads::for_chain(&axis_of(&o), &w, Some(pbp), false),
         EdgePads {
-            top: 0,
+            top: 8,
             bottom: 2048
         }
     );
@@ -891,14 +937,122 @@ fn nightly_truth_gate_64() {
     );
 }
 
+
+/// Second-order sections of a Butterworth bandpass (matched-z bilinear
+/// transform, same poles as [`butterworth_bandpass`]). Used only as a
+/// numerically stable f64 reference for the nightly edge_pad gate: the
+/// production filter stays in transfer-function (`ba`) form.
+type C64 = (f64, f64);
+
+fn c_mul(a: C64, b: C64) -> C64 {
+    (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
+}
+fn c_div(a: C64, b: C64) -> C64 {
+    let d = b.0 * b.0 + b.1 * b.1;
+    ((a.0 * b.0 + a.1 * b.1) / d, (a.1 * b.0 - a.0 * b.1) / d)
+}
+fn c_add(a: C64, b: C64) -> C64 {
+    (a.0 + b.0, a.1 + b.1)
+}
+fn c_sub(a: C64, b: C64) -> C64 {
+    (a.0 - b.0, a.1 - b.1)
+}
+fn c_sqrt(a: C64) -> C64 {
+    let r = (a.0 * a.0 + a.1 * a.1).sqrt();
+    let re = ((r + a.0) / 2.0).sqrt();
+    let im = ((r - a.0) / 2.0).sqrt().copysign(a.1);
+    (re, im)
+}
+
+/// Cascaded biquads `(b0, b1, b2, a1, a2)` of an order-`n` Butterworth
+/// bandpass at sample interval `dt_ms` ms. Gain is concentrated on the
+/// first section.
+fn butterworth_sos(lo: f64, hi: f64, dt_ms: f64, n: usize) -> Vec<[f64; 5]> {
+    use std::f64::consts::PI;
+    let nyq = 0.5 / (dt_ms / 1000.0);
+    let (low, high) = (lo / nyq, hi / nyq);
+    let w0 = 4.0 * (PI * low / 2.0).tan();
+    let w1 = 4.0 * (PI * high / 2.0).tan();
+    let bw = w1 - w0;
+    let wo = (w0 * w1).sqrt();
+    let mut pbp = Vec::with_capacity(2 * n);
+    for idx in 0..n {
+        let m = -(n as f64) + 1.0 + 2.0 * idx as f64;
+        let th = PI * m / (2 * n) as f64;
+        let p = (-th.cos(), -th.sin());
+        let q = (p.0 * bw / 2.0, p.1 * bw / 2.0);
+        let r = c_sqrt(c_sub(c_mul(q, q), (wo * wo, 0.0)));
+        pbp.push(c_add(q, r));
+        pbp.push(c_sub(q, r));
+    }
+    let kbp = bw.powi(n as i32);
+    let fs2 = (4.0, 0.0);
+    let mut pz: Vec<C64> = pbp.iter().map(|&q| c_div(c_add(fs2, q), c_sub(fs2, q))).collect();
+    let mut den = (1.0, 0.0);
+    for &q in &pbp {
+        den = c_mul(den, c_sub(fs2, q));
+    }
+    let kz = kbp * c_div((4f64.powi(n as i32), 0.0), den).0;
+    // Pair digital poles into n biquads. Complex poles come in conjugates;
+    // a real LP prototype pole can map to two real BP poles when |q| > wo.
+    // Every section takes zeros at z = ±1 → b = [g, 0, -g].
+    let mut secs = Vec::with_capacity(n);
+    let mut first = true;
+    while !pz.is_empty() {
+        let p = pz.remove(0);
+        let g = if first { kz } else { 1.0 };
+        first = false;
+        if p.1.abs() < 1e-10 {
+            // Real pole: find another real and make a two-real-pole biquad.
+            let j = pz
+                .iter()
+                .position(|q| q.1.abs() < 1e-10)
+                .expect("SOS: unpaired real pole");
+            let q = pz.remove(j);
+            // (1 - p z^{-1})(1 - q z^{-1}) = 1 - (p+q) z^{-1} + pq z^{-2}
+            secs.push([g, 0.0, -g, -(p.0 + q.0), p.0 * q.0]);
+        } else {
+            let j = pz
+                .iter()
+                .position(|q| (q.0 - p.0).abs() < 1e-9 && (q.1 + p.1).abs() < 1e-9)
+                .unwrap_or_else(|| panic!("SOS: no conjugate for {p:?}"));
+            pz.remove(j);
+            secs.push([g, 0.0, -g, -2.0 * p.0, p.0 * p.0 + p.1 * p.1]);
+        }
+    }
+    assert_eq!(secs.len(), n, "SOS section count");
+    secs
+}
+fn sos_pass(secs: &[[f64; 5]], x: &mut [f64]) {
+    for s in secs {
+        let (mut z0, mut z1) = (0.0, 0.0);
+        for v in x.iter_mut() {
+            let xn = *v;
+            let y = s[0] * xn + z0;
+            z0 = s[1] * xn - s[3] * y + z1;
+            z1 = s[2] * xn - s[4] * y;
+            *v = y;
+        }
+    }
+}
+
+/// Zero-state forward-backward SOS filtfilt; returns the first `nt` samples.
+fn sos_filtfilt(secs: &[[f64; 5]], x: &[f32], nt: usize) -> Vec<f64> {
+    let mut s: Vec<f64> = x.iter().map(|&v| v as f64).collect();
+    sos_pass(secs, &mut s);
+    s.reverse();
+    sos_pass(secs, &mut s);
+    s.reverse();
+    s[..nt].to_vec()
+}
+
 /// Nightly: `edge_pad` over corner frequencies and orders at dt 2 and 4 ms:
-/// finite, below the cap, monotone in the tolerance, and the padded chain
-/// against a 4× longer pad (spikes every 7 samples down to a model base
-/// half-way into the pad, then the half-space) stays within 1e-5 of peak
-/// (the 1e-6 per-impulse tail summed over ~100 spikes) for orders 2–5.
-/// Order 6 is printed, not gated: at dt 2 ms with a 3 Hz corner the padded
-/// chain differs from the long pad by ~2e-3 of peak (reported to Strata;
-/// the default order is 4).
+/// finite, below the cap, monotone in the tolerance. The production `ba`
+/// padded filtfilt is gated against an SOS-form f64 reference (8× the
+/// edge pad, zero states): ≤ 1e-5 of peak for orders 2–5, and ≤ 5e-3 for
+/// order 6 (the documented `ba` round-off floor at dt ≤ 2 ms with low
+/// corners; filter-edge spec §7 / §9, PR #50 review item 2). Production
+/// stays in `ba` form (SOS conversion is a deferred follow-up).
 #[test]
 #[ignore = "nightly: edge_pad sweep over corners and orders"]
 fn nightly_edge_pad_sweep() {
@@ -914,7 +1068,8 @@ fn nightly_edge_pad_sweep() {
                 if hi >= 500.0 / dt {
                     continue;
                 }
-                let f = butterworth_bandpass(lo, hi, legacy_digitisation_ms(dt), order).unwrap();
+                let digi = legacy_digitisation_ms(dt);
+                let f = butterworth_bandpass(lo, hi, digi, order).unwrap();
                 let p = f.edge_pad().unwrap();
                 let p7 = f.edge_pad_tol(1e-7).unwrap();
                 let p5 = f.edge_pad_tol(1e-5).unwrap();
@@ -923,7 +1078,7 @@ fn nightly_edge_pad_sweep() {
                     "{lo}-{hi} order {order} dt {dt}: {p5} {p} {p7}"
                 );
                 let nt = 128;
-                let mut x = vec![0f32; nt + 4 * p];
+                let mut x = vec![0f32; nt + 8 * p];
                 for (k, v) in x.iter_mut().enumerate().take(nt + p / 2) {
                     *v = if k % 7 == 3 {
                         ((k as f32) * 0.31).sin()
@@ -932,20 +1087,24 @@ fn nightly_edge_pad_sweep() {
                     };
                 }
                 let mut a = x[..nt + p].to_vec();
-                let mut b = x.clone();
                 let mut s = Vec::new();
                 f.filtfilt_padded_f32(&mut a, 0, nt, &mut s).unwrap();
-                f.filtfilt_padded_f32(&mut b, 0, nt, &mut s).unwrap();
-                let pk = peak(&b[..nt]);
+                let secs = butterworth_sos(lo, hi, digi, order);
+                let truth = sos_filtfilt(&secs, &x[..nt + 8 * p], nt);
+                let pk = truth.iter().fold(0.0f64, |m, &v| m.max(v.abs()));
                 let e = a[..nt]
                     .iter()
-                    .zip(&b[..nt])
-                    .fold(0.0f64, |m, (x, y)| m.max((*x as f64 - *y as f64).abs()))
+                    .zip(&truth)
+                    .fold(0.0f64, |m, (&x, &y)| m.max((x as f64 - y).abs()))
                     / pk;
-                println!("dt {dt} order {order} {lo}-{hi} Hz: edge_pad {p} (1e-5: {p5}, 1e-7: {p7}), vs 4x pad {e:.1e} of peak");
-                if order <= 5 {
-                    assert!(e <= 1e-5, "{lo}-{hi} order {order} dt {dt}: {e}");
-                }
+                let bound = if order <= 5 { 1e-5 } else { 5e-3 };
+                println!(
+                    "dt {dt} order {order} {lo}-{hi} Hz: edge_pad {p} (1e-5: {p5}, 1e-7: {p7}), ba vs SOS 8P {e:.1e} of peak (bound {bound:.0e})"
+                );
+                assert!(
+                    e <= bound,
+                    "{lo}-{hi} order {order} dt {dt}: ba vs SOS {e} > {bound}"
+                );
             }
         }
     }

@@ -36,15 +36,21 @@ impl EdgePads {
     /// The pads for a time chain with `wavelet` (empty = skipped), the
     /// bandpass edge pad `bandpass_pad` (`IirFilter::edge_pad`, `None` =
     /// no bandpass) and `noise`: `Pb = h + Pbp` with `h = (len − 1) / 2`,
-    /// or `axis.edge_pad_override` (test hook); `Pt = Pb` with noise, else
-    /// 0 (zero reflectivity above time 0 and a zero start state are exact).
+    /// or `axis.edge_pad_override` (test hook). Top pad: `Pt = Pb` with
+    /// noise; `Pt = h` with a kept Ricker + bandpass and no noise (the
+    /// Ricker precursor above time 0 must reach the bandpass); else 0
+    /// (zero reflectivity above time 0 and a zero start state are exact).
     pub fn for_chain(axis: &TimeAxis, wavelet: &[f64], bandpass_pad: Option<usize>, noise: bool) -> Self {
         let h = if wavelet.is_empty() { 0 } else { (wavelet.len() - 1) / 2 };
         let bottom = axis.edge_pad_override.unwrap_or(h + bandpass_pad.unwrap_or(0));
-        EdgePads {
-            top: if noise { bottom } else { 0 },
-            bottom,
-        }
+        let top = if noise {
+            bottom
+        } else if h > 0 && bandpass_pad.is_some() {
+            h
+        } else {
+            0
+        };
+        EdgePads { top, bottom }
     }
 
     /// Samples of the padded per-column buffer, `Pt + nt + Pb`.
