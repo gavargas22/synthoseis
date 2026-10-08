@@ -25,4 +25,4 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
       - name: cargo test -- --ignored
-        run: cargo test --workspace -- --ignored
+        run: cargo test --workspace --no-fail-fast -- --ignored
