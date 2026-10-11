@@ -225,16 +225,50 @@ fn assert_mask_removes_overlap(what: &str, masked: &[u8], through: &[u8], salt: 
 }
 
 /// Faults and salt together at 24 × 24 × 128 (seed 4, RICH flags). Without
-/// the mask the output cubes have 150 fault ∩ salt voxels; the mask (#38)
-/// removes exactly those. 30–36 of the 150 (30, 30 and 36 for the three
-/// chunk shapes here) touch a chunk face: they have a removed neighbour in
-/// the next chunk across an i, j or k face. So every per-chunk writer masks
-/// on both sides of chunk edges (spec §5.4, §8), and every path is
-/// bit-identical with the mask on.
+/// the mask the output cubes have 147 fault ∩ salt voxels; the mask (#38)
+/// removes exactly those. 32, 29 and 36 of the 147 (for the chunk shapes
+/// `[5,7,nt]`, `[8,5,16]` and `[3,20,32]`) touch a chunk face: they have a
+/// removed neighbour in the next chunk across an i, j or k face. So every
+/// per-chunk writer masks on both sides of chunk edges (spec §5.4, §8), and
+/// every path is bit-identical with the mask on.
+///
+/// 150 (faces 31 / 29 / 36) was the ccce5cc9 value. #47 (f15b87ac,
+/// lift-only salt drag) keeps the undragged horizon maps and adds only the
+/// smoothed salt lift, where smooth-all blurred every map (seabed
+/// included). That moves the fault labels (the fault model tapers against
+/// the seabed horizon) and the traveltime (overburden layers and their
+/// velocities shift); each moves fault ∩ salt by one sample at the salt
+/// edge, and the salt body is identical. Net −3 = 8 lost + 5 gained, all at
+/// time samples 78–85, i 2–10, j 4–11, 0–8 samples from the salt top or
+/// base: 5 losses are fault-label changes at the same depth sample; the
+/// other 3 losses and the 5 gains are 0.1–0.9 ms traveltime shifts at the
+/// salt top picking the neighbouring depth sample. Physical, not a tiling
+/// artefact: every face and tiling check passes at 147. The smooth-all
+/// switch keeps 150
+/// ([`time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_smooth_all`]).
 #[test]
 #[ignore = "nightly: fault/salt mask across chunk edges, every writer path"]
 fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
-    let cfg = rich(4, [24, 24, 128], None, 3);
+    fault_salt_across_chunk_edges(rich(4, [24, 24, 128], None, 3), 147, [32, 29, 36]);
+}
+
+/// [`time_mode_tiling_invariance_faults_and_salt_across_chunk_edges`] under
+/// `salt_smooth_all_horizons` (`--salt-smooth-all-horizons`, the pre-#47
+/// drag): the ccce5cc9 pin, 150 fault ∩ salt voxels, faces 31 / 29 / 36,
+/// through the same face and tiling checks.
+#[test]
+#[ignore = "nightly: fault/salt mask across chunk edges, smooth-all salt drag, every writer path"]
+fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_smooth_all() {
+    let mut cfg = rich(4, [24, 24, 128], None, 3);
+    cfg.rock_physics.salt_smooth_all_horizons = true;
+    fault_salt_across_chunk_edges(cfg, 150, [31, 29, 36]);
+}
+
+/// The fault ∩ salt chunk-edge checks of `cfg`: the mask removes exactly
+/// the `want` fault ∩ salt voxels of the unmasked output, `faces[n]` of them
+/// touch a chunk face of the n-th chunk shape and they span several chunks,
+/// then every writer path is tiling invariant on those chunk shapes.
+fn fault_salt_across_chunk_edges(cfg: E2eConfig, want: usize, faces: [usize; 3]) {
     let m = mask_cubes(&cfg);
     let removed = assert_mask_removes_overlap("seed 4 output labels", &m.masked, &m.through, &m.salt);
     let [ni, nj, nt] = cfg.output_shape();
@@ -246,9 +280,9 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
         .filter(|&x| m.through[x] == 1 && m.salt[x] == 1)
         .map(|x| [x / (nj * nt), (x / nt) % nj, x % nt])
         .collect();
-    assert_eq!(removed, 150, "seed 4: fault ∩ salt voxels of the unmasked output");
+    assert_eq!(removed, want, "seed 4: fault ∩ salt voxels of the unmasked output");
     let chunks = [[5, 7, 0], [8, 5, 16], [3, 20, 32]];
-    for c in chunks {
+    for (c, want_face) in chunks.into_iter().zip(faces) {
         let c = [c[0], c[1], if c[2] == 0 { nt } else { c[2] }];
         let dims = [ni, nj, nt];
         // Removed voxels with a removed neighbour in the next chunk across
@@ -270,7 +304,7 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
             "seed 4: mask removed {removed} fault ∩ salt voxels; {on_face} touch a chunk face of {c:?}; in {} chunks",
             ids.len()
         );
-        assert!(on_face > 0, "the mask must remove voxels across a chunk face of {c:?}");
+        assert_eq!(on_face, want_face, "seed 4: removed voxels on a chunk face of {c:?}");
         assert!(ids.len() >= 2, "removed voxels must span several chunks of {c:?}");
     }
     assert_tiling_invariant(&cfg, &chunks);
