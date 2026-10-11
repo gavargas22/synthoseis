@@ -67,7 +67,6 @@ pub struct Elastic32 {
     pub vs: f32,
 }
 
-/// Legacy `Seismic.water_properties`: rho 1.028, Vp 1500, Vs 1000.
 /// Salt density and Vp (pure-halite model; Jones & Davison 2014; Yan 2016).
 pub const SALT_RHO: f32 = 2.17;
 pub const SALT_VP: f32 = 4500.0;
@@ -88,10 +87,20 @@ pub const fn salt_elastic(legacy_vs: bool) -> Elastic32 {
     }
 }
 
-/// Default salt properties (Vs 2600). Prefer [`salt_elastic`] when the
-/// `--salt-legacy-vs` / `salt_legacy_vs` flag is known.
+/// Default salt properties only: ρ 2.17, Vp 4500, **Vs 2600**, i.e.
+/// `salt_elastic(false)`.
+///
+/// **This constant ignores `--salt-legacy-vs`.** It is a fixed default, not
+/// the run's salt. Code that builds properties for a run must use
+/// [`salt_elastic`]`(rock.salt_legacy_vs)` (the pipeline resolves it once
+/// into `RpmModel::salt_props` in `synthoseis-core`), so that
+/// `--salt-legacy-vs` / `RockPhysicsConfig::salt_legacy_vs` gets Vs 2250.
+/// The property kernels ([`voxel_properties`], [`legacy_column_properties`])
+/// take the salt as an argument for that reason. Kept public for API
+/// stability; nothing in the pipeline reads it.
 pub const SALT: Elastic32 = salt_elastic(false);
 
+/// Legacy `Seismic.water_properties`: rho 1.028, Vp 1500, Vs 1000.
 pub const WATER: Elastic32 = Elastic32 {
     rho: 1.028,
     vp: 1500.0,

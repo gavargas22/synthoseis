@@ -1078,4 +1078,217 @@ mod tests {
             assert_eq!((back, legacy_closure_contact_cap), (minimum, cap));
         }
     }
+
+    /// Rebuild `(rock, geometry, time)` from a `run` argv through the same
+    /// parse chain as `main` (rock physics, geometry, lithology, salt, time,
+    /// partial voxels, closures). Used for the orchestrator's own flags and
+    /// for the argv a multi-process worker receives.
+    fn rebuild_from_argv(
+        argv: &[String],
+    ) -> (RockPhysicsConfig, synthoseis_core::ToyGeometry, synthoseis_core::TimeConfig) {
+        let cli = <super::Cli as clap::Parser>::try_parse_from(argv).expect("clap accepts the argv");
+        let Some(super::Commands::Run {
+            faults,
+            bandpass_trailing_sample,
+            legacy_toy_depth,
+            legacy_zoeppritz,
+            mixing,
+            net_to_gross,
+            first_random_layer,
+            no_fluids,
+            toy_geometry,
+            toy_lithology,
+            sand_layer_fraction,
+            sand_layer_thickness,
+            closures_per_layer,
+            closures_unsegmented,
+            legacy_closure_minimum,
+            min_closure_voxels,
+            legacy_closure_contact_cap,
+            no_salt,
+            salt_legacy_top_offset,
+            salt_smooth_all_horizons,
+            salt_legacy_vs,
+            legacy_depth_as_time,
+            dt_ms,
+            twt_samples,
+            twt_kernel,
+            fault_labels_through_salt,
+            legacy_whole_voxels,
+            partial_voxel_reflectivity,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected `run`")
+        };
+        let rock = super::parse_rock_physics(
+            legacy_toy_depth,
+            legacy_zoeppritz,
+            &mixing,
+            net_to_gross,
+            first_random_layer,
+            no_fluids,
+            closures_per_layer,
+            closures_unsegmented,
+        )
+        .unwrap();
+        let geometry = super::parse_geometry(toy_geometry.as_deref(), legacy_toy_depth).unwrap();
+        let rock = super::apply_lithology(
+            rock,
+            geometry,
+            toy_lithology.as_deref(),
+            sand_layer_fraction,
+            sand_layer_thickness,
+        )
+        .unwrap();
+        let mut rock = super::apply_salt(
+            rock,
+            geometry,
+            no_salt,
+            salt_legacy_top_offset,
+            salt_smooth_all_horizons,
+            salt_legacy_vs,
+            fault_labels_through_salt,
+            faults,
+        )
+        .unwrap();
+        let time = super::parse_time(
+            legacy_depth_as_time,
+            legacy_toy_depth,
+            dt_ms,
+            twt_samples,
+            twt_kernel.as_deref(),
+            bandpass_trailing_sample,
+        )
+        .unwrap();
+        rock.partial_voxels = super::parse_partial_voxels(
+            legacy_whole_voxels,
+            partial_voxel_reflectivity.as_deref(),
+            geometry,
+            time.enabled,
+        )
+        .unwrap();
+        let rock = super::apply_closures(
+            rock,
+            geometry,
+            legacy_closure_minimum,
+            min_closure_voxels,
+            legacy_closure_contact_cap,
+        )
+        .unwrap();
+        (rock, geometry, time)
+    }
+
+    /// `--salt-legacy-vs` (and the other salt switches) reach multi-process
+    /// workers, and a salt-bearing cube run through the multi-process path
+    /// equals one process for each Vs setting; the two settings differ.
+    ///
+    /// The CLI cannot run this end to end with real worker processes:
+    /// `--multiprocess` and `--worker-id` reject `--shape`, and the 8³ default
+    /// never contains salt (the salt top is ~10–20 samples down). So each
+    /// worker's config is rebuilt here from the exact flags the orchestrator
+    /// passes (`rock_physics_args` + `time_args` + `--toy-geometry`, see
+    /// `cli_jobs::maybe_run_multiprocess`) through `main`'s parse chain, and
+    /// the workers' library calls (`prepare_multiprocess_store`,
+    /// `run_worker_partition` per worker, `finalize_multiprocess_e2e`) run
+    /// in this process on a 12×10×64 cube (seed 42, 212 salt voxels in depth).
+    /// `rock_physics_cli.rs::lithology_flags_reach_multiprocess_workers`
+    /// runs the real worker processes with the same flags on the 8³ cube.
+    #[test]
+    fn salt_flags_reach_multiprocess_workers() {
+        use synthoseis_core::pipeline::E2eConfig;
+        use synthoseis_core::{
+            finalize_multiprocess_e2e, prepare_multiprocess_store, run_worker_partition,
+        };
+        let argv = |extra: &[&str]| -> Vec<String> {
+            ["synthoseis", "run", "--e2e", "--chunked"]
+                .iter()
+                .chain(extra)
+                .map(|s| s.to_string())
+                .collect()
+        };
+        // Every salt switch round-trips through the worker flags.
+        for extra in [
+            &[][..],
+            &["--salt-legacy-vs"][..],
+            &["--salt-smooth-all-horizons"][..],
+            &["--salt-legacy-top-offset"][..],
+            &["--salt-legacy-vs", "--salt-smooth-all-horizons", "--salt-legacy-top-offset"][..],
+            &["--no-salt"][..],
+            &["--salt-legacy-vs", "--legacy-depth-as-time"][..],
+            &["--salt-legacy-vs", "--legacy-whole-voxels"][..],
+        ] {
+            let (rock, geometry, time) = rebuild_from_argv(&argv(extra));
+            let mut worker = argv(&[]);
+            worker.extend(crate::cli_jobs::rock_physics_args(&rock));
+            worker.extend(crate::cli_jobs::time_args(&time));
+            if !rock.partial_voxels.enabled() {
+                worker.push("--legacy-whole-voxels".into());
+            }
+            worker.extend(["--toy-geometry".to_string(), geometry.as_str().to_string()]);
+            let back = rebuild_from_argv(&worker);
+            assert_eq!(back, (rock.clone(), geometry, time.clone()), "{extra:?}: worker config");
+            assert_eq!(
+                worker.iter().any(|a| a == "--salt-legacy-vs"),
+                extra.contains(&"--salt-legacy-vs"),
+                "{extra:?}: --salt-legacy-vs in the worker argv"
+            );
+        }
+
+        // Multi-process (workers rebuilt from their argv) vs one process,
+        // on a salt-bearing cube, with and without --salt-legacy-vs.
+        let dir = tempfile::tempdir().unwrap();
+        let read = |p: &std::path::Path| -> (Vec<u32>, Vec<u8>, Vec<u8>) {
+            let s = synthoseis_io::MdioStore::open(p).unwrap();
+            (
+                s.read_volume().unwrap().iter().map(|x| x.to_bits()).collect(),
+                s.read_labels_u8().unwrap(),
+                s.read_salt_labels_u8().unwrap(),
+            )
+        };
+        let mut stacks = Vec::new();
+        for extra in [&[][..], &["--salt-legacy-vs"][..]] {
+            let (rock, geometry, time) = rebuild_from_argv(&argv(extra));
+            let cfg = |rock: RockPhysicsConfig, store: &std::path::Path| E2eConfig {
+                seed: 42,
+                inline_count: 12,
+                crossline_count: 10,
+                samples: 64,
+                chunk_shape: Some([2, 4, 8]),
+                rock_physics: rock,
+                geometry,
+                time: time.clone(),
+                store_path: Some(store.to_path_buf()),
+                ..E2eConfig::default()
+            };
+            let tag = if extra.is_empty() { "default" } else { "legacy-vs" };
+            let single = dir.path().join(format!("{tag}-single.mdio"));
+            synthoseis_core::pipeline_stream::run_e2e_chunked(&cfg(rock.clone(), &single)).unwrap();
+
+            let mut worker = argv(&[]);
+            worker.extend(crate::cli_jobs::rock_physics_args(&rock));
+            worker.extend(crate::cli_jobs::time_args(&time));
+            worker.extend(["--toy-geometry".to_string(), geometry.as_str().to_string()]);
+            let (worker_rock, worker_geometry, worker_time) = rebuild_from_argv(&worker);
+            assert_eq!((worker_geometry, &worker_time), (geometry, &time));
+            let mp = dir.path().join(format!("{tag}-mp.mdio"));
+            let orchestrator = cfg(rock.clone(), &mp);
+            let (path, plan, _) = prepare_multiprocess_store(&orchestrator, 3, orchestrator.chunk_shape).unwrap();
+            assert_eq!(plan.worker_count, 3);
+            let worker_cfg = cfg(worker_rock, &mp);
+            for wid in 0..plan.worker_count {
+                run_worker_partition(&worker_cfg, &plan, wid, &path).unwrap();
+            }
+            finalize_multiprocess_e2e(&orchestrator, &path).unwrap();
+
+            let (s1, l1, salt1) = read(&single);
+            let (s2, l2, salt2) = read(&mp);
+            assert!(salt1.contains(&1), "{tag}: salt in the (time-domain) cube");
+            assert_eq!(s1, s2, "{tag}: multi-process angle stack vs one process");
+            assert_eq!(l1, l2, "{tag}: labels");
+            assert_eq!(salt1, salt2, "{tag}: salt_labels");
+            stacks.push(s1);
+        }
+        assert_ne!(stacks[0], stacks[1], "Vs 2600 and --salt-legacy-vs (Vs 2250) must differ");
+    }
 }

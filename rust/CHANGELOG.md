@@ -9,8 +9,9 @@ Output-changing defaults are listed here with their opt-out flag.
 - **Salt Vs defaults to 2600 m/s** (spec "salt Vs ≈ 2600"). Density and Vp
   stay 2.17 / 4500. Legacy and master f15b87ac used Vs 2250 (Vp/Vs = 2.0,
   Poisson 0.33); real halite is closer to Vp/Vs ≈ 1.7–1.8. **Angle stacks
-  change at salt contacts (AVO)**; labels / salt_labels / fault_labels and
-  depth→time pull-up are unchanged.
+  change at salt contacts (AVO)**, far angles more (0° bit-identical; 30°
+  top-salt reflection about 30–40 % weaker); labels / salt_labels /
+  fault_labels and depth→time pull-up are unchanged.
   - Opt-out: **`--salt-legacy-vs`** /
     `RockPhysicsConfig::salt_legacy_vs = true` restores Vs 2250 and master
     f15b87ac salt-on output bit for bit.
@@ -25,7 +26,10 @@ Output-changing defaults are listed here with their opt-out flag.
   `L = −2r · salt_mask`, which also blurred the undragged map far from
   salt. The default is now `m + G_σ3(L)`: same flank drag, far-field maps
   bit-identical to the undragged maps before push-down. The salt body /
-  hull is unchanged. **Stacks and labels change** wherever salt is on.
+  hull is unchanged in depth; the time-domain `salt_labels` (default time
+  output) can still move by a sample where the overburden traveltime
+  changes (docs/salt-bodies.md, "Time output and velocity pull-up").
+  **Stacks and labels change** wherever salt is on.
   - Opt-out: **`--salt-smooth-all-horizons`** /
     `RockPhysicsConfig::salt_smooth_all_horizons = true` restores master
     ccce5cc9 salt-on output bit for bit.

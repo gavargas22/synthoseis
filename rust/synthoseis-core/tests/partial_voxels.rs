@@ -7,8 +7,9 @@
 //!
 //! Panels use the production end-members at 1 km (shale 2580/1139/2.277,
 //! gas sand 2472.38/1490.51/1.841, brine sand from the production trend,
-//! salt 4500/2250/2.17 and water 1500/1000/1.028 (the production constants
-//! `synthoseis_rpm::{SALT, WATER}`); the seabed is also run over mudline
+//! salt 4500/2600/2.17 (the default `synthoseis_rpm::salt_elastic(false)`;
+//! Vs is 2250 only under `--salt-legacy-vs`) and water 1500/1000/1.028
+//! (`synthoseis_rpm::WATER`); the seabed is also run over mudline
 //! shale 1580/279/1.957), a 40 Hz Ricker, dt = 1 ms and dz = 4 m. Three models of the same geometry are compared with the
 //! analytic convolutional trace:
 //! * whole: today's whole voxels (centre rule);
@@ -24,12 +25,17 @@ use synthoseis_core::rock_physics::label_intervals;
 use synthoseis_core::salt::salt_body;
 use synthoseis_core::ToyGeometry;
 use synthoseis_rpm::{
-    backus_mix, sand_f32, shale_f32, slowness_sum, Elastic32, Fluid, SALT, WATER,
+    backus_mix, salt_elastic, sand_f32, shale_f32, slowness_sum, Elastic32, Fluid, WATER,
 };
 use synthoseis_seismic::{
     reflectivity_time_column, reflectivity_time_column_with_twt, subcell_column,
     subcell_reflectivity, SubLayer, SubcellColumn, TwtKernel, TwtScratch, ZoeppritzForm,
 };
+
+/// Default salt end-member, 4500/2600/2.17 (`--salt-legacy-vs` would be
+/// `salt_elastic(true)`, Vs 2250). Same value as the `synthoseis_rpm::SALT`
+/// constant this file used before; named explicitly so the Vs choice shows.
+const SALT: Elastic32 = salt_elastic(false);
 
 const DZ: f64 = 4.0;
 const DT: f64 = 1.0;

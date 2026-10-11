@@ -203,8 +203,11 @@ with the switch on.
 ## Validation (`synthoseis-core/tests/partial_voxels.rs`)
 
 Setup: 40 Hz Ricker, dt = 1 ms, dz = 4 m, end-members at 1 km, production
-water (1500/1000/1.028) and salt (4500/2250/2.17) constants. Errors are
-measured against the analytic convolutional trace.
+water (1500/1000/1.028) and the default salt (4500/2600/2.17,
+`salt_elastic(false)`; Vs is 2250 only under `--salt-legacy-vs`). The
+tables were first measured with Vs 2250; with Vs 2600 every value below is
+the same at the printed precision. Errors are measured against the analytic
+convolutional trace.
 
 **Dipping interface, `z_b = 30 + 0.137 i` (spec §5.1/§5.2).** Values are
 rms / max time error in ms.
