@@ -240,7 +240,7 @@ fn invalid_time_flags_exit_2() {
 /// 24 × 24 × 128 with 3 faults: the time-domain `fault_labels` are `fault
 /// AND NOT salt`, the mask removes exactly the 66 fault ∩ salt voxels of
 /// the `--fault-labels-through-salt` store (which the summary reports as
-/// `masked_in_salt=79`, counted on the time cube), the angle stack is
+/// `masked_in_salt=66`, counted on the time cube), the angle stack is
 /// unchanged. (The CLI takes `--faults` on the single-worker chunked path
 /// only; the library test `time_mode_fault_salt_mask_removed_count_every_path`
 /// covers the other writers.)

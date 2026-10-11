@@ -240,9 +240,10 @@ fn assert_mask_removes_overlap(what: &str, masked: &[u8], through: &[u8], salt: 
 /// velocities shift); each moves fault ∩ salt by one sample at the salt
 /// edge, and the salt body is identical. Net −3 = 8 lost + 5 gained, all at
 /// time samples 78–85, i 2–10, j 4–11, 0–8 samples from the salt top or
-/// base: 5 losses are fault-label changes at the same depth sample; the
-/// other 3 losses and the 5 gains are 0.1–0.9 ms traveltime shifts at the
-/// salt top picking the neighbouring depth sample. Physical, not a tiling
+/// base: of the 8 losses, 4 are fault-label changes at the same depth
+/// sample, 3 are 0.1–0.9 ms traveltime shifts at the salt top picking the
+/// neighbouring depth sample, and 1, at (9, 11, 80), has both causes
+/// (either alone removes it); the 5 gains are traveltime shifts. Physical, not a tiling
 /// artefact: every face and tiling check passes at 147. The smooth-all
 /// switch keeps 150
 /// ([`time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_smooth_all`]).
@@ -319,11 +320,12 @@ fn fault_salt_across_chunk_edges(cfg: E2eConfig, want: usize, faces: [usize; 3])
 /// `--fault-labels-through-salt` turns the mask off on every path.
 /// Seed 30 (the #34 salt case): its 3 faults never reach the salt, so the
 /// overlap is 0 and the mask must change nothing. Seed 7 (the demo
-/// seed): 79 fault ∩ salt voxels removed with whole voxels (the d8b96e69
+/// seed): 66 fault ∩ salt voxels removed with whole voxels (the d8b96e69
 /// default, `whole`), and a partial-voxel count with the default (PR B2: the
 /// time-domain cubes are sampled through the partial traveltime). The
 /// scaled closure minimum (20 voxels here) keeps more traps, which moves
-/// the partial traveltime: 84, and master bad1daa8's 85 under
+/// the partial traveltime: 66 (equal to the whole-voxel count for this
+/// seed), and master bad1daa8's 85 under
 /// `ClosureMinimum::LEGACY` (`--legacy-closure-minimum`). The whole-voxel
 /// pins are unchanged (labels and the depth-sampled cubes never depend on
 /// fluids). Per PR: every case in memory and through the tiled streaming
