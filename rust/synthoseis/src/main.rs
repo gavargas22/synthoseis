@@ -1140,6 +1140,7 @@ mod tests {
             dt_ms,
             twt_samples,
             twt_kernel,
+            legacy_filter_edges,
             fault_labels_through_salt,
             legacy_whole_voxels,
             partial_voxel_reflectivity,
@@ -1186,6 +1187,7 @@ mod tests {
             twt_samples,
             twt_kernel.as_deref(),
             bandpass_trailing_sample,
+            legacy_filter_edges,
         )
         .unwrap();
         rock.partial_voxels = super::parse_partial_voxels(
@@ -1244,6 +1246,7 @@ mod tests {
             &["--no-salt"][..],
             &["--salt-legacy-vs", "--legacy-depth-as-time"][..],
             &["--salt-legacy-vs", "--legacy-whole-voxels"][..],
+            &["--salt-legacy-vs", "--legacy-filter-edges"][..],
         ] {
             let (rock, geometry, time) = rebuild_from_argv(&argv(extra));
             let mut worker = argv(&[]);
