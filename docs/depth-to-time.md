@@ -163,7 +163,7 @@ dominates both sides (about 85 % of the tile). The prefix sum plus the
   `--fault-labels-through-salt` turns the mask off in time mode too, with
   #38's exit-2 rules (no salt, no faults, planar / `--legacy-toy-depth`). In
   time mode the summary's `fault_voxels` and `masked_in_salt` count the
-  written time cube (seed 7 at 24×24×128: `masked_in_salt=79`).
+  written time cube (seed 7 at 24×24×128: `masked_in_salt=66`).
 - **`RICKER_PEAK_HZ`** (40 Hz) feeds every Ricker call site through
   `E2eConfig::ricker()`, sampled at `E2eConfig::digi_ms()`: `dt` in time mode,
   4 ms (`TINY_DIGI`) on the legacy axis.
@@ -234,7 +234,7 @@ at `nt − 1`.
 |---|---|---|
 | 5.4 | `time_mode_tiling_invariance_rich` | RICH flags (3 faults, 4–30 Hz bandpass, 12.5 dB noise, salt), seeds 30 and 11, nt = nz and nz + 37. Chunk shapes `[1,1,nt]`, `[5,7,nt]`, `[3,20,16]`, `[8,5,16]`. The classic, chunked, streaming, overlapped streaming, strip 2/3/4, multiprocess 1/2/3 and geometry-once (its store) paths produce bit-identical angle stacks, labels, fault labels and salt labels. At nt = nz the columns are both short and long. |
 | 5.4, §8 | `time_mode_tiling_invariance_faults_and_salt_across_chunk_edges` | Faults and salt at 24×24×128 (seed 4, RICH flags). Without the mask the output cubes have 147 fault ∩ salt voxels in total; the mask removes exactly those. 32, 29 and 36 of them touch a chunk face of `[5,7,nt]`, `[8,5,16]` and `[3,20,32]` (a removed neighbour in the next chunk across an i, j or k face), and they span 6, 8 and 4 chunks. Same path matrix, bit-identical with the mask on. The `_smooth_all` case (`salt_smooth_all_horizons`, the pre-#47 drag) keeps the ccce5cc9 pin: 150 voxels, faces 31, 29 and 36, same checks. #47 (lift-only drag) moves 8 out and 5 in at the salt edge (fault labels taper against the undragged seabed; overburden traveltime shifts 0.1–0.9 ms). |
-| §8 | `time_mode_fault_salt_mask_removed_count_every_path` | RICH flags at 24×24×128. The in-memory output cubes and the stores of the classic, streaming, overlapped streaming, strip 3 and multiprocess 2 writers have `fault_labels == through AND NOT salt` voxel by voxel against the `--fault-labels-through-salt` run, so the removed count equals the time fault ∩ salt overlap: **0** for seed 30 (its faults never reach the salt; the mask must change nothing) and **79** for seed 7, on every path. |
+| §8 | `time_mode_fault_salt_mask_removed_count_every_path` | RICH flags at 24×24×128. The in-memory output cubes and the stores of the classic, streaming, overlapped streaming, strip 3 and multiprocess 2 writers have `fault_labels == through AND NOT salt` voxel by voxel against the `--fault-labels-through-salt` run, so the removed count equals the time fault ∩ salt overlap: **0** for seed 30 (its faults never reach the salt; the mask must change nothing) and **66** for seed 7 (whole and partial voxels; **85** under `--legacy-closure-minimum` with smooth-all salt and legacy Vs), on every path. |
 | 5.4, §3.3 | `dt_2ms_invariance_and_staircase_warning` | dt = 2 ms at dz = 2 m is tiling invariant with no warning. dt = 2 ms at dz = 4 m fires the staircase warning. |
 | 5.5 | `label_round_trip` | Mask on and off (`--fault-labels-through-salt`). **Asserted:** every output sample of labels, fault and salt labels equals the depth cell containing `t_n`, `k(n) = max{k : T_k ≤ t_n}` from the column's T, so fault ∧ salt in time equals fault ∧ salt at k(n) on every sample (0 everywhere with the mask; seed 11 without it: 15 time samples from 32 depth cells). No class is invented. Seabed is exact: 255 if and only if `t_n < T_sb`. **Reported, not gated:** back to depth (each cell reads the output sample nearest its centre time) recovers 99.73 % (seed 30) and 99.52 % / 99.47 % (seed 11, nt = nz + 37, mask on / off) of cells, and 0 / 2889 and 10 / 2097 layer runs thinner than dt are dropped. Under point sampling every cell ≥ dt thick is recovered by construction, so the fraction measures run thickness against dt. |
 | §3.7, 5.8 | `dead_last_sample` | `nt − 1` is exactly 0 and is the only sample the zeroing touches (sinc and linear, nt = nz and nz + 37, plus the chunked path). |
@@ -270,8 +270,8 @@ Other PR B tests:
   - the exit-2 matrix, including #38's `--fault-labels-through-salt` rules in
     time mode;
   - `fault_label_salt_mask_in_time_mode`: the CLI time store's
-    `fault_labels` are `through AND NOT salt` (79 removed for seed 7 at
-    24×24×128), the summary reports `masked_in_salt=79`, and the angle stack
+    `fault_labels` are `through AND NOT salt` (66 removed for seed 7 at
+    24×24×128), the summary reports `masked_in_salt=66`, and the angle stack
     is unchanged;
   - the staircase warning and the GPU fallback log.
 
