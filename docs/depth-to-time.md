@@ -133,7 +133,10 @@ dominates both sides (about 85 % of the tile). The prefix sum plus the
   f32 Vp (`time_mode::tile_twt` / `column_twt`), computes Zoeppritz on the depth
   interfaces and inserts it at `T_{k+1}` (`time_mode::fuse_props_tile_time`),
   then applies the Ricker, bandpass, lateral filter and noise on the time grid.
-  The dead last sample is `nt − 1` (§3.7). `labels`, `fault_labels` and
+  The filters see the model below the window and water above it (physical
+  filter edges, see [`filters-port.md`](filters-port.md#edges-physical-filter-edges-time-mode)),
+  so all `nt` samples are filtered; the #36 dead last sample `nt − 1` (§3.7)
+  is kept by `--legacy-filter-edges` only. `labels`, `fault_labels` and
   `salt_labels` are point-sampled through the same `k(n)` (§3.4), so the
   per-voxel invariants carry over.
 - **Every path**: classic (`generate_tiny_cube`), chunked / fused, streaming,
@@ -167,8 +170,10 @@ dominates both sides (about 85 % of the tile). The prefix sum plus the
 - **GPU**: the GPU fuse is depth-only. In time mode `--gpu` logs the CPU
   fallback and runs the CPU path (spec §6).
 - **MDIO root attributes** in time mode: `time_conversion = "vp-twt"`,
-  `depth_step_m`, `twt_kernel`, with `digi = dt` and `units = "ms"`. The legacy
-  axis writes none of them, so its stores are master's.
+  `depth_step_m`, `twt_kernel`, with `digi = dt` and `units = "ms"`, and
+  `filter_edges = "physical"` (omitted under `--legacy-filter-edges`, whose
+  stores are master `1c22b653`'s). The legacy axis writes none of them, so
+  its stores are master's.
 
 ### CLI
 
@@ -178,13 +183,17 @@ dominates both sides (about 85 % of the tile). The prefix sum plus the
 | `--dt-ms DT` | Output sample interval, 0.5–8.0 ms (default 4). |
 | `--twt-samples N` | Output trace length. The default is `nt₀ = round(nz·2dz/2000/dt)`, which equals NK at the defaults. Range `min(16, nt₀) ≤ N ≤ 8·NK`. |
 | `--twt-kernel sinc\|linear` | Spike insertion: Kaiser-windowed sinc (default) or the 2-tap linear split (fast; aliases above about 0.4 f_N). |
+| `--legacy-filter-edges` | Master `1c22b653`'s filter edges in time mode (zero-padded Ricker over `nt`, odd-mirror `filtfilt` over `nt − 1` with the #36 zero, window-only noise), bit for bit. See [filter edges](filters-port.md#edges-physical-filter-edges-time-mode). |
 
 **Exit 2** (stderr names the problem):
 
 - any time option together with `--legacy-depth-as-time` or
   `--legacy-toy-depth`;
 - `--bandpass-trailing-sample` without `--legacy-depth-as-time` (time mode
-  always zeroes the dead last sample);
+  filters all `nt` samples; `--legacy-filter-edges` zeroes the dead last
+  sample whenever the bandpass replaces the Ricker);
+- `--legacy-filter-edges` with `--legacy-depth-as-time` or
+  `--legacy-toy-depth` (the legacy axis keeps its filter edges);
 - `--dt-ms` outside 0.5–8.0 or not finite;
 - `--twt-samples` outside its range;
 - an unknown kernel;
@@ -390,6 +399,12 @@ so the measurement uses the seismic event instead.
   transient whose size is seed-specific: ≤ 4 % on seed 25's two edge columns,
   and up to 30 % in Strata's synthetic with the seabed at sample 26–27. It is
   zero (rounding level) once the first reflection is at or below `padlen`.
+  The #35 test pins the legacy chain (`legacy_filter_edges: true`); the time
+  mode default no longer has this transient: the bandpass sees water above
+  time 0 and the model below the window (physical filter edges,
+  [`filters-port.md`](filters-port.md#edges-physical-filter-edges-time-mode)),
+  and moving the model down by 4–40 samples moves the output with it to
+  1e-8 of peak.
 - #35's `filter_cfg` gains `time: TimeConfig::legacy()`, its one-line legacy
   pin.
 - The time summary lines print in time mode only, so legacy stdout stays

@@ -29,6 +29,8 @@ fn master_cfg(c: &E2eConfig) -> E2eConfig {
     // Master hashes predate lift-only drag (ccce5cc9 salt-on = smooth-all).
     c.rock_physics.salt_smooth_all_horizons = true;
     c.rock_physics.salt_legacy_vs = true;
+    // ... and the physical filter edges (no-op on the depth axis).
+    c.time.legacy_filter_edges = true;
     c
 }
 

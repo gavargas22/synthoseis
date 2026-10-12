@@ -319,6 +319,20 @@ pub struct TimeConfig {
     /// Not a CLI option.
     #[doc(hidden)]
     pub constant_twt_vp: Option<f64>,
+    /// Restore master `1c22b653`'s filter edge rules in time mode (CLI
+    /// `--legacy-filter-edges`): the zero-padded Ricker over the `nt`
+    /// window, the odd-extension `filtfilt` over `nt − 1` samples with the
+    /// #36 zero, and window-only noise. Default `false`: the physical edge
+    /// rule (water above time 0, the model's own reflectivity below the
+    /// window, a half-space below the model base, noise drawn in the pads;
+    /// reflect sideways). Stacks only; labels never change. No effect on the
+    /// legacy axis. See `docs/filters-port.md` ("Edges").
+    pub legacy_filter_edges: bool,
+    /// Test hook: replace the bottom pad `Pb` of the physical edge rule
+    /// (default `h + IirFilter::edge_pad()`), e.g. the long-pad reference of
+    /// the truth gate (filter-edge spec §7.3). Not a CLI option.
+    #[doc(hidden)]
+    pub edge_pad_override: Option<usize>,
 }
 
 impl Default for TimeConfig {
@@ -329,6 +343,8 @@ impl Default for TimeConfig {
             samples: None,
             kernel: synthoseis_seismic::TwtKernel::Sinc,
             constant_twt_vp: None,
+            legacy_filter_edges: false,
+            edge_pad_override: None,
         }
     }
 }
@@ -443,6 +459,11 @@ pub struct TimeAxis {
     /// [`TimeConfig::constant_twt_vp`] (test hook).
     #[doc(hidden)]
     pub constant_twt_vp: Option<f64>,
+    /// [`TimeConfig::legacy_filter_edges`].
+    pub legacy_filter_edges: bool,
+    /// [`TimeConfig::edge_pad_override`] (test hook).
+    #[doc(hidden)]
+    pub edge_pad_override: Option<usize>,
 }
 
 impl E2eConfig {
@@ -533,6 +554,8 @@ impl E2eConfig {
             dz: self.rock_physics.depth_step_m,
             kernel: self.time.kernel,
             constant_twt_vp: self.time.constant_twt_vp,
+            legacy_filter_edges: self.time.legacy_filter_edges,
+            edge_pad_override: self.time.edge_pad_override,
         })
     }
 

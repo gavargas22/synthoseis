@@ -20,6 +20,16 @@ pub struct SeismicFilters {
     /// reads only the first `nk - 1` samples). Always `true` in production.
     #[doc(hidden)]
     pub zero_trailing_sample: bool,
+    /// Physical filter edges (time mode without
+    /// [`crate::pipeline::TimeConfig::legacy_filter_edges`], filter-edge spec
+    /// §4): the per-column chain runs on a padded buffer, all `nt` samples
+    /// are filtered (no #36 zero) and noise is drawn in the pads. `false`
+    /// on the legacy axis and under `--legacy-filter-edges`.
+    pub physical_edges: bool,
+    /// [`synthoseis_seismic::IirFilter::edge_pad`] of the bandpass (the
+    /// `Pbp` part of the bottom pad; 0 without a bandpass or without
+    /// [`SeismicFilters::physical_edges`]). Computed once per design.
+    pub edge_pad: usize,
 }
 
 /// Resolved noise stage (see [`crate::pipeline::NoiseConfig`]).
@@ -71,7 +81,9 @@ impl SeismicFilters {
         if !fc.enabled() {
             return Ok(None);
         }
+        let physical_edges = cfg.time_axis().is_some_and(|a| !a.legacy_filter_edges);
         let nk_out = cfg.output_samples();
+        let mut edge_pad = 0;
         let bandpass = match fc.bandpass_hz {
             Some([low, high]) => {
                 let f = synthoseis_seismic::butterworth_bandpass(
@@ -81,6 +93,13 @@ impl SeismicFilters {
                     fc.bandpass_order,
                 )
                 .map_err(|e| format!("bandpass {low}-{high} Hz: {e}"))?;
+                if physical_edges {
+                    // Zero continuation above and the model below work for
+                    // any nt >= 1: no padlen check (spec §5).
+                    edge_pad = f
+                        .edge_pad()
+                        .map_err(|e| format!("bandpass {low}-{high} Hz: {e}"))?;
+                }
                 // Samples the bandpass actually sees (legacy parity mode
                 // excludes the trailing reflectivity sample).
                 let filtered = if fc.bandpass_excludes_trailing_sample() {
@@ -88,7 +107,7 @@ impl SeismicFilters {
                 } else {
                     nk_out
                 };
-                if filtered <= f.padlen() {
+                if !physical_edges && filtered <= f.padlen() {
                     return Err(format!(
                         "bandpass order {} needs more than {} filtered samples per trace (got {} of {} samples)",
                         fc.bandpass_order,
@@ -117,9 +136,11 @@ impl SeismicFilters {
             bandpass,
             lateral_size: fc.lateral_size.max(1),
             skip_wavelet: fc.skips_ricker(),
-            exclude_trailing_sample: fc.bandpass_excludes_trailing_sample(),
+            exclude_trailing_sample: fc.bandpass_excludes_trailing_sample() && !physical_edges,
             noise,
             zero_trailing_sample: true,
+            physical_edges,
+            edge_pad,
         }))
     }
 
@@ -322,6 +343,11 @@ pub fn generate_reflectivity(cfg: &E2eConfig, angle_deg: f64) -> Vec<f32> {
 /// angle stack in place (classic full-cube path). No-op when disabled. Noise
 /// is added before the wavelet by the caller (see
 /// [`crate::pipeline::generate_tiny_cube`]).
+///
+/// This is the window-only chain: it matches production on the legacy axis
+/// and under [`crate::pipeline::TimeConfig::legacy_filter_edges`]. The
+/// time-mode default (physical filter edges) needs the reflectivity below
+/// the window, which only the fused paths ([`fuse_tile_filtered`]) compute.
 pub fn apply_filters_to_volume(cfg: &E2eConfig, volume: &mut [f32]) {
     let Some(f) = seismic_filters(cfg) else {
         return;
@@ -381,9 +407,46 @@ pub fn fuse_tile_filtered(
     let (si0, si1) = synthoseis_seismic::lateral_source_range(i0, i1, ni, f.lateral_size);
     let (sj0, sj1) = synthoseis_seismic::lateral_source_range(j0, j1, nj, f.lateral_size);
     let mut src = vec![0.0f32; (si1 - si0) * (sj1 - sj0) * nk];
+    let wavelet = f.wavelet(wavelet);
+    if let (true, Some(axis)) = (f.physical_edges, trends.time()) {
+        // Physical edges (filter-edge spec §4): noise, wavelet and bandpass
+        // run per column on the padded `Pt + nt + Pb` buffer (column
+        // scratch); the halo tile keeps the `nt` window for the lateral
+        // filter. The working set counts the filtered halo at the padded
+        // length (spec §5), plus the lateral intermediate and the column
+        // scratch.
+        let noise = f.noise.as_ref().map(|n| n.at_angle(angle_deg));
+        let chain = crate::time_mode::TraceChain {
+            wavelet,
+            noise,
+            bandpass: f.bandpass.as_ref(),
+            pads: crate::time_mode::EdgePads::for_chain(
+                axis,
+                wavelet,
+                f.bandpass.as_ref().map(|_| f.edge_pad),
+                noise.is_some(),
+            ),
+        };
+        let padded = chain.pads.len(nk);
+        let halo_traces = (si1 - si0) * (sj1 - sj0);
+        stats.observe(halo_traces * padded * 4 * 2 + padded * (4 + 8 * 4));
+        crate::time_mode::fuse_tile_time_chain(
+            trends, labels, shape, si0, si1, sj0, sj1, &chain, angle_deg, &mut src,
+        );
+        synthoseis_seismic::lateral_uniform_tile(
+            &src,
+            (si0, si1),
+            (sj0, sj1),
+            oshape,
+            (i0, i1),
+            (j0, j1),
+            f.lateral_size,
+            tile_out,
+        );
+        return;
+    }
     // Halo tile + lateral intermediate + filtfilt scratch.
     stats.observe(src.capacity() * 4 * 2 + (nk + 2 * 64) * 8 * 2);
-    let wavelet = f.wavelet(wavelet);
     match &f.noise {
         None => fuse_tile_local(
             labels, shape, si0, si1, sj0, sj1, trends, wavelet, angle_deg, &mut src, stats,

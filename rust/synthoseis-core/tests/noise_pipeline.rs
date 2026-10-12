@@ -166,7 +166,9 @@ fn noise_off_by_default_is_bit_identical() {
 
 /// Noise is added to the raw reflectivity, then the wavelet (unless
 /// skipped), then the bandpass / lateral filter: exactly legacy
-/// `add_weighted_noise` -> `postprocess_rfc_cubes`.
+/// `add_weighted_noise` -> `postprocess_rfc_cubes`. The whole-volume
+/// reference has the legacy filter edges (`--legacy-filter-edges`); the
+/// same order on the padded physical chain is checked in `filter_edges.rs`.
 #[test]
 fn noise_is_added_before_wavelet_and_filters() {
     let base = cfg(10, [24, 20, 64], [8, 5, 64], 3);
@@ -174,7 +176,8 @@ fn noise_is_added_before_wavelet_and_filters() {
     let wavelet = ricker(40.0, 4.0, 1);
     let shape = [24, 20, 64];
     for fc in configs() {
-        let c = with([8, 5, 64], fc.clone());
+        let mut c = with([8, 5, 64], fc.clone());
+        c.time.legacy_filter_edges = true;
         let n = generate_noise(&c, 15.0).expect("noise on");
         assert!(n.iter().any(|&v| v != 0.0));
         let noisy_rfc: Vec<f32> = rfc.iter().zip(&n).map(|(r, e)| r + e).collect();

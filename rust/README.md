@@ -137,6 +137,11 @@ sample) byte for byte, and `--legacy-toy-depth` implies it. Use `--dt-ms`,
 `--twt-samples` and `--twt-kernel sinc|linear` to tune the time axis. Time
 stores carry the `time_conversion = "vp-twt"`, `depth_step_m` and
 `twt_kernel` attributes. See [`docs/depth-to-time.md`](../docs/depth-to-time.md).
+In time mode the filters see water above time 0 and the model below the
+window (physical filter edges; reflect at the cube sides), so stacks differ
+from master 1c22b653 near the trace ends (labels do not);
+`--legacy-filter-edges` restores the old edges bit for bit. See
+[`docs/filters-port.md`](../docs/filters-port.md#edges-physical-filter-edges-time-mode).
 
 **Partial voxels (default since PR B2).** Cells that straddle a horizon,
 the seabed, a salt top or a fluid contact are Backus mixes of their parts,

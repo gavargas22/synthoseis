@@ -580,11 +580,17 @@ fn legacy_fixture_time_mode_uniform_2000() {
             dz: 4.0,
             kernel: synthoseis_seismic::TwtKernel::Sinc,
             constant_twt_vp: Some(2000.0),
+            // The legacy Python chain's edges (odd-mirror filtfilt over
+            // nt - 1 samples, zero-padded wavelet): filter-edge spec §6
+            // item 4.
+            legacy_filter_edges: true,
+            edge_pad_override: None,
         };
         let time_cfg = E2eConfig {
             time: synthoseis_core::TimeConfig {
                 samples: Some(nt),
                 constant_twt_vp: Some(2000.0),
+                legacy_filter_edges: true,
                 ..synthoseis_core::TimeConfig::default()
             },
             ..filter_cfg(&c, nk)

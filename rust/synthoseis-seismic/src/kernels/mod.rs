@@ -10,12 +10,12 @@ mod zoeppritz;
 pub use filters::{
     butterworth_bandpass, cumsum_traces_f32, lateral_source_range, lateral_uniform_tile,
     lateral_uniform_volume, legacy_digitisation_ms, lfilter_zi, reflect_index, uniform_window,
-    FilterError, IirFilter,
+    FilterError, IirFilter, EDGE_PAD_CAP, EDGE_PAD_TOLERANCE,
 };
 pub use noise::{
     hilterman_noise_weights, laplace_pair, legacy_degree_noise_weights,
-    legacy_noise_mask_threshold, noise_key, noise_mask_threshold, philox4x32_10, snr_std_ratio,
-    splitmix64, weighted_laplace_std, RunningStats, WeightedNoise,
+    legacy_noise_mask_threshold, noise_key, noise_mask_threshold, pad_counter, philox4x32_10,
+    snr_std_ratio, splitmix64, weighted_laplace_std, window_counter, RunningStats, WeightedNoise,
 };
 pub use wavelets::{apply_wavelet_traces, convolve_same_1d, hanflat, ricker};
 pub use zoeppritz::{

@@ -245,6 +245,9 @@ pub fn time_args(time: &synthoseis_core::TimeConfig) -> Vec<String> {
     }
     a.push("--twt-kernel".into());
     a.push(time.kernel.as_str().into());
+    if time.legacy_filter_edges {
+        a.push("--legacy-filter-edges".into());
+    }
     a
 }
 

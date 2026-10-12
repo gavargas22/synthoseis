@@ -127,6 +127,22 @@ jobs:
           grep -q "fault_voxels=3870 (--fault-labels-through-salt)" /tmp/fmp-through.txt
           cargo run --profile test -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmp-gpu.mdio | tee /tmp/fmp-gpu.txt
           grep -q "fault_voxels=3800, masked_in_salt=70 " /tmp/fmp-gpu.txt
+      - name: filter edges smoke (physical default + attr, --legacy-filter-edges, multiprocess, exit 2 on the legacy axis)
+        run: |
+          set -euo pipefail
+          FE="--e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --lateral-filter 3 --noise-snr-db 12.5"
+          cargo run --profile test -p synthoseis -- run $FE --store /tmp/fe.mdio | tee /tmp/fe.txt
+          grep -q "^filter edges: physical (water above, model below; reflect sideways)" /tmp/fe.txt
+          grep -q '"filter_edges": "physical"' /tmp/fe.mdio/.zattrs
+          cargo run --profile test -p synthoseis -- run $FE --legacy-filter-edges --store /tmp/fe-legacy.mdio | tee /tmp/fe-legacy.txt
+          grep -q "^filter edges: legacy 1c22b653 (--legacy-filter-edges)" /tmp/fe-legacy.txt
+          if grep -q filter_edges /tmp/fe-legacy.mdio/.zattrs; then echo 'legacy store has filter_edges'; exit 1; fi
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --legacy-filter-edges --store /tmp/fe-mp.mdio
+          set +e
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --legacy-depth-as-time --legacy-filter-edges --store /tmp/fe-bad.mdio
+          code=$?
+          set -e
+          test "$code" -eq 2
 
   msrv:
     name: MSRV (Rust 1.83)

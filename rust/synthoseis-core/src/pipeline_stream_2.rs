@@ -35,8 +35,11 @@ pub fn fuse_tile_local(
         ElasticModel::Rpm(m) if crate::time_mode::partial_time_path(trends).is_some() => {
             // Partial voxels in time mode: per-column fused path (spec §1.5).
             let n = (i1 - i0) * (j1 - j0) * nk;
+            // Time trace scratch: the window plus the wavelet's bottom pad
+            // `h` (physical filter edges).
+            let pad = edge_pad_bytes(m.time.as_ref(), wavelet);
             stats.observe(
-                synthoseis_gpu::fuse_tile_scratch_bytes(nk) + 3 * nk * 4 + (nk + 1) * 8 + m.time.map_or(0, |a| a.nt * 16) + n,
+                synthoseis_gpu::fuse_tile_scratch_bytes(nk) + 3 * nk * 4 + (nk + 1) * 8 + m.time.map_or(0, |a| a.nt * 16) + pad + n,
             );
             crate::time_mode::fuse_tile_time_partial(m, labels, shape, i0, i1, j0, j1, wavelet, angle_deg, tile_out);
         }
@@ -50,7 +53,11 @@ pub fn fuse_tile_local(
                 // `time_mode::fuse_props_tile_time`). T + time trace scratch.
                 Some(axis) => {
                     stats.observe(
-                        synthoseis_gpu::fuse_tile_scratch_bytes(nk) + 3 * n * 4 + (nk + 1) * 8 + axis.nt * 16,
+                        synthoseis_gpu::fuse_tile_scratch_bytes(nk)
+                            + 3 * n * 4
+                            + (nk + 1) * 8
+                            + axis.nt * 16
+                            + edge_pad_bytes(Some(axis), wavelet),
                     );
                     crate::time_mode::fuse_props_tile_time(
                         &vp, &vs, &rho, nk, axis, wavelet, angle_deg, trends.zoeppritz_form(), tile_out,
@@ -64,4 +71,13 @@ pub fn fuse_tile_local(
             }
         }
     }
+}
+
+/// Extra per-column scratch bytes of the wavelet-only physical edge chain:
+/// `h` more f64 reflectivity samples, plus the padded f32 buffer and its
+/// f64 convolution copy; 0 on the legacy axis and under
+/// `--legacy-filter-edges`.
+fn edge_pad_bytes(axis: Option<&crate::pipeline::TimeAxis>, wavelet: &[f64]) -> usize {
+    axis.and_then(|a| crate::time_mode::TraceChain::wavelet_only(a, wavelet).map(|c| (a.nt, c.pads)))
+        .map_or(0, |(nt, pads)| pads.bottom * 8 + pads.len(nt) * (4 + 8))
 }

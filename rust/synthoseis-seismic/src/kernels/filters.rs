@@ -144,6 +144,12 @@ pub enum FilterError {
     TraceTooShort { len: usize, padlen: usize },
     /// `lfilter_zi` precondition (`sum(a) != 0`).
     Unstable,
+    /// [`IirFilter::edge_pad`]: the forward-backward impulse response does
+    /// not fall below the tolerance within `cap` samples (an unstable or
+    /// near-unstable design).
+    EdgePadCap { cap: usize },
+    /// Padded buffer shorter than its window (`pt + nt > len`).
+    BadPadding { len: usize, pt: usize, nt: usize },
 }
 
 impl std::fmt::Display for FilterError {
@@ -159,6 +165,14 @@ impl std::fmt::Display for FilterError {
                 "filtfilt needs traces longer than padlen={padlen} samples (got {len})"
             ),
             Self::Unstable => write!(f, "filter not stable: sum(a) == 0"),
+            Self::EdgePadCap { cap } => write!(
+                f,
+                "bandpass impulse response does not decay below the edge-pad tolerance within {cap} samples (unstable design?)"
+            ),
+            Self::BadPadding { len, pt, nt } => write!(
+                f,
+                "padded trace of {len} samples cannot hold a top pad of {pt} and a window of {nt}"
+            ),
         }
     }
 }
@@ -170,6 +184,15 @@ impl std::error::Error for FilterError {}
 pub fn legacy_digitisation_ms(digi_ms: f64) -> f64 {
     (digi_ms / 1000.0) * 1000.0
 }
+
+/// Relative tolerance of [`IirFilter::edge_pad`]: the bottom pad reaches
+/// until the forward-backward impulse response stays below 1e-6 of its peak
+/// (filter-edge spec §4.1, §12 decision 4).
+pub const EDGE_PAD_TOLERANCE: f64 = 1e-6;
+
+/// Largest [`IirFilter::edge_pad`] (samples); a design that needs more is
+/// rejected as unstable.
+pub const EDGE_PAD_CAP: usize = 8192;
 
 /// IIR filter in transfer-function (`ba`) form plus its `lfilter_zi` state.
 #[derive(Debug, Clone, PartialEq)]
@@ -388,6 +411,93 @@ impl IirFilter {
         lfilter_in_place(&b, &a, &mut z, scratch);
         scratch.reverse();
         for (dst, &src) in trace.iter_mut().zip(&scratch[edge..edge + nk]) {
+            *dst = src as f32;
+        }
+        Ok(())
+    }
+
+    /// Bottom edge pad of the physical edge rule (filter-edge spec §4.1):
+    /// the smallest `n` such that the forward-backward impulse response
+    /// stays below [`EDGE_PAD_TOLERANCE`] (1e-6) of its peak from lag `n`
+    /// on. Computed in f64 from a delta; one call per filter design. Errors
+    /// when the response has not decayed within [`EDGE_PAD_CAP`] (8192)
+    /// samples, which only an unstable design does.
+    pub fn edge_pad(&self) -> Result<usize, FilterError> {
+        self.edge_pad_tol(EDGE_PAD_TOLERANCE)
+    }
+
+    /// [`IirFilter::edge_pad`] at relative tolerance `tol` (`0 < tol < 1`);
+    /// non-increasing in `tol`.
+    pub fn edge_pad_tol(&self, tol: f64) -> Result<usize, FilterError> {
+        let cap = EDGE_PAD_CAP;
+        let (b, a) = self.normalised();
+        // Delta at the centre of a buffer long enough that the forward
+        // response is cut only after 2·cap samples; zero start states give
+        // the infinite-data forward-backward response (symmetric).
+        let c = 2 * cap;
+        let mut x = vec![0.0f64; 4 * cap + 1];
+        x[c] = 1.0;
+        let mut z = vec![0.0f64; b.len() - 1];
+        lfilter_in_place(&b, &a, &mut z, &mut x);
+        x.reverse();
+        z.iter_mut().for_each(|v| *v = 0.0);
+        lfilter_in_place(&b, &a, &mut z, &mut x);
+        x.reverse();
+        if !x.iter().all(|v| v.is_finite()) {
+            return Err(FilterError::EdgePadCap { cap });
+        }
+        let peak = x.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        if peak == 0.0 {
+            return Ok(0);
+        }
+        let thr = tol * peak;
+        // Last lag (either side) above the threshold.
+        let last = (0..=c)
+            .rev()
+            .find(|&m| x[c + m].abs() > thr || x[c - m].abs() > thr)
+            .map_or(0, |m| m + 1);
+        if last > cap {
+            return Err(FilterError::EdgePadCap { cap });
+        }
+        Ok(last)
+    }
+
+    /// Forward-backward filter over a padded `f32` trace (filter-edge spec
+    /// §4.6): `buf` holds `pt` top-pad samples, the `nt`-sample window and
+    /// the bottom pad, already continued with the real exterior (zero
+    /// reflectivity above time 0, the model below, noise in the pads). No
+    /// odd extension and no `padlen`: the forward pass starts from a zero
+    /// state when `pt == 0` (water, exact) or from SciPy's `zi·x₀` when
+    /// there is a top pad; the backward pass starts from `zi·y_end`, as
+    /// SciPy does. f32 → f64 filtering → f32; only the window
+    /// `buf[pt..pt + nt]` is written back. `filtfilt_f32` stays the legacy
+    /// (`--legacy-filter-edges`, legacy axis) and Python-parity path.
+    pub fn filtfilt_padded_f32(
+        &self,
+        buf: &mut [f32],
+        pt: usize,
+        nt: usize,
+        scratch: &mut Vec<f64>,
+    ) -> Result<(), FilterError> {
+        let len = buf.len();
+        if pt + nt > len {
+            return Err(FilterError::BadPadding { len, pt, nt });
+        }
+        if nt == 0 {
+            return Ok(());
+        }
+        let (b, a) = self.normalised();
+        scratch.clear();
+        scratch.extend(buf.iter().map(|&v| v as f64));
+        let x0 = if pt > 0 { scratch[0] } else { 0.0 };
+        let mut z: Vec<f64> = self.zi.iter().map(|&v| v * x0).collect();
+        lfilter_in_place(&b, &a, &mut z, scratch);
+        scratch.reverse();
+        let y0 = scratch[0];
+        z.iter_mut().zip(&self.zi).for_each(|(zk, &v)| *zk = v * y0);
+        lfilter_in_place(&b, &a, &mut z, scratch);
+        scratch.reverse();
+        for (dst, &src) in buf[pt..pt + nt].iter_mut().zip(&scratch[pt..pt + nt]) {
             *dst = src as f32;
         }
         Ok(())
