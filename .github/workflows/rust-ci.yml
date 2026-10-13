@@ -119,14 +119,20 @@ jobs:
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
           grep -q "masked_in_salt=72 " /tmp/fmt-gpu.txt
           # Time output, partial voxels (default since PR B2): the time-domain
-          # fault cube is sampled through the partial traveltime.
+          # fault cube is sampled through the partial traveltime. Continuous
+          # salt partial-voxel maps: 3818/67 (was 3800/70, and 3870 through
+          # salt, before them; --legacy-salt-pv-maps keeps those).
           cargo run --profile test -p synthoseis -- run $FM --store /tmp/fmp.mdio | tee /tmp/fmp.txt
-          grep -q "fault_voxels=3800, masked_in_salt=70 " /tmp/fmp.txt
+          grep -q "fault_voxels=3818, masked_in_salt=67 " /tmp/fmp.txt
           grep -q "^partial voxels: .*mode=subcell" /tmp/fmp.txt
+          grep -q "^salt partial-voxel maps: continuous (clamped to the label cell)" /tmp/fmp.txt
           cargo run --profile test -p synthoseis -- run $FM --fault-labels-through-salt --store /tmp/fmp-through.mdio | tee /tmp/fmp-through.txt
-          grep -q "fault_voxels=3870 (--fault-labels-through-salt)" /tmp/fmp-through.txt
+          grep -q "fault_voxels=3885 (--fault-labels-through-salt)" /tmp/fmp-through.txt
           cargo run --profile test -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmp-gpu.mdio | tee /tmp/fmp-gpu.txt
-          grep -q "fault_voxels=3800, masked_in_salt=70 " /tmp/fmp-gpu.txt
+          grep -q "fault_voxels=3818, masked_in_salt=67 " /tmp/fmp-gpu.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-salt-pv-maps --store /tmp/fmp-rounded.mdio | tee /tmp/fmp-rounded.txt
+          grep -q "fault_voxels=3800, masked_in_salt=70 " /tmp/fmp-rounded.txt
+          grep -q "^salt partial-voxel maps: rounded (--legacy-salt-pv-maps)" /tmp/fmp-rounded.txt
       - name: filter edges smoke (physical default + attr, --legacy-filter-edges, multiprocess, exit 2 on the legacy axis)
         run: |
           set -euo pipefail
