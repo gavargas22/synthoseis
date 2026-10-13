@@ -564,6 +564,22 @@ pub fn drag_horizon_maps_before_pushdown(
     salt: &SaltBody,
     smooth_all: bool,
 ) -> Vec<f64> {
+    drag_loop(maps, shape, salt, smooth_all, false)
+}
+
+/// Drag offset `D` per horizon cell (spec salt-pv-far-field-maps §4.1):
+/// the same loop as [`drag_horizon_maps_before_pushdown`] (hit test on the
+/// rounded `maps`, lift counter, σ = 3 kernel, axis order) but returning the
+/// offset instead of `maps + D`. Lift-only: `D = G_σ3(L)`; smooth-all:
+/// `D = G_σ3(R + L) − R`. Exactly 0 more than 12 columns from any lifted
+/// cell under lift-only. Used only by the partial-voxel maps; production
+/// keeps [`drag_horizon_maps`] (in smooth-all mode `R + D` can differ from
+/// `G(R+L)` in the last bit).
+pub fn drag_offsets(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all: bool) -> Vec<f64> {
+    drag_loop(maps, shape, salt, smooth_all, true)
+}
+
+fn drag_loop(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all: bool, offsets: bool) -> Vec<f64> {
     let [ni, nj, nh] = shape;
     let n = ni * nj;
     assert_eq!(maps.len(), n * nh);
@@ -595,12 +611,12 @@ pub fn drag_horizon_maps_before_pushdown(
             }
             let s = gaussian_filter_sigma3(&m, ni, nj);
             for c in 0..n {
-                out[c * nh + h] = s[c];
+                out[c * nh + h] = if offsets { s[c] - maps[c * nh + h] } else { s[c] };
             }
         } else {
             let s = gaussian_filter_sigma3(&lift, ni, nj);
             for c in 0..n {
-                out[c * nh + h] = m[c] + s[c];
+                out[c * nh + h] = if offsets { s[c] } else { m[c] + s[c] };
             }
         }
     }

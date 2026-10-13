@@ -261,15 +261,18 @@ and `examples/plot_salt_demo.py` prints p.
 
 ## Effect on the demo cube (64×64×256, seed 7, 4 faults, defaults)
 
-Regenerated on master `1c22b653` with the current defaults: two-way time
-output, partial voxels, lift-only drag, salt Vs 2600 and the scaled closure
-minimum. The earlier tables here were measured at #34, on the depth axis
-with whole voxels, smooth-all drag and Vs 2250. They are replaced.
+Regenerated after the continuous salt partial-voxel maps (on master
+`a60ec34a` + that change) with the current defaults: two-way time output,
+partial voxels, lift-only drag, salt Vs 2600, the scaled closure minimum
+and physical filter edges. The closure and HC columns were measured on
+`1c22b653` and are unchanged by the later changes, which move neither the
+depth labels nor the closures; the store hashes are the 15° stores now.
 
-| | salt | closures with a fluid draw (brine / oil / gas) | HC voxels (oil / gas) | CLI store hash |
+| | salt | closures with a fluid draw (brine / oil / gas) | HC voxels (oil / gas) | CLI store hash (15°) |
 |---|---|---|---|---|
-| `--no-salt` | — | 2 / 2 / 3 | 8 255 (5 161 / 3 094) | `0xe33574e175a89307` |
-| salt (default) | top 65.9 samples, R 12.2 columns, 18 535 voxels (1.8 %) in 597 columns | 2 / 2 / 4 | 7 610 (4 974 / 2 636) | `0x2b632665f11b7a16` |
+| `--no-salt` | — | 2 / 2 / 3 | 8 255 (5 161 / 3 094) | `0x7ad05baaa1d8a542` |
+| salt (default) | top 65.9 samples, R 12.2 columns, 18 535 voxels (1.8 %) in 597 columns | 2 / 2 / 4 | 7 610 (4 974 / 2 636) | `0x595ef71db37dd682` |
+| salt, `--legacy-salt-pv-maps` (= a60ec34a) | same | same | same | `0xd288e59242935bfa` |
 
 At these default flags, `--no-salt` is no longer the b4f4259 store, because
 time output, partial voxels and other defaults have changed since then.
@@ -277,33 +280,75 @@ With the legacy switches the tests add, it still reproduces b4f4259 (see
 Locks).
 
 Angle-stack change, salt vs `--no-salt` (relative RMS of the difference,
-relative to `--no-salt`):
+relative to `--no-salt`; "far" = more than 8 columns, Chebyshev, from any
+salt column: 2 466 of 4 096 columns):
 
-| angle | rel RMS | changed samples |
-|---|---|---|
-| 0° | 0.616 | 999 094 of 1 048 576 (95.3 %) |
-| 15° | 0.587 | 999 094 (95.3 %) |
-| 30° | 0.494 | 999 248 (95.3 %) |
+| angle | rel RMS all / far / near | changed samples | before (rounded maps): rel RMS all / far |
+|---|---|---|---|
+| 0° | 0.454 / **0.0002** / 0.740 | 305 894 of 1 048 576 (29.2 %) | 0.616 / 0.429 |
+| 15° | 0.411 / **0.0002** / 0.669 | 306 006 (29.2 %) | 0.587 / 0.434 |
+| 30° | 0.246 / **0.0001** / 0.402 | 305 859 (29.2 %) | 0.494 / 0.442 |
 
 - **Labels.** Depth labels change in 2.87 % of the voxels. Changes outside
   the salt are 1.67 % of the cube; the salt itself is 1.77 %.
-- **Far from salt.** More than 8 columns (Chebyshev) from any salt column
-  (2 466 of 4 096 columns), **no label changes** (0.0000 %). At #34, under
+- **Far from salt, depth labels:** **no changes** (0.0000 %). At #34, under
   smooth-all, 2.5 % changed.
-- **Far-field stacks still differ, but not because of the labels.** The 15°
-  relative RMS there is 0.434 (0.429 at 0°, 0.442 at 30°). With salt on,
-  the partial-voxel horizon maps are the drag of the *rounded* maps
-  (`toy_horizon_maps_continuous`, partial-voxels spec §3.1). Far from salt,
-  every interface therefore sits on a whole sample. `--no-salt` keeps the
-  continuous sub-sample positions instead. The partial-voxel interface cells
-  differ in every far column (about one cell per layer per column, 105 804
-  of 631 296 far-field voxels). With `--legacy-whole-voxels`, the far-field
-  properties and the 15° stack are bit-identical, salt vs `--no-salt`
-  (0 of 631 296 samples differ). Near the salt (≤ 8 columns), the 15°
-  relative RMS is 0.778.
+- **Far from salt, time-domain store:** time `labels` and `fault_labels`
+  are identical to `--no-salt` (0 differing samples; near the salt 85 900
+  and 7 757 differ, from the salt itself). Until the continuous salt
+  partial-voxel maps this held for the depth labels only: in the written
+  time-domain store the far field differed from `--no-salt` in 13 326
+  label samples (2.1 % of far samples) and 620 `fault_labels` samples.
+- **Far-field stacks match `--no-salt`** (15° relative RMS 0.0002; the
+  residual is the genuine drag tail 9–12 columns from the salt, at most
+  0.014 sample in the maps). With salt on, the partial-voxel horizon maps
+  are now the continuous maps plus the production drag offset, clamped
+  into the rounding cell of each label (see
+  [Salt partial-voxel maps](#salt-partial-voxel-maps)). Near the salt
+  (≤ 8 columns), the 15° relative RMS is 0.669, next to the whole-voxel
+  reference (0.676).
 - **HC voxels.** Far from the salt they are unchanged (127 → 127). Near the
   salt, the salt, the drag and the walls reorganise the closures
   (8 128 → 7 483).
+
+## Salt partial-voxel maps
+
+Labels come from the production (whole-sample) horizon maps; the
+partial-voxel model uses continuous maps for sub-sample interfaces
+(partial-voxels spec §3.1). With salt on, the continuous maps are
+
+```text
+z = clamp_to_round_cell( min_cascade( z⁰ + D ), P )
+```
+
+- `z⁰`: the continuous undragged maps (the `--no-salt` maps);
+- `D`: the drag offset of the production drag (`salt::drag_offsets`):
+  `G_σ3(L)` lift-only, `G_σ3(R + L) − R` smooth-all, with the hit test and
+  the lift counter on the rounded maps `R`, exactly as production;
+- `P`: the production maps; the clamp keeps every value in the rounding
+  cell of `P` (`round(z) == P`), so labels never move and the
+  partial-voxel offsets stay within ±½ sample.
+
+`D` is exactly 0 more than 12 columns from any lifted cell (lift-only), so
+there the maps equal `--no-salt` bit for bit. Until master `a60ec34a` the
+maps were the drag of the *rounded* maps, which put every far-field
+interface on a whole sample, even in cubes whose salt body has 0 voxels
+inside the cube (the 8³ default). **`--legacy-salt-pv-maps`**
+(`RockPhysicsConfig::salt_legacy_pv_maps`) restores that bit for bit on
+every path; it exits 2 with `--no-salt`, the planar geometry,
+`--legacy-toy-depth` and `--legacy-whole-voxels`. The summary prints
+`salt partial-voxel maps: continuous (clamped to the label cell)` or
+`… rounded (--legacy-salt-pv-maps)`.
+
+What changes with the default, demo cube, default vs
+`--legacy-salt-pv-maps` (15°): 94.5 % of cells, relative RMS 0.404;
+time labels 21 789 samples (2.1 %), time `salt_labels` 138, time
+`fault_labels` 1 141. Depth labels and the legacy-axis `labels` /
+`salt_labels` / `fault_labels` are identical. Partial-voxel counters:
+mixed cells 10.4 % → 14.7 % (`--no-salt` 14.9 %), label guard 0.004 % →
+0.089 % (`--no-salt` 0.084 %). The clamp holds about 1.5–2.3 % of horizon
+values (near salt) at the edge of their rounding cell: a bounded (≤ ½
+sample) bias, the price of keeping labels fixed.
 
 ### Salt Vs 2600 vs `--salt-legacy-vs` (2250)
 
@@ -410,8 +455,10 @@ python rust/synthoseis-core/examples/plot_salt_demo.py /tmp/saltd /tmp/salts OUT
     chunk in memory (`salt::verify_salt_labels`); a test corrupts one voxel
     and checks that it is caught.
 - **Multi-process:** `--no-salt`, `--salt-legacy-top-offset`,
-  `--salt-smooth-all-horizons` and `--salt-legacy-vs` are forwarded to
-  workers.
+  `--salt-smooth-all-horizons`, `--salt-legacy-vs` and
+  `--legacy-salt-pv-maps` are forwarded to workers (one shared
+  `cli_jobs::worker_args()`). GPU stores match the CPU path; verified on
+  the software fallback.
   - Real worker processes accept each switch and match one process
     (`lithology_flags_reach_multiprocess_workers`). That run is on the 8³
     multi-process cube, which has no salt voxels, so it cannot show a

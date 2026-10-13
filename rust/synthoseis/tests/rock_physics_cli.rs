@@ -394,6 +394,9 @@ fn lithology_flags_reach_multiprocess_workers() {
         &["--salt-legacy-top-offset"][..],
         &["--salt-smooth-all-horizons"][..],
         &["--salt-legacy-vs"][..],
+        // `run` adds --legacy-whole-voxels unless the run picks a voxel
+        // mode, and --legacy-salt-pv-maps needs partial voxels.
+        &["--legacy-salt-pv-maps", "--partial-voxel-reflectivity", "cell"][..],
     ] {
         let single = dir.path().join("single.mdio");
         let out = run(&with(&MP[3..], flags), &single);
@@ -422,8 +425,8 @@ fn invalid_lithology_flags_exit_2() {
         (&["--closures-unsegmented", "--no-fluids"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids"),
         (&["--closures-unsegmented", "--closures-per-layer"], "--closures-unsegmented has no effect with --legacy-toy-depth, --no-fluids or --closures-per-layer"),
         (&["--closures-unsegmented", "--toy-geometry", "planar"], "--closures-unsegmented has no effect with the planar geometry"),
-        (&["--no-salt", "--toy-geometry", "planar"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons / --salt-legacy-vs have no effect with the planar geometry"),
-        (&["--no-salt", "--legacy-toy-depth"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons / --salt-legacy-vs have no effect with the planar geometry or --legacy-toy-depth"),
+        (&["--no-salt", "--toy-geometry", "planar"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons / --salt-legacy-vs / --legacy-salt-pv-maps have no effect with the planar geometry"),
+        (&["--no-salt", "--legacy-toy-depth"], "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons / --salt-legacy-vs / --legacy-salt-pv-maps have no effect with the planar geometry or --legacy-toy-depth"),
         (&["--salt-legacy-top-offset", "--toy-geometry", "planar"], "have no effect with the planar geometry"),
         (&["--salt-legacy-top-offset", "--no-salt"], "--salt-legacy-top-offset has no effect with --no-salt"),
         (&["--salt-smooth-all-horizons", "--no-salt"], "--salt-smooth-all-horizons has no effect with --no-salt"),
@@ -432,6 +435,10 @@ fn invalid_lithology_flags_exit_2() {
         (&["--salt-legacy-vs", "--no-salt"], "--salt-legacy-vs has no effect with --no-salt"),
         (&["--salt-legacy-vs", "--toy-geometry", "planar"], "have no effect with the planar geometry"),
         (&["--salt-legacy-vs", "--legacy-toy-depth"], "have no effect with the planar geometry or --legacy-toy-depth"),
+        (&["--legacy-salt-pv-maps", "--no-salt"], "--legacy-salt-pv-maps has no effect with --no-salt"),
+        (&["--legacy-salt-pv-maps", "--toy-geometry", "planar"], "--legacy-salt-pv-maps have no effect with the planar geometry"),
+        (&["--legacy-salt-pv-maps", "--legacy-toy-depth"], "have no effect with the planar geometry or --legacy-toy-depth"),
+        (&["--legacy-salt-pv-maps", "--legacy-whole-voxels"], "--legacy-salt-pv-maps has no effect with --legacy-whole-voxels (no partial-voxel maps)"),
         (&["--fault-labels-through-salt", "--faults", "2", "--toy-geometry", "planar"], "--fault-labels-through-salt has no effect with the planar geometry"),
         (&["--fault-labels-through-salt", "--faults", "2", "--legacy-toy-depth"], "--fault-labels-through-salt has no effect with the planar geometry or --legacy-toy-depth"),
         (&["--fault-labels-through-salt", "--faults", "2", "--no-salt"], "--fault-labels-through-salt has no effect with --no-salt"),

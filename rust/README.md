@@ -190,6 +190,12 @@ previous `G_σ3(m+L)` (= master ccce5cc9 with salt on).
 unchanged; stacks change at salt contacts (AVO). See
 [`docs/salt-bodies.md`](../docs/salt-bodies.md).
 
+**Salt partial-voxel maps keep sub-sample positions.** With salt on, the
+partial-voxel maps are the continuous maps plus the drag offset, clamped to
+each label's rounding cell, so far-field horizons match `--no-salt` and
+depth labels do not move; `--legacy-salt-pv-maps` restores the rounded
+maps (= master a60ec34a).
+
 
 ## Multi-worker job partition (local)
 

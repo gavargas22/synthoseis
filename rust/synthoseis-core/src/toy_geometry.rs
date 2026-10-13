@@ -241,6 +241,38 @@ pub fn layered_horizon_maps_continuous(seed: u64, shape: [usize; 3]) -> (Vec<f64
 
 /// `z_{i-1} = min(z_{i-1}, z_i)` for `i = nh-1 … 2` per column: the order
 /// `enforce_nonnegative_thicknesses` imposes, exact in floating point.
+/// Next representable `f64` above / below a finite `x` (`f64::next_up` /
+/// `next_down` need Rust 1.86; MSRV is 1.83).
+fn next_up_f64(x: f64) -> f64 {
+    if x == 0.0 {
+        return f64::from_bits(1);
+    }
+    let b = x.to_bits();
+    f64::from_bits(if x > 0.0 { b + 1 } else { b - 1 })
+}
+
+fn next_down_f64(x: f64) -> f64 {
+    -next_up_f64(-x)
+}
+
+/// The value nearest to `z` among `x` with `x.round() == p` (spec
+/// salt-pv-far-field-maps §4.1). `f64::round` rounds half away from zero, so
+/// the cell is `[p − ½, p + ½)` for `p > 0`, `(p − ½, p + ½]` for `p < 0` and
+/// `(−½, ½)` for `p = 0`. `p` must be a finite whole number.
+pub(crate) fn clamp_to_round_cell(z: f64, p: f64) -> f64 {
+    debug_assert!(p.is_finite() && p.fract() == 0.0, "p = {p} is not a whole sample");
+    let (lo, hi) = if p > 0.0 {
+        (p - 0.5, next_down_f64(p + 0.5))
+    } else if p < 0.0 {
+        (next_up_f64(p - 0.5), p + 0.5)
+    } else {
+        (next_up_f64(-0.5), next_down_f64(0.5))
+    };
+    let out = z.clamp(lo, hi);
+    debug_assert!(out.round() == p, "clamp_to_round_cell({z}, {p}) = {out}");
+    out
+}
+
 pub(crate) fn min_cascade(maps: &mut [f64], nh: usize) {
     for col in maps.chunks_exact_mut(nh.max(1)) {
         for i in (2..nh).rev() {
@@ -277,4 +309,41 @@ pub fn planar_horizon_maps(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
     }
     enforce_nonnegative_thicknesses(&mut maps, [ni, nj, nh]);
     (maps, nh)
+}
+
+#[cfg(test)]
+mod round_cell_tests {
+    use super::clamp_to_round_cell as c;
+
+    #[test]
+    fn clamp_to_round_cell_edges() {
+        // Inside the cell: unchanged.
+        assert_eq!(c(37.3, 37.0), 37.3);
+        assert_eq!(c(-3.2, -3.0), -3.2);
+        assert_eq!(c(0.25, 0.0), 0.25);
+        // P > 0: [P − ½, P + ½).
+        assert_eq!(c(2.5, 3.0), 2.5);
+        assert_eq!(c(1.0, 3.0), 2.5);
+        let hi = c(3.5, 3.0);
+        assert!(hi < 3.5 && hi.round() == 3.0);
+        assert_eq!(c(9.0, 3.0), hi);
+        // P < 0: (P − ½, P + ½].
+        assert_eq!(c(-2.5, -3.0), -2.5);
+        let lo = c(-3.5, -3.0);
+        assert!(lo > -3.5 && lo.round() == -3.0);
+        assert_eq!(c(-1.0, -3.0), -2.5);
+        // P = 0: (−½, ½).
+        for z in [-0.5, 0.5, -7.0, 7.0, 0.0, -0.0] {
+            let v = c(z, 0.0);
+            assert!(v.round() == 0.0 && v.abs() < 0.5, "{z} -> {v}");
+        }
+        // Results are finite and round to P across a sweep.
+        for p in -5..=5 {
+            for k in -40..=40 {
+                let z = p as f64 + k as f64 * 0.0625;
+                let v = c(z, p as f64);
+                assert!(v.is_finite() && v.round() == p as f64 && (v - p as f64).abs() <= 0.5);
+            }
+        }
+    }
 }

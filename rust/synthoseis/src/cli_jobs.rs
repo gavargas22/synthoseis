@@ -152,6 +152,33 @@ pub fn maybe_write_partition_plan(
     );
 }
 
+/// Every flag a multi-process worker needs to rebuild `(rock, time,
+/// geometry)`: [`rock_physics_args`], [`time_args`] unless
+/// `--legacy-toy-depth` (which implies the legacy axis),
+/// `--legacy-whole-voxels` when partial voxels are off on the layered
+/// geometry (planar is whole-voxel and rejects the flag), and
+/// `--toy-geometry`. The spawn site and the worker round-trip test both
+/// call this, so a flag cannot reach one and miss the other.
+pub fn worker_args(
+    rock: &synthoseis_core::RockPhysicsConfig,
+    time: &synthoseis_core::TimeConfig,
+    geometry: synthoseis_core::ToyGeometry,
+) -> Vec<String> {
+    let mut a = rock_physics_args(rock);
+    if !rock.legacy_toy_depth {
+        a.extend(time_args(time));
+    }
+    if !rock.partial_voxels.enabled()
+        && !rock.legacy_toy_depth
+        && geometry == synthoseis_core::ToyGeometry::Layered
+    {
+        a.push("--legacy-whole-voxels".into());
+    }
+    a.push("--toy-geometry".into());
+    a.push(geometry.as_str().into());
+    a
+}
+
 /// CLI flags that rebuild `rock` in a worker process.
 pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<String> {
     let mut a = Vec::new();
@@ -207,6 +234,9 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     }
     if rock.salt_legacy_vs {
         a.push("--salt-legacy-vs".into());
+    }
+    if rock.salt_legacy_pv_maps {
+        a.push("--legacy-salt-pv-maps".into());
     }
     if rock.fault_labels_through_salt {
         a.push("--fault-labels-through-salt".into());
@@ -348,24 +378,7 @@ pub fn maybe_run_multiprocess(
             .arg(seed.to_string())
             .arg("--workers")
             .arg(workers.to_string())
-            .args(rock_physics_args(rock))
-            .args(if rock.legacy_toy_depth {
-                // `--legacy-toy-depth` implies the legacy axis.
-                Vec::new()
-            } else {
-                time_args(time)
-            })
-            .args(
-                // Partial voxels are the CLI default: an explicit opt-out
-                // must reach layered workers (planar is whole-voxel and
-                // rejects the flag).
-                (!rock.partial_voxels.enabled()
-                    && !rock.legacy_toy_depth
-                    && geometry == synthoseis_core::ToyGeometry::Layered)
-                    .then_some("--legacy-whole-voxels"),
-            )
-            .arg("--toy-geometry")
-            .arg(geometry.as_str());
+            .args(worker_args(rock, time, geometry));
         if let Some([ci, cj, ck]) = resolved {
             cmd.arg("--chunk-i")
                 .arg(ci.to_string())

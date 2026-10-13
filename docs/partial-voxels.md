@@ -169,7 +169,7 @@ with the switch on.
 | Function | What it returns |
 |---|---|
 | `toy_geometry::layered_horizon_maps_continuous` | the f64 stack before `.round()`, with the thickness push applied as an exact `min` cascade |
-| `pipeline_stream::toy_horizon_maps_continuous` | with salt, the drag of the rounded maps without the final re-round (spec §3.1: the sub-sample position below the drag comes from the drag) |
+| `pipeline_stream::toy_horizon_maps_continuous` | with salt: the continuous maps plus the production drag offset (`salt::drag_offsets`, hit test on the rounded maps), min-cascaded, clamped into the rounding cell of the production map (salt pv-maps spec §4.1; see [salt-bodies.md](salt-bodies.md#salt-partial-voxel-maps)). `--legacy-salt-pv-maps` restores the v1 rule of spec §3.1 (the drag of the rounded maps without the final re-round), which snapped far-field horizons to whole samples |
 | `salt::hull_bounds` / `SaltBody::hull_bounds` | the continuous per-column `(lo, hi)` that `hull_runs` rasterises; `hull_runs` now calls the shared per-column helper |
 
 - `round(continuous)` equals the production maps bit for bit. The unit test

@@ -72,10 +72,20 @@ const MP: &[&str] = &[
 // Time-mode rows moved with the physical filter edges (filter-edge spec
 // §6: the last 7 samples of columns that continue below the window); the
 // `_1C22` values are master 1c22b653's, reproduced with
-// `--legacy-filter-edges`. The labels part of the hash does not move.
-const DEFAULT_PLAIN: u64 = 0xc5f1_6ffa_eed0_333e;
-const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0xa2f4_7082_3b85_5563;
-const DEFAULT_MP: u64 = 0x91c3_c68d_c372_80f1;
+// `--legacy-filter-edges` (plus `--legacy-salt-pv-maps` for the
+// partial-voxel defaults). The labels part of the hash does not move with
+// the filter edges.
+//
+// `DEFAULT_*` moved again with the continuous salt partial-voxel maps
+// (salt pv-maps spec §7: stack, and in time mode the time labels and
+// `salt_labels`); master a60ec34a's values are `*_A60E` and are
+// reproduced with `--legacy-salt-pv-maps`.
+const DEFAULT_PLAIN: u64 = 0xd59f_0b05_6072_4ef4;
+const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0x526a_50f7_562b_04f3;
+const DEFAULT_MP: u64 = 0xcf00_54b2_6533_c33a;
+const DEFAULT_PLAIN_A60E: u64 = 0xc5f1_6ffa_eed0_333e;
+const DEFAULT_PLAIN_LEGACY_AXIS_A60E: u64 = 0xa2f4_7082_3b85_5563;
+const DEFAULT_MP_A60E: u64 = 0x91c3_c68d_c372_80f1;
 const WHOLE_PLAIN: u64 = 0x38d8_efe5_ef93_16a4;
 const WHOLE_MP: u64 = 0x91c3_c68d_c372_80f1;
 const DEFAULT_PLAIN_1C22: u64 = 0x82bf_e625_85ee_8c92;
@@ -126,9 +136,22 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
             so.contains("partial voxels: mixed=") && so.contains(&format!("mode={mode}")),
             "{name}: {so}"
         );
+        assert!(so.contains("salt partial-voxel maps: continuous (clamped to the label cell)\n"), "{name}: {so}");
         assert_eq!(attrs(&d)["voxel_model"], "partial-z", "{name}");
         assert_eq!(attrs(&d)["partial_voxel_reflectivity"], mode, "{name}");
         assert_eq!(store_hash(&d), pinned, "{name}: new default {:#018x}", store_hash(&d));
+        // `--legacy-salt-pv-maps` restores master a60ec34a's default.
+        let a60e = match name {
+            "time" => DEFAULT_PLAIN_A60E,
+            "legacy-axis" => DEFAULT_PLAIN_LEGACY_AXIS_A60E,
+            _ => DEFAULT_MP_A60E,
+        };
+        let r = dir.path().join(format!("{name}-rounded-maps.mdio"));
+        let out = run(&with(&base, &["--legacy-salt-pv-maps"]), &r);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(stdout(&out).contains("salt partial-voxel maps: rounded (--legacy-salt-pv-maps)\n"), "{name}");
+        assert_eq!(store_hash(&r), a60e, "{name}: --legacy-salt-pv-maps = a60ec34a {:#018x}", store_hash(&r));
+        assert_ne!(store_hash(&r), store_hash(&d), "{name}: the default moves");
         let e = dir.path().join(format!("{name}-explicit.mdio"));
         assert!(run(
             &with(&base, &["--partial-voxel-reflectivity", explicit]),
@@ -145,18 +168,18 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
         let out = run(&with(&base, &["--legacy-whole-voxels"]), &l);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(
-            !stdout(&out).contains("partial voxels:"),
+            !stdout(&out).contains("partial voxels:") && !stdout(&out).contains("salt partial-voxel maps"),
             "{name}: {}",
             stdout(&out)
         );
         for k in PV_ATTRS {
             assert!(attrs(&l).get(k).is_none(), "{name}: opt-out store has {k}");
         }
-        // On the tiny multi-process 8³ cube salt/partial may not move the
-        // stack enough to differ; the plain / legacy-axis cases do.
-        if name != "mp" {
-            assert_ne!(store_hash(&l), store_hash(&d), "{name}: opt-out vs default");
-        }
+        // Every case differs, including the 8³ multi-process cube: its
+        // salt body has 0 voxels inside the cube, and before the
+        // continuous salt partial-voxel maps that snapped every horizon to
+        // whole samples (default == whole voxels there).
+        assert_ne!(store_hash(&l), store_hash(&d), "{name}: opt-out vs default");
         if let Some(w) = whole {
             assert_eq!(
                 store_hash(&l),
@@ -175,7 +198,9 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
         if let Some((d_1c22, w_1c22)) = legacy_edges {
             for (extra, want) in [(&[][..], d_1c22), (&["--legacy-whole-voxels"][..], w_1c22)] {
                 let p = dir.path().join(format!("{name}-1c22.mdio"));
-                let args = with(&with(&base, extra), &["--legacy-filter-edges"]);
+                // 1c22b653 also had the rounded salt partial-voxel maps.
+                let pv: &[&str] = if extra.is_empty() { &["--legacy-salt-pv-maps"] } else { &[] };
+                let args = with(&with(&with(&base, extra), &["--legacy-filter-edges"]), pv);
                 assert!(run(&args, &p).status.success(), "{name} {extra:?}");
                 assert_eq!(store_hash(&p), want, "{name} {extra:?}: --legacy-filter-edges = 1c22b653");
             }

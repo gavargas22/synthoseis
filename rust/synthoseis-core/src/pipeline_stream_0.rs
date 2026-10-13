@@ -135,11 +135,16 @@ pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
 
 /// Continuous (unrounded) counterpart of [`toy_horizon_maps`] for partial
 /// voxels (spec §3.1); `None` for the planar geometry, which is whole-voxel
-/// by construction. Layered: [`crate::toy_geometry::layered_horizon_maps_continuous`];
-/// with salt, the drag of the *rounded* maps without the final re-round (the
-/// drag is not re-derived from continuous maps, which would move labels).
-/// `round(continuous) == toy_horizon_maps(cfg)` exactly. Used by the
-/// partial-voxel model (`partial_model`) only.
+/// by construction. Layered: [`crate::toy_geometry::layered_horizon_maps_continuous`].
+/// With salt (spec salt-pv-far-field-maps §4.1): the continuous maps `z⁰`
+/// plus the production drag offset `D` ([`crate::salt::drag_offsets`]; hit
+/// test and lift counter on the rounded maps, as production), min-cascaded,
+/// then each value clamped into the rounding cell of the production map.
+/// Far from salt (`D = 0`) this equals the no-salt continuous maps bit for
+/// bit. `RockPhysicsConfig::salt_legacy_pv_maps` restores the old rule (the
+/// drag of the rounded maps without the final re-round). Either way
+/// `round(continuous) == toy_horizon_maps(cfg)` exactly, so labels never
+/// move. Used by the partial-voxel model (`partial_model`) only.
 pub fn toy_horizon_maps_continuous(cfg: &E2eConfig) -> Option<(Vec<f64>, usize)> {
     match cfg.effective_geometry() {
         crate::toy_geometry::ToyGeometry::Planar => None,
@@ -149,9 +154,27 @@ pub fn toy_horizon_maps_continuous(cfg: &E2eConfig) -> Option<(Vec<f64>, usize)>
                 None => Some(crate::toy_geometry::layered_horizon_maps_continuous(cfg.seed, cfg.shape())),
                 Some(body) => {
                     let [ni, nj, _] = cfg.shape();
-                    let mut dragged = crate::salt::drag_horizon_maps(&maps, [ni, nj, nh], &body, cfg.rock_physics.salt_smooth_all_horizons);
-                    crate::toy_geometry::min_cascade(&mut dragged, nh);
-                    Some((dragged, nh))
+                    let smooth_all = cfg.rock_physics.salt_smooth_all_horizons;
+                    if cfg.rock_physics.salt_legacy_pv_maps {
+                        let mut dragged = crate::salt::drag_horizon_maps(&maps, [ni, nj, nh], &body, smooth_all);
+                        crate::toy_geometry::min_cascade(&mut dragged, nh);
+                        return Some((dragged, nh));
+                    }
+                    let d = crate::salt::drag_offsets(&maps, [ni, nj, nh], &body, smooth_all);
+                    let (mut z, nh0) = crate::toy_geometry::layered_horizon_maps_continuous(cfg.seed, cfg.shape());
+                    debug_assert_eq!(nh0, nh);
+                    for (v, dv) in z.iter_mut().zip(&d) {
+                        *v += *dv;
+                    }
+                    crate::toy_geometry::min_cascade(&mut z, nh);
+                    let (prod, _) = toy_horizon_maps(cfg);
+                    for (v, p) in z.iter_mut().zip(&prod) {
+                        *v = crate::toy_geometry::clamp_to_round_cell(*v, *p);
+                    }
+                    // Order holds without a second cascade: each value sits
+                    // in its own rounding cell and production is ordered.
+                    debug_assert!(z.chunks_exact(nh).all(|c| (2..nh).all(|h| c[h - 1] <= c[h])));
+                    Some((z, nh))
                 }
             }
         }
