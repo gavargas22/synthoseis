@@ -74,14 +74,19 @@ fn zattrs(p: &Path) -> String {
 const DEMO: &[&str] = &["--seed", "7", "--shape", "32,32,128", "--faults", "3"];
 /// `store_dir_hash` of the `DEMO` store written by a master bad1daa8
 /// binary (default flags). Reproduced with `--legacy-filter-edges` (the
-/// master filter edges; filter-edge spec §6 item 4).
+/// master filter edges; filter-edge spec §6 item 4) and
+/// `--legacy-salt-pv-maps` (rounded partial-voxel maps; salt pv-maps spec
+/// §7).
 const MASTER_BAD1DAA8_DEMO: u64 = 0x99e8_6ae5_7a12_b80c;
 /// `store_dir_hash` of the `DEMO` store with the new defaults (scaled
 /// minimum, contact at base + ½, physical filter edges): the regression
 /// pin for the default. Was `0xa91e_7b31_5d63_fcba` (master 1c22b653,
 /// before the physical filter edges moved the last 7 samples of long
-/// columns and added the `filter_edges` attribute).
-const SCALED_DEFAULT_DEMO: u64 = 0x1dba_aaf9_2418_e1fe;
+/// columns and added the `filter_edges` attribute), then
+/// `0x1dba_aaf9_2418_e1fe` (master a60ec34a, before the continuous salt
+/// partial-voxel maps moved the stack, time labels, time `fault_labels`
+/// and `salt_labels`; the closure summary is unchanged).
+const SCALED_DEFAULT_DEMO: u64 = 0x2296_0b5b_2e8b_c16c;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte
 /// (every array and attribute); the default differs and is pinned.
@@ -98,6 +103,7 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
                 "--salt-smooth-all-horizons",
                 "--salt-legacy-vs",
                 "--legacy-filter-edges",
+                "--legacy-salt-pv-maps",
             ],
         ]
         .concat(),

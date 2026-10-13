@@ -242,6 +242,14 @@ enum Commands {
         /// --no-salt, planar, or --legacy-toy-depth. See docs/salt-bodies.md.
         #[arg(long, default_value_t = false)]
         salt_legacy_vs: bool,
+        /// Legacy switch: build the partial-voxel horizon maps from the
+        /// rounded maps (master a60ec34a), which snaps far-field horizons to
+        /// whole samples whenever salt exists. Default: continuous maps plus
+        /// the drag offset, clamped to the label cell (depth labels
+        /// unchanged). Rejected with --no-salt, planar, --legacy-toy-depth or
+        /// --legacy-whole-voxels. See docs/salt-bodies.md.
+        #[arg(long, default_value_t = false)]
+        legacy_salt_pv_maps: bool,
         /// Legacy switch: write the depth-sampled seismic as time (each depth
         /// sample = one 4 ms sample, an implied constant 2000 m/s), master
         /// f3720fb2 bit for bit. Default: convert to two-way time from the
@@ -658,11 +666,12 @@ fn apply_lithology(
 }
 
 /// `--no-salt` / `--salt-legacy-top-offset` / `--salt-smooth-all-horizons` /
-/// `--salt-legacy-vs` / `--fault-labels-through-salt`: salt exists only in
-/// the layered geometry, so all are rejected with the planar geometry (and
-/// `--legacy-toy-depth`); the offset, smooth-all, legacy-vs and fault-label
-/// switches are rejected with `--no-salt`, and the fault-label switch
-/// without faults.
+/// `--salt-legacy-vs` / `--legacy-salt-pv-maps` / `--fault-labels-through-salt`:
+/// salt exists only in the layered geometry, so all are rejected with the
+/// planar geometry (and `--legacy-toy-depth`); the offset, smooth-all,
+/// legacy-vs, pv-maps and fault-label switches are rejected with
+/// `--no-salt`, `--legacy-salt-pv-maps` with `--legacy-whole-voxels`, and
+/// the fault-label switch without faults.
 fn apply_salt(
     mut rock: synthoseis_core::RockPhysicsConfig,
     geometry: synthoseis_core::ToyGeometry,
@@ -670,6 +679,8 @@ fn apply_salt(
     legacy_top_offset: bool,
     smooth_all_horizons: bool,
     salt_legacy_vs: bool,
+    legacy_salt_pv_maps: bool,
+    legacy_whole_voxels: bool,
     fault_labels_through_salt: bool,
     faults: usize,
 ) -> Result<synthoseis_core::RockPhysicsConfig, String> {
@@ -689,10 +700,10 @@ fn apply_salt(
     }
     rock.fault_labels_through_salt = fault_labels_through_salt;
     if geometry == synthoseis_core::ToyGeometry::Planar
-        && (no_salt || legacy_top_offset || smooth_all_horizons || salt_legacy_vs)
+        && (no_salt || legacy_top_offset || smooth_all_horizons || salt_legacy_vs || legacy_salt_pv_maps)
     {
         return Err(
-            "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons / --salt-legacy-vs have no effect with the planar geometry or --legacy-toy-depth (no salt)"
+            "--no-salt / --salt-legacy-top-offset / --salt-smooth-all-horizons / --salt-legacy-vs / --legacy-salt-pv-maps have no effect with the planar geometry or --legacy-toy-depth (no salt)"
                 .into(),
         );
     }
@@ -705,10 +716,17 @@ fn apply_salt(
     if no_salt && salt_legacy_vs {
         return Err("--salt-legacy-vs has no effect with --no-salt".into());
     }
+    if no_salt && legacy_salt_pv_maps {
+        return Err("--legacy-salt-pv-maps has no effect with --no-salt".into());
+    }
+    if legacy_whole_voxels && legacy_salt_pv_maps {
+        return Err("--legacy-salt-pv-maps has no effect with --legacy-whole-voxels (no partial-voxel maps)".into());
+    }
     rock.salt = !no_salt;
     rock.salt_legacy_top_offset = legacy_top_offset;
     rock.salt_smooth_all_horizons = smooth_all_horizons;
     rock.salt_legacy_vs = salt_legacy_vs;
+    rock.salt_legacy_pv_maps = legacy_salt_pv_maps;
     Ok(rock)
 }
 
@@ -766,6 +784,7 @@ fn main() {
             salt_legacy_top_offset,
             salt_smooth_all_horizons,
             salt_legacy_vs,
+            legacy_salt_pv_maps,
             legacy_depth_as_time,
             dt_ms,
             twt_samples,
@@ -878,6 +897,8 @@ fn main() {
                     salt_legacy_top_offset,
                     salt_smooth_all_horizons,
                     salt_legacy_vs,
+                    legacy_salt_pv_maps,
+                    legacy_whole_voxels,
                     fault_labels_through_salt,
                     faults,
                 )
@@ -1136,6 +1157,7 @@ mod tests {
             salt_legacy_top_offset,
             salt_smooth_all_horizons,
             salt_legacy_vs,
+            legacy_salt_pv_maps,
             legacy_depth_as_time,
             dt_ms,
             twt_samples,
@@ -1176,6 +1198,8 @@ mod tests {
             salt_legacy_top_offset,
             salt_smooth_all_horizons,
             salt_legacy_vs,
+            legacy_salt_pv_maps,
+            legacy_whole_voxels,
             fault_labels_through_salt,
             faults,
         )
@@ -1247,21 +1271,30 @@ mod tests {
             &["--salt-legacy-vs", "--legacy-depth-as-time"][..],
             &["--salt-legacy-vs", "--legacy-whole-voxels"][..],
             &["--salt-legacy-vs", "--legacy-filter-edges"][..],
+            &["--legacy-salt-pv-maps"][..],
+            &["--legacy-salt-pv-maps", "--salt-smooth-all-horizons", "--salt-legacy-vs"][..],
+            &["--legacy-salt-pv-maps", "--legacy-depth-as-time"][..],
         ] {
             let (rock, geometry, time) = rebuild_from_argv(&argv(extra));
             let mut worker = argv(&[]);
-            worker.extend(crate::cli_jobs::rock_physics_args(&rock));
-            worker.extend(crate::cli_jobs::time_args(&time));
-            if !rock.partial_voxels.enabled() {
-                worker.push("--legacy-whole-voxels".into());
-            }
-            worker.extend(["--toy-geometry".to_string(), geometry.as_str().to_string()]);
+            worker.extend(crate::cli_jobs::worker_args(&rock, &time, geometry));
             let back = rebuild_from_argv(&worker);
             assert_eq!(back, (rock.clone(), geometry, time.clone()), "{extra:?}: worker config");
             assert_eq!(
                 worker.iter().any(|a| a == "--salt-legacy-vs"),
                 extra.contains(&"--salt-legacy-vs"),
                 "{extra:?}: --salt-legacy-vs in the worker argv"
+            );
+            let fe = extra.contains(&"--legacy-filter-edges");
+            assert_eq!(time.legacy_filter_edges, fe, "{extra:?}: --legacy-filter-edges parsed");
+            assert_eq!(back.2.legacy_filter_edges, fe, "{extra:?}: --legacy-filter-edges in the worker config");
+            let pv = extra.contains(&"--legacy-salt-pv-maps");
+            assert_eq!(rock.salt_legacy_pv_maps, pv, "{extra:?}: --legacy-salt-pv-maps parsed");
+            assert_eq!(back.0.salt_legacy_pv_maps, pv, "{extra:?}: --legacy-salt-pv-maps in the worker config");
+            assert_eq!(
+                worker.iter().any(|a| a == "--legacy-salt-pv-maps"),
+                pv,
+                "{extra:?}: --legacy-salt-pv-maps in the worker argv"
             );
         }
 

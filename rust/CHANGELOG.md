@@ -6,6 +6,39 @@ Output-changing defaults are listed here with their opt-out flag.
 
 ### Changed
 
+- **Salt partial-voxel maps keep sub-sample positions** (spec "salt
+  partial-voxel far-field maps"). With salt on, the partial-voxel horizon
+  maps were built from the *rounded* maps plus the drag, so far from salt
+  every interface snapped to a whole sample (partial voxels were
+  effectively off in every salt cube, including the 8³ default whose salt
+  body has 0 voxels in the cube). They are now the continuous maps plus the
+  production drag offset (`salt::drag_offsets`; hit test and lift counter
+  still on the rounded maps), min-cascaded, then clamped into the rounding
+  cell of the production map, so `round(z) == toy_horizon_maps` still
+  holds. Far from salt the maps equal `--no-salt` bit for bit.
+  **Depth labels, legacy-axis `labels` / `salt_labels` / `fault_labels`
+  are unchanged.** **Salt-on partial-voxel stacks change** (time mode and
+  the legacy axis; 64×64×256 demo: 94.5 % of cells, rel. RMS 0.40 at 15°)
+  and **time-domain labels change**, because the traveltime follows the
+  partial-voxel Vp (2.1 % of samples on the demo; time `salt_labels` and
+  `fault_labels` move with them). Far-field 15° stack vs `--no-salt`: rel.
+  RMS 0.43 → 0.0002, far time labels 13 326 → 0. Nothing changes with
+  `--no-salt`, `--legacy-whole-voxels`, the planar geometry or
+  `--legacy-toy-depth`. Applies under `--salt-smooth-all-horizons` too.
+  - Opt-out: **`--legacy-salt-pv-maps`** /
+    `RockPhysicsConfig::salt_legacy_pv_maps = true` restores master
+    a60ec34a bit for bit on every path (forwarded to multi-process workers;
+    exit 2 with `--no-salt`, planar, `--legacy-toy-depth` or
+    `--legacy-whole-voxels`).
+  - Summary line (salt and partial voxels on): `salt partial-voxel maps:
+    continuous (clamped to the label cell)` or `salt partial-voxel maps:
+    rounded (--legacy-salt-pv-maps)`. No store attribute.
+  - The partial-voxel counters return to the `--no-salt` level (32² demo:
+    mixed 8.1 % → 11.9 %, label guard 0.015 % → 0.46 %, under the 1 %
+    limit).
+  - `cli_jobs::worker_args()` now builds the whole worker argv; the spawn
+    site and the worker round-trip test share it.
+
 - **Physical filter edges in time mode** (spec "filter edge handling").
   The filters now see water above time 0 and the model's own reflectivity
   below the window (then the half-space below the model base), instead of

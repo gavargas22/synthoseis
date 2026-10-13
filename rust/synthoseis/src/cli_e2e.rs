@@ -349,6 +349,16 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
                 "lift-only"
             }
         );
+        if cfg.rock_physics.partial_voxels.enabled() {
+            println!(
+                "salt partial-voxel maps: {}",
+                if cfg.rock_physics.salt_legacy_pv_maps {
+                    "rounded (--legacy-salt-pv-maps)"
+                } else {
+                    "continuous (clamped to the label cell)"
+                }
+            );
+        }
         println!(
             "salt properties: rho 2.17, Vp 4500, Vs {}",
             if cfg.rock_physics.salt_legacy_vs {

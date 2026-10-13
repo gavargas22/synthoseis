@@ -153,6 +153,8 @@ pub mod salt;
 pub mod closure_segments;
 pub mod lithology;
 pub mod toy_geometry;
+#[cfg(test)]
+mod salt_pv_maps_tests;
 pub mod time_mode;
 
 /// Spike-insertion kernel of the depth-to-time conversion (`--twt-kernel`).

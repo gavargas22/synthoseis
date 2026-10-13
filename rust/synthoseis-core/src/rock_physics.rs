@@ -232,6 +232,16 @@ pub struct RockPhysicsConfig {
     /// default 2600. Density and Vp stay 2.17 / 4500. CLI `--salt-legacy-vs`.
     /// See [`synthoseis_rpm::salt_elastic`].
     pub salt_legacy_vs: bool,
+    /// Legacy switch: build the partial-voxel horizon maps from the
+    /// *rounded* maps plus the drag (master a60ec34a and earlier), which
+    /// snaps far-field horizons to whole samples whenever a salt body
+    /// exists. Default (`false`): continuous maps plus the production drag
+    /// offset, clamped into the rounding cell of the production map (spec
+    /// salt-pv-far-field-maps §4.1); depth labels are unchanged either way.
+    /// No effect without salt or with whole voxels. CLI
+    /// `--legacy-salt-pv-maps`. See
+    /// [`crate::pipeline_stream::toy_horizon_maps_continuous`].
+    pub salt_legacy_pv_maps: bool,
     /// Legacy switch: keep fault labels inside the salt body (master
     /// 2b3850ba). By default `data/fault_labels` is `fault AND NOT salt`
     /// ([`E2eConfig::effective_fault_salt_mask`]): faults die out against
@@ -271,6 +281,7 @@ impl Default for RockPhysicsConfig {
             salt_legacy_top_offset: false,
             salt_smooth_all_horizons: false,
             salt_legacy_vs: false,
+            salt_legacy_pv_maps: false,
             fault_labels_through_salt: false,
             partial_voxels: crate::partial_voxels::PartialVoxelConfig::default(),
         }

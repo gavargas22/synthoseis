@@ -340,7 +340,10 @@ fn switch_default_on_and_modes_differ() {
 
 /// Spec §5.5: depth-domain (legacy axis) labels, fault labels and salt
 /// labels are identical on vs off; in time mode the labels move by at most
-/// one sample, only where the traveltime moves, with no new classes, 255
+/// one sample, only where the traveltime moves, time classes ⊆ depth
+/// classes ∪ {255} (a thin depth interval may be sampled in time with
+/// partial voxels and skipped by whole voxels: seed 1 with salt since the
+/// continuous salt partial-voxel maps), 255
 /// above the seabed and fault ∧ salt = 0. 5 seeds × {salt, no salt} ×
 /// {0, 4 faults}.
 #[test]
@@ -381,10 +384,10 @@ fn label_parity_on_vs_off() {
                     c.dedup();
                     c
                 };
-                let ca = classes(&a.labels);
+                let cd = classes(&lo);
                 assert!(
-                    classes(&b.labels).iter().all(|x| ca.contains(x)),
-                    "seed {seed}: new classes"
+                    classes(&b.labels).iter().all(|x| *x == 255 || cd.contains(x)),
+                    "seed {seed}: time classes not in the depth classes"
                 );
                 let mut changed = 0;
                 for t in 0..a.labels.len() / nt {

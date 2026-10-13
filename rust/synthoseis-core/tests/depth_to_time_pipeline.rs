@@ -225,8 +225,8 @@ fn assert_mask_removes_overlap(what: &str, masked: &[u8], through: &[u8], salt: 
 }
 
 /// Faults and salt together at 24 × 24 × 128 (seed 4, RICH flags). Without
-/// the mask the output cubes have 147 fault ∩ salt voxels; the mask (#38)
-/// removes exactly those. 32, 29 and 36 of the 147 (for the chunk shapes
+/// the mask the output cubes have 146 fault ∩ salt voxels; the mask (#38)
+/// removes exactly those. 33, 29 and 35 of the 146 (for the chunk shapes
 /// `[5,7,nt]`, `[8,5,16]` and `[3,20,32]`) touch a chunk face: they have a
 /// removed neighbour in the next chunk across an i, j or k face. So every
 /// per-chunk writer masks on both sides of chunk edges (spec §5.4, §8), and
@@ -244,25 +244,43 @@ fn assert_mask_removes_overlap(what: &str, masked: &[u8], through: &[u8], salt: 
 /// sample, 3 are 0.1–0.9 ms traveltime shifts at the salt top picking the
 /// neighbouring depth sample, and 1, at (9, 11, 80), has both causes
 /// (either alone removes it); the 5 gains are traveltime shifts. Physical, not a tiling
-/// artefact: every face and tiling check passes at 147. The smooth-all
-/// switch keeps 150
+/// artefact: every face and tiling check passes at 147.
+///
+/// 147 (faces 32 / 29 / 36) was the a60ec34a value. The continuous salt
+/// partial-voxel maps (salt pv-maps spec §7) move the time labels through
+/// the partial-voxel Vp: 147 → 146, faces 33 / 29 / 35 (chunks unchanged);
+/// `salt_legacy_pv_maps` keeps 147
+/// ([`time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_rounded_pv_maps`]).
+/// The smooth-all switch reads 149
 /// ([`time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_smooth_all`]).
 #[test]
 #[ignore = "nightly: fault/salt mask across chunk edges, every writer path"]
 fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
-    fault_salt_across_chunk_edges(rich(4, [24, 24, 128], None, 3), 147, [32, 29, 36]);
+    fault_salt_across_chunk_edges(rich(4, [24, 24, 128], None, 3), 146, [33, 29, 35]);
+}
+
+/// [`time_mode_tiling_invariance_faults_and_salt_across_chunk_edges`] with
+/// the rounded salt partial-voxel maps (`--legacy-salt-pv-maps`): the
+/// a60ec34a pin, 147 voxels, faces 32 / 29 / 36.
+#[test]
+#[ignore = "nightly: fault/salt mask across chunk edges, rounded salt pv maps, every writer path"]
+fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_rounded_pv_maps() {
+    let mut cfg = rich(4, [24, 24, 128], None, 3);
+    cfg.rock_physics.salt_legacy_pv_maps = true;
+    fault_salt_across_chunk_edges(cfg, 147, [32, 29, 36]);
 }
 
 /// [`time_mode_tiling_invariance_faults_and_salt_across_chunk_edges`] under
 /// `salt_smooth_all_horizons` (`--salt-smooth-all-horizons`, the pre-#47
-/// drag): the ccce5cc9 pin, 150 fault ∩ salt voxels, faces 31 / 29 / 36,
-/// through the same face and tiling checks.
+/// drag): 149 fault ∩ salt voxels, faces 31 / 29 / 36, through the same
+/// face and tiling checks. 150 (the ccce5cc9 pin, same faces) until the
+/// continuous salt partial-voxel maps, which apply under smooth-all too.
 #[test]
 #[ignore = "nightly: fault/salt mask across chunk edges, smooth-all salt drag, every writer path"]
 fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_smooth_all() {
     let mut cfg = rich(4, [24, 24, 128], None, 3);
     cfg.rock_physics.salt_smooth_all_horizons = true;
-    fault_salt_across_chunk_edges(cfg, 150, [31, 29, 36]);
+    fault_salt_across_chunk_edges(cfg, 149, [31, 29, 36]);
 }
 
 /// The fault ∩ salt chunk-edge checks of `cfg`: the mask removes exactly
@@ -348,9 +366,12 @@ fn time_mode_fault_salt_mask_removed_count_every_path() {
 const MASK_CASES: &[(u64, usize, bool, bool)] = &[
     (30, 0, true, false),
     (7, 66, true, false),
-    (7, 66, false, false),
-    // Master bad1daa8 pin: LEGACY minimum + smooth-all (= ccce5cc9 salt-on).
-    (7, 85, false, true),
+    // Partial voxels: 66 until the continuous salt partial-voxel maps
+    // (time labels follow the partial-voxel Vp; salt pv-maps spec §7).
+    (7, 73, false, false),
+    // Master bad1daa8 pin: LEGACY minimum + smooth-all + legacy Vs 2250 +
+    // rounded partial-voxel maps (= ccce5cc9 salt-on). Without
+    // `salt_legacy_pv_maps` this row reads 81.
 ];
 
 /// The in-memory mask count of each case, then the store of the tiled
@@ -362,6 +383,7 @@ fn mask_removed_count(cases: &[(u64, usize, bool, bool)], every_path: bool) {
             cfg.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
             cfg.rock_physics.salt_smooth_all_horizons = true;
             cfg.rock_physics.salt_legacy_vs = true;
+            cfg.rock_physics.salt_legacy_pv_maps = true;
         }
         let cfg = if whole_voxels { whole(&cfg) } else { cfg };
         let m = mask_cubes(&cfg);

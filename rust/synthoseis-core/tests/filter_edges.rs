@@ -498,7 +498,11 @@ fn keep_ricker_bandpass_truth_gate() {
 
 /// §7.4 shift invariance (the #39 note): the model moved down by 4, 16
 /// and 40 samples (more water) gives the shifted output in the top 60
-/// samples to ≤ 1e-8 of peak; the legacy edges are off by > 10 %.
+/// samples to ≤ 1e-7 of peak (one f32 ulp of the peak: the output is f32,
+/// so this is the rounding floor); the legacy edges are off by > 10 %.
+/// The bound was 1e-8 until the salt partial-voxel maps fix: with
+/// sub-sample far-field interfaces the demo reads 3.3e-8 at shift 16
+/// (`--no-salt` reads 1.7e-8 on the same columns), i.e. sub-ulp noise.
 #[test]
 fn bandpass_shift_invariance() {
     let c = demo(7, 3);
@@ -546,7 +550,7 @@ fn bandpass_shift_invariance() {
         }
         let (e_new, e_old) = (e_new / pk_new, e_old / pk_old);
         println!("shift {s:2} samples ({} columns): physical {e_new:.2e} of peak, legacy {:.1} % of peak", cols.len(), 100.0 * e_old);
-        assert!(e_new <= 1e-8, "shift {s}: {e_new:e}");
+        assert!(e_new <= 1e-7, "shift {s}: {e_new:e}");
         assert!(e_old > 0.10, "shift {s}: legacy {e_old}");
     }
 }

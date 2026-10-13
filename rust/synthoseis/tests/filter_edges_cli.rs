@@ -236,9 +236,10 @@ const MASTER_1C22B653: &[(&str, u64)] = &[
     ("whole", 0x2676_751d_4661_646a),
 ];
 
-/// The same cases with the physical filter edges (the new default; only
-/// the angle stacks and the `filter_edges` root attribute differ).
-const PHYSICAL: &[(&str, u64)] = &[
+/// The same cases with the physical filter edges as master a60ec34a wrote
+/// them (rounded salt partial-voxel maps); reproduced by
+/// `--legacy-salt-pv-maps`.
+const PHYSICAL_A60EC34A: &[(&str, u64)] = &[
     ("bplat", 0xa63f_a3f1_b4c6_5154),
     ("bplatnoise", 0x0004_e11a_3ecb_7e58),
     ("demo", 0x1dba_aaf9_2418_e1fe),
@@ -259,6 +260,31 @@ const PHYSICAL: &[(&str, u64)] = &[
     ("whole", 0x3da6_ba0a_97d5_8b13),
 ];
 
+/// The same cases with the defaults (physical filter edges, continuous
+/// salt partial-voxel maps). Only `whole` (whole voxels) keeps its
+/// a60ec34a value; every other case has a salt body (the 8³ cubes' has 0
+/// voxels inside the cube) and partial voxels.
+const PHYSICAL: &[(&str, u64)] = &[
+    ("bplat", 0xbd08_c165_9d03_5b32),
+    ("bplatnoise", 0xc73a_94c3_32fb_ed55),
+    ("demo", 0x2296_0b5b_2e8b_c16c),
+    ("dt2lin", 0xf5df_4416_eba0_b7d6),
+    ("keep", 0x5780_7f0d_0072_fa9e),
+    ("many_a0", 0xf878_2560_282d_4229),
+    ("many_a15", 0x27d2_cfbb_0bac_b3dc),
+    ("many_a30", 0x74c2_d5bd_871b_9a5e),
+    ("mp", 0xe3d7_6794_e083_269d),
+    ("mpk", 0xc16b_f621_0180_0391),
+    ("noise", 0x53c8_53ab_b08b_e526),
+    ("overlap", 0x1058_181a_cbef_07f4),
+    ("rich", 0x0c14_2d6a_5246_a836),
+    ("salt", 0xba32_eb5d_fe4c_a4da),
+    ("single", 0x27d2_cfbb_0bac_b3dc),
+    ("stream", 0x27d2_cfbb_0bac_b3dc),
+    ("strips", 0xe3d7_6794_e083_269d),
+    ("whole", 0x3da6_ba0a_97d5_8b13),
+];
+
 const SUMMARY_PHYSICAL: &str =
     "filter edges: physical (water above, model below; reflect sideways)\n";
 const SUMMARY_LEGACY: &str = "filter edges: legacy 1c22b653 (--legacy-filter-edges)\n";
@@ -268,7 +294,14 @@ const SUMMARY_LEGACY: &str = "filter edges: legacy 1c22b653 (--legacy-filter-edg
 fn run_cases(dir: &Path, extra: &[&str], summary: &str, attr: Option<&str>) -> Vec<(String, u64)> {
     let mut got = Vec::new();
     for (name, args) in cases() {
-        let args: Vec<&str> = args.iter().copied().chain(extra.iter().copied()).collect();
+        // `--legacy-salt-pv-maps` exits 2 with `--legacy-whole-voxels`
+        // (no partial-voxel maps); those cases run without it.
+        let whole = args.contains(&"--legacy-whole-voxels");
+        let args: Vec<&str> = args
+            .iter()
+            .copied()
+            .chain(extra.iter().copied().filter(|f| !(whole && *f == "--legacy-salt-pv-maps")))
+            .collect();
         let out = run(&args, &dir.join(format!("{name}.mdio")));
         assert!(out.status.success(), "{name}: {out:?}");
         let so = String::from_utf8_lossy(&out.stdout);
@@ -322,7 +355,12 @@ fn check(got: &[(String, u64)], want: &[(&str, u64)], what: &str) {
 #[test]
 fn legacy_filter_edges_reproduce_1c22b653_on_every_path() {
     let dir = tempfile::tempdir().unwrap();
-    let got = run_cases(dir.path(), &["--legacy-filter-edges"], SUMMARY_LEGACY, None);
+    let got = run_cases(
+        dir.path(),
+        &["--legacy-filter-edges", "--legacy-salt-pv-maps"],
+        SUMMARY_LEGACY,
+        None,
+    );
     check(
         &got,
         MASTER_1C22B653,
@@ -330,10 +368,22 @@ fn legacy_filter_edges_reproduce_1c22b653_on_every_path() {
     );
 }
 
+/// Salt pv-maps spec §8.7: `--legacy-salt-pv-maps` reproduces master
+/// a60ec34a bit for bit on every path (classic single, streaming, overlap,
+/// strips, multi-process with and without k-chunks, geometry-once angles)
+/// and every filter chain.
+#[test]
+fn legacy_salt_pv_maps_reproduces_a60ec34a_on_every_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let got = run_cases(dir.path(), &["--legacy-salt-pv-maps"], SUMMARY_PHYSICAL, Some("physical"));
+    check(&got, PHYSICAL_A60EC34A, "--legacy-salt-pv-maps vs master a60ec34a");
+}
+
 /// The physical default on the same cases: every store moves (angle
 /// stacks only; the labels are checked in
 /// `synthoseis-core/tests/filter_edges.rs`), and says so in the summary
-/// line and the `filter_edges = "physical"` root attribute.
+/// line and the `filter_edges = "physical"` root attribute. Pinned with the
+/// continuous salt partial-voxel maps (also the default).
 #[test]
 fn physical_filter_edges_default_pins() {
     let dir = tempfile::tempdir().unwrap();
