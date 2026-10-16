@@ -31,6 +31,8 @@ fn master_cfg(c: &E2eConfig) -> E2eConfig {
     c.rock_physics.salt_legacy_vs = true;
     // ... and the physical filter edges (no-op on the depth axis).
     c.time.legacy_filter_edges = true;
+    // ... and the physical rock physics (gassmann spec §7).
+    c.rock_physics.legacy_rock_physics = true;
     c
 }
 

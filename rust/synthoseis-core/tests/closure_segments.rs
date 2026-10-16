@@ -352,6 +352,8 @@ fn faults_merge_juxtaposed_closures_and_switch_restores_ef2dc42() {
                 // The master bad1daa8 counts predate the physical filter
                 // edges (filter-edge spec §6 item 4).
                 c.time.legacy_filter_edges = true;
+                // ... and the physical rock physics (gassmann spec §7).
+                c.rock_physics.legacy_rock_physics = true;
                 c
             };
             let (a, b) = (

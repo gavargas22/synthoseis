@@ -47,7 +47,7 @@ struct Run {
     dt: f64,
 }
 
-fn run(salt: bool) -> Run {
+fn run(salt: bool, legacy_rp: bool) -> Run {
     let mut cfg = E2eConfig {
         seed: 1,
         inline_count: 32,
@@ -60,6 +60,7 @@ fn run(salt: bool) -> Run {
     // event at the exact sub-cell horizon time.
     cfg = whole(&cfg);
     cfg.rock_physics.salt = salt;
+    cfg.rock_physics.legacy_rock_physics = legacy_rp;
     assert!(cfg.time_enabled());
     let (labels, shape) = synthoseis_core::pipeline_stream::generate_labels(&cfg);
     let model = synthoseis_core::rock_physics::elastic_model(&cfg, &labels, shape);
@@ -150,9 +151,23 @@ fn pick(x: &[f32], n: usize) -> (f64, f64) {
     ((s as f64 + 0.5 * (a - d) / (a - 2.0 * b + d)) / UP as f64, p)
 }
 
+/// Physical rock physics (default): softer sediment gives a larger pull-up
+/// (84 vs 6x ms predicted), and the residual spread grows with it: std
+/// 0.72 ms (≤ 0.75), still < 1 % of the pull-up. Mean and max bounds are
+/// unchanged.
 #[test]
 fn salt_pull_up_subsample_matches_velocities() {
-    let (s, n) = (run(true), run(false));
+    pull_up_check(false, 0.75);
+}
+
+/// The original gate (std ≤ 0.6 ms) under `--legacy-rock-physics`.
+#[test]
+fn salt_pull_up_subsample_matches_velocities_legacy_rock_physics() {
+    pull_up_check(true, 0.6);
+}
+
+fn pull_up_check(legacy_rp: bool, std_max: f64) {
+    let (s, n) = (run(true, legacy_rp), run(false, legacy_rp));
     let (nz, nt, dt) = (s.nz, s.nt, s.dt);
     let salt = s.salt.as_ref().expect("seed 1 has salt");
     let cols = s.labels.len() / nz;
@@ -196,6 +211,6 @@ fn salt_pull_up_subsample_matches_velocities() {
     assert!(resid.len() >= 100, "too few measurable columns: {}", resid.len());
     assert!(pred_max > 50.0, "pull-up too small to be a test: {pred_max}");
     assert!(mean.abs() <= 0.25, "residual mean {mean} ms");
-    assert!(std <= 0.6, "residual std {std} ms");
+    assert!(std <= std_max, "residual std {std} ms");
     assert!(max_abs <= 3.0, "residual max |.| {max_abs} ms");
 }

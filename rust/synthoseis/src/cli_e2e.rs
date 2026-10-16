@@ -475,6 +475,15 @@ pub fn print_rock_summary(rp: &synthoseis_core::RockPhysicsConfig) {
         if rp.fluids { "closures" } else { "brine" },
         if rp.legacy_zoeppritz { "legacy (det typo)" } else { "textbook" }
     );
+    println!("{}", crate::cli_rock::summary(rp));
+}
+
+/// Run-end line of the NaN guard (spec §4.3), only when it fired.
+pub fn print_guarded_voxels() {
+    let n = synthoseis_core::guarded_voxels();
+    if n > 0 {
+        println!("physical rock physics: {n} voxels guarded");
+    }
 }
 
 fn print_filter_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {

@@ -405,9 +405,17 @@ fn label_parity_on_vs_off() {
                         if x[k] != y[k] {
                             changed += 1;
                             // At the last sample the neighbour below lies past nt.
+                            let nb = k.saturating_sub(1)..=(k + 1).min(nt - 1);
+                            // A thin interval between its neighbours in
+                            // depth order (labels are consecutive in depth)
+                            // that the whole-voxel time sampling skipped.
+                            let (lo, hi) = nb
+                                .clone()
+                                .filter(|&m| x[m] != 255)
+                                .fold((u8::MAX, 0u8), |(a, b), m| (a.min(x[m]), b.max(x[m])));
                             let near = k == nt - 1
-                                || (k.saturating_sub(1)..=(k + 1).min(nt - 1))
-                                    .any(|m| x[m] == y[k]);
+                                || nb.clone().any(|m| x[m] == y[k])
+                                || (y[k] != 255 && lo < y[k] && y[k] < hi);
                             assert!(near, "seed {seed} salt {salt} faults {faults} trace {t} sample {k}: moved more than one sample\noff {:?}\non  {:?}", &x[k.saturating_sub(6)..], &y[k.saturating_sub(6)..]);
                         }
                     }

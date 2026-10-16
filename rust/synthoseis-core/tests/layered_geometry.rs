@@ -172,7 +172,12 @@ fn shifts_and_closure_fluids_trigger_end_to_end() {
 /// with the partial-voxel default (PR B2).
 #[test]
 fn default_demo_cube_goldens() {
-    let c = demo(7, [64, 64, 128], 4);
+    let phys = demo(7, [64, 64, 128], 4);
+    // Every golden below predates the physical rock physics: they hold
+    // under `--legacy-rock-physics` (gassmann spec §7); the physical default
+    // is pinned at the end.
+    let mut c = phys.clone();
+    c.rock_physics.legacy_rock_physics = true;
     let m = rpm(&c);
     let shifted = m.layers.iter().filter(|l| l.shifts.layer != 0).count();
     let hc = m
@@ -240,7 +245,23 @@ fn default_demo_cube_goldens() {
     assert_eq!(fnv(p.labels.iter().copied()), LAYERED_LABELS);
     assert_eq!(ah(&w.angle_stack), LAYERED_STACK15_SCALED);
     assert_eq!(ah(&p.angle_stack), LAYERED_STACK15_PV_SCALED);
+    // Physical rock physics (default): labels unchanged, both stacks move.
+    let (w, _) = generate_chunked(&whole(&phys));
+    let (p, _) = generate_chunked(&phys);
+    eprintln!(
+        "physical: whole {:#018x} partial {:#018x}",
+        ah(&w.angle_stack),
+        ah(&p.angle_stack)
+    );
+    assert_eq!(fnv(w.labels.iter().copied()), LAYERED_LABELS);
+    assert_eq!(fnv(p.labels.iter().copied()), LAYERED_LABELS);
+    assert_eq!(ah(&w.angle_stack), LAYERED_STACK15_PHYSICAL);
+    assert_eq!(ah(&p.angle_stack), LAYERED_STACK15_PV_PHYSICAL);
 }
+
+/// Physical rock physics defaults (gassmann spec), whole / partial voxels.
+const LAYERED_STACK15_PHYSICAL: u64 = 0x5006_3e05_9cfc_ca78;
+const LAYERED_STACK15_PV_PHYSICAL: u64 = 0x866a_d067_08f2_3519;
 
 const LAYERED_STACK15_SCALED: u64 = 0x74e6_e4cc_66ee_1feb;
 const LAYERED_STACK15_PV_SCALED: u64 = 0x997a_244c_56ae_2549;

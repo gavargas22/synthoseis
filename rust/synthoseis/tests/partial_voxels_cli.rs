@@ -80,14 +80,23 @@ const MP: &[&str] = &[
 // (salt pv-maps spec §7: stack, and in time mode the time labels and
 // `salt_labels`); master a60ec34a's values are `*_A60E` and are
 // reproduced with `--legacy-salt-pv-maps`.
-const DEFAULT_PLAIN: u64 = 0xd59f_0b05_6072_4ef4;
-const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0x526a_50f7_562b_04f3;
-const DEFAULT_MP: u64 = 0xcf00_54b2_6533_c33a;
+//
+// `DEFAULT_*` and `WHOLE_*` moved again with the physical rock physics
+// (gassmann spec §7); master 77131867's values are `*_7713` and are
+// reproduced with `--legacy-rock-physics`.
+const DEFAULT_PLAIN: u64 = 0xda29_ca4c_fa9b_a276;
+const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0x8033_d531_528f_a878;
+const DEFAULT_MP: u64 = 0xf054_6bf3_765d_4902;
+const DEFAULT_PLAIN_7713: u64 = 0xd59f_0b05_6072_4ef4;
+const DEFAULT_PLAIN_LEGACY_AXIS_7713: u64 = 0x526a_50f7_562b_04f3;
+const DEFAULT_MP_7713: u64 = 0xcf00_54b2_6533_c33a;
+const WHOLE_PLAIN_7713: u64 = 0x38d8_efe5_ef93_16a4;
+const WHOLE_MP_7713: u64 = 0x91c3_c68d_c372_80f1;
 const DEFAULT_PLAIN_A60E: u64 = 0xc5f1_6ffa_eed0_333e;
 const DEFAULT_PLAIN_LEGACY_AXIS_A60E: u64 = 0xa2f4_7082_3b85_5563;
 const DEFAULT_MP_A60E: u64 = 0x91c3_c68d_c372_80f1;
-const WHOLE_PLAIN: u64 = 0x38d8_efe5_ef93_16a4;
-const WHOLE_MP: u64 = 0x91c3_c68d_c372_80f1;
+const WHOLE_PLAIN: u64 = 0x3546_0607_cdc9_7b13;
+const WHOLE_MP: u64 = 0xbe7e_6b4e_d66e_e92c;
 const DEFAULT_PLAIN_1C22: u64 = 0x82bf_e625_85ee_8c92;
 const DEFAULT_MP_1C22: u64 = 0x28e5_1787_5502_bb1d;
 const WHOLE_PLAIN_1C22: u64 = 0x6420_9caa_660f_d978;
@@ -140,14 +149,51 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
         assert_eq!(attrs(&d)["voxel_model"], "partial-z", "{name}");
         assert_eq!(attrs(&d)["partial_voxel_reflectivity"], mode, "{name}");
         assert_eq!(store_hash(&d), pinned, "{name}: new default {:#018x}", store_hash(&d));
-        // `--legacy-salt-pv-maps` restores master a60ec34a's default.
+        // `--legacy-rock-physics` restores master 77131867's default.
+        let (d7713, w7713) = match name {
+            "time" => (DEFAULT_PLAIN_7713, Some(WHOLE_PLAIN_7713)),
+            "legacy-axis" => (DEFAULT_PLAIN_LEGACY_AXIS_7713, None),
+            _ => (DEFAULT_MP_7713, Some(WHOLE_MP_7713)),
+        };
+        let r = dir.path().join(format!("{name}-legacy-rp.mdio"));
+        let out = run(&with(&base, &["--legacy-rock-physics"]), &r);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(
+            stdout(&out).contains("rock physics: legacy trends (--legacy-rock-physics)\n"),
+            "{name}"
+        );
+        assert_eq!(
+            store_hash(&r),
+            d7713,
+            "{name}: --legacy-rock-physics = 77131867"
+        );
+        assert_ne!(store_hash(&r), store_hash(&d), "{name}: the default moves");
+        if let Some(w) = w7713 {
+            let r = dir.path().join(format!("{name}-legacy-rp-whole.mdio"));
+            assert!(run(
+                &with(&base, &["--legacy-rock-physics", "--legacy-whole-voxels"]),
+                &r
+            )
+            .status
+            .success());
+            assert_eq!(
+                store_hash(&r),
+                w,
+                "{name}: --legacy-rock-physics --legacy-whole-voxels = 77131867"
+            );
+        }
+        // `--legacy-salt-pv-maps` (+ `--legacy-rock-physics`) restores master
+        // a60ec34a's default.
         let a60e = match name {
             "time" => DEFAULT_PLAIN_A60E,
             "legacy-axis" => DEFAULT_PLAIN_LEGACY_AXIS_A60E,
             _ => DEFAULT_MP_A60E,
         };
         let r = dir.path().join(format!("{name}-rounded-maps.mdio"));
-        let out = run(&with(&base, &["--legacy-salt-pv-maps"]), &r);
+        let out = run(
+            &with(&base, &["--legacy-salt-pv-maps", "--legacy-rock-physics"]),
+            &r,
+        );
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(stdout(&out).contains("salt partial-voxel maps: rounded (--legacy-salt-pv-maps)\n"), "{name}");
         assert_eq!(store_hash(&r), a60e, "{name}: --legacy-salt-pv-maps = a60ec34a {:#018x}", store_hash(&r));
@@ -200,7 +246,13 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
                 let p = dir.path().join(format!("{name}-1c22.mdio"));
                 // 1c22b653 also had the rounded salt partial-voxel maps.
                 let pv: &[&str] = if extra.is_empty() { &["--legacy-salt-pv-maps"] } else { &[] };
-                let args = with(&with(&with(&base, extra), &["--legacy-filter-edges"]), pv);
+                let args = with(
+                    &with(
+                        &with(&base, extra),
+                        &["--legacy-filter-edges", "--legacy-rock-physics"],
+                    ),
+                    pv,
+                );
                 assert!(run(&args, &p).status.success(), "{name} {extra:?}");
                 assert_eq!(store_hash(&p), want, "{name} {extra:?}: --legacy-filter-edges = 1c22b653");
             }

@@ -75,6 +75,8 @@ fn rich(rock: RockPhysicsConfig) -> E2eConfig {
 fn legacy_z() -> RockPhysicsConfig {
     RockPhysicsConfig {
         legacy_zoeppritz: true,
+        // Master 33a3a93 predates the physical rock physics.
+        legacy_rock_physics: true,
         ..RockPhysicsConfig::default()
     }
 }
@@ -161,7 +163,11 @@ fn delta(new: &[f32], old: &[f32]) -> Delta {
 /// identical at normal incidence, small but visible at 15 / 30 degrees.
 #[test]
 fn fix_size_on_demo_cube() {
-    let fixed = demo(RockPhysicsConfig::default());
+    // Both on the legacy trends: this measures the Zoeppritz fix only.
+    let fixed = demo(RockPhysicsConfig {
+        legacy_rock_physics: true,
+        ..RockPhysicsConfig::default()
+    });
     let old = demo(legacy_z());
     for ang in [0.0, 15.0, 30.0, 45.0] {
         let rf = generate_reflectivity(&fixed, ang);

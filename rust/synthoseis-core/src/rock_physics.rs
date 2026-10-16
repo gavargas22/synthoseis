@@ -55,7 +55,10 @@
 use std::collections::VecDeque;
 
 use synthoseis_closures::flood_fill_heap_2d;
-use synthoseis_rpm::{legacy_column_properties, LayerShifts, VoxelKind};
+use synthoseis_rpm::{
+    legacy_column_properties, physical_column_properties, LayerShifts, VoxelKind,
+};
+pub use synthoseis_rpm::{CompactionForm, DryFrame, PhysParams, RockModel};
 use synthoseis_seismic::splitmix64;
 
 pub use synthoseis_rpm::{Elastic32, Fluid, MixingMethod};
@@ -255,6 +258,13 @@ pub struct RockPhysicsConfig {
     /// = the d8b96e69 default). CLI `--partial-voxel-reflectivity` /
     /// `--legacy-whole-voxels`. See [`crate::partial_voxels`].
     pub partial_voxels: crate::partial_voxels::PartialVoxelConfig,
+    /// Legacy switch: depth-trend polynomials of master 77131867 instead of
+    /// the physical chain (Athy compaction, soft-sand dry frame, Gassmann,
+    /// Batzle-Wang fluids). CLI `--legacy-rock-physics`. Implied by
+    /// `legacy_toy_depth`. See docs/rock-physics-physical.md.
+    pub legacy_rock_physics: bool,
+    /// Parameters of the physical model (ignored when legacy).
+    pub phys: PhysParams,
 }
 
 impl Default for RockPhysicsConfig {
@@ -284,6 +294,8 @@ impl Default for RockPhysicsConfig {
             salt_legacy_pv_maps: false,
             fault_labels_through_salt: false,
             partial_voxels: crate::partial_voxels::PartialVoxelConfig::default(),
+            legacy_rock_physics: false,
+            phys: PhysParams::default(),
         }
     }
 }
@@ -310,7 +322,19 @@ impl RockPhysicsConfig {
         }
     }
 
+    /// Rock model of this configuration.
+    pub fn rock_model(&self) -> RockModel {
+        if self.legacy_rock_physics || self.legacy_toy_depth {
+            RockModel::Legacy
+        } else {
+            RockModel::Physical(self.phys)
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        if !self.legacy_rock_physics {
+            self.phys.validate()?;
+        }
         if !(self.depth_step_m.is_finite() && self.depth_step_m > 0.0) {
             return Err(format!("depth_step_m must be > 0, got {}", self.depth_step_m));
         }
@@ -833,6 +857,8 @@ pub struct RpmModel {
     /// Partial-voxel state (`None` = whole voxels, the default); see
     /// [`crate::partial_model`].
     pub partial: Option<Box<crate::partial_model::PartialModel>>,
+    /// Legacy trends or the physical chain ([`RockPhysicsConfig::rock_model`]).
+    pub rock: RockModel,
 }
 
 /// Elastic properties used by every fuse path.
@@ -1104,7 +1130,14 @@ impl RpmModel {
             salt_props: synthoseis_rpm::salt_elastic(rp.salt_legacy_vs),
             time: None,
             partial: None,
+            rock: rp.rock_model(),
         }
+    }
+
+    /// Water depth (m) of column `c`: seabed sample times the step (§3.1).
+    #[inline]
+    pub fn water_depth(&self, c: usize) -> f32 {
+        self.maps[c * self.nh] as f32 * self.step
     }
 
     /// Depth trace (metres below the seabed) of column `(i, j)`.
@@ -1159,16 +1192,30 @@ impl RpmModel {
             };
             scratch.kinds.push(kind);
         }
-        legacy_column_properties(
-            &scratch.depth,
-            &scratch.kinds,
-            &self.shifts,
-            self.mixing,
-            self.salt_props,
-            rho,
-            vp,
-            vs,
-        );
+        match &self.rock {
+            RockModel::Legacy => legacy_column_properties(
+                &scratch.depth,
+                &scratch.kinds,
+                &self.shifts,
+                self.mixing,
+                self.salt_props,
+                rho,
+                vp,
+                vs,
+            ),
+            RockModel::Physical(p) => physical_column_properties(
+                &scratch.depth,
+                &scratch.kinds,
+                &self.shifts,
+                self.mixing,
+                self.salt_props,
+                self.water_depth(c),
+                p,
+                rho,
+                vp,
+                vs,
+            ),
+        }
     }
 }
 
@@ -1297,4 +1344,10 @@ impl ElasticModel {
             }
         }
     }
+}
+
+/// Voxels the physical model's NaN guard replaced so far in this process
+/// (spec §4.3).
+pub fn guarded_voxels() -> u64 {
+    synthoseis_rpm::GUARDED_VOXELS.load(std::sync::atomic::Ordering::Relaxed)
 }

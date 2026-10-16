@@ -241,6 +241,7 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     if rock.fault_labels_through_salt {
         a.push("--fault-labels-through-salt".into());
     }
+    a.extend(crate::cli_rock::rock_model_args(rock));
     // Partial voxels: the CLI always sets an explicit reflectivity.
     if rock.partial_voxels.enabled() {
         let r = rock.partial_voxels.reflectivity.expect("CLI partial voxels carry an explicit reflectivity");

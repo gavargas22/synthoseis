@@ -372,6 +372,8 @@ fn model_uses_markov_lithology_end_to_end() {
             [64, 64, 128],
             RockPhysicsConfig {
                 closure_minimum: synthoseis_core::ClosureMinimum::LEGACY,
+                // ... and the physical rock physics (gassmann spec §7).
+                legacy_rock_physics: true,
                 ..rp
             },
         ))
