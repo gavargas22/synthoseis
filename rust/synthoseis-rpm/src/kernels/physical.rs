@@ -478,19 +478,75 @@ pub fn end_member(lith: &Lithology, fluid: PoreFluid, z: f64, w: f64, p: &PhysPa
     }
 }
 
+/// [`end_member`] without touching the guard counter: (value, guarded).
+fn end_member_checked(lith: &Lithology, fluid: PoreFluid, z: f64, w: f64, p: &PhysParams) -> (Elastic32, bool) {
+    let e = to32(end_member_f64(lith, fluid, z, w, p).0);
+    if finite(e) {
+        (e, false)
+    } else {
+        (to32(end_member_f64(&p.sand, PoreFluid::Brine, z, w, p).0), true)
+    }
+}
+
+/// Slots of the per-thread end-member memo (power of two).
+const CACHE_SLOTS: usize = 4096;
+
+/// Per-thread end-member memo: the params it was filled with, then a
+/// direct-mapped table of (key, value, guarded). The key packs the kind
+/// (0 shale, 1..=3 brine / oil / gas sand) with the exact z and w bits.
+struct EndMemberCache {
+    params: Option<PhysParams>,
+    slots: Vec<(u64, u8, Elastic32, bool)>,
+}
+
+std::thread_local! {
+    /// Depth is constant down a layer run (spec §2: one burial depth per
+    /// layer) and every pipeline pass revisits the same columns, so a
+    /// column has only a few dozen distinct (kind, z, w) inputs. The memo
+    /// runs the chain once per input instead of once per voxel and pass.
+    /// A hit is keyed on the exact input bits and params, so it returns the
+    /// bit-identical value; the NaN guard is still counted per voxel.
+    static END_MEMBER_CACHE: std::cell::RefCell<EndMemberCache> =
+        const { std::cell::RefCell::new(EndMemberCache { params: None, slots: Vec::new() }) };
+}
+
+fn cached_end_member(kind: u8, lith: &Lithology, fluid: PoreFluid, z: f32, w: f32, p: &PhysParams) -> Elastic32 {
+    let key = ((z.to_bits() as u64) << 32) | w.to_bits() as u64;
+    let (e, guarded) = END_MEMBER_CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.params.as_ref() != Some(p) {
+            c.params = Some(*p);
+            c.slots.clear();
+            c.slots.resize(CACHE_SLOTS, (0, u8::MAX, Elastic32::default(), false));
+        }
+        let h = (key ^ ((kind as u64) << 61)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let slot = &mut c.slots[(h >> 52) as usize & (CACHE_SLOTS - 1)];
+        if slot.0 == key && slot.1 == kind {
+            (slot.2, slot.3)
+        } else {
+            let (e, g) = end_member_checked(lith, fluid, z as f64, w as f64, p);
+            *slot = (key, kind, e, g);
+            (e, g)
+        }
+    });
+    if guarded {
+        GUARDED_VOXELS.fetch_add(1, Ordering::Relaxed);
+    }
+    e
+}
+
 /// Physical shale end-member at burial z (m), water depth w (m).
 pub fn physical_shale(z: f32, w: f32, p: &PhysParams) -> Elastic32 {
-    end_member(&p.shale, PoreFluid::Brine, z as f64, w as f64, p)
+    cached_end_member(0, &p.shale, PoreFluid::Brine, z, w, p)
 }
 
 /// Physical sand end-member of `fluid`.
 pub fn physical_sand(fluid: Fluid, z: f32, w: f32, p: &PhysParams) -> Elastic32 {
-    let f = match fluid {
-        Fluid::Brine => PoreFluid::Brine,
-        Fluid::Oil => PoreFluid::Oil,
-        Fluid::Gas => PoreFluid::Gas,
-    };
-    end_member(&p.sand, f, z as f64, w as f64, p)
+    match fluid {
+        Fluid::Brine => cached_end_member(1, &p.sand, PoreFluid::Brine, z, w, p),
+        Fluid::Oil => cached_end_member(2, &p.sand, PoreFluid::Oil, z, w, p),
+        Fluid::Gas => cached_end_member(3, &p.sand, PoreFluid::Gas, z, w, p),
+    }
 }
 
 /// Physical counterpart of [`super::legacy::voxel_properties`] (spec §2):
@@ -570,3 +626,4 @@ impl Default for RockModel {
         RockModel::Physical(PhysParams::default())
     }
 }
+
