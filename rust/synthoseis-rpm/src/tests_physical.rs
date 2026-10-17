@@ -247,3 +247,45 @@ fn params_validate() {
     p.salinity = 0.5;
     assert!(p.validate().is_err());
 }
+
+/// Spec §8 test 6: Batzle-Wang spot values against independent reference
+/// formulations. Water: IAPWS-95 (Wagner & Pruss 2002,
+/// doi:10.1063/1.1461829) and Del Grosso & Mader 1972 at 20 °C; methane:
+/// Setzmann & Wagner 1991 (doi:10.1063/1.555898). Reference numbers were
+/// evaluated once with CoolProp 8.0.0 and are held here as constants; CI
+/// does not depend on CoolProp.
+#[test]
+fn batzle_wang_spot_values() {
+    // Pure water velocity at 20 °C, 0.1 MPa: reference 1482.34 m/s.
+    let (_, v20) = bw_water(20.0, 0.1);
+    assert!((v20 - 1482.34).abs() <= 0.5, "water V(20 °C, 0.1 MPa) = {v20}");
+    // (T °C, P MPa, IAPWS-95 V m/s, IAPWS-95 ρ g/cc).
+    const WATER: [(f64, f64, f64, f64); 3] = [
+        (50.0, 20.0, 1577.886, 0.996532),
+        (80.0, 40.0, 1630.416, 0.988831),
+        (100.0, 60.0, 1662.360, 0.984342),
+    ];
+    for (t, p, v_ref, rho_ref) in WATER {
+        let (rho, v) = bw_water(t, p);
+        assert!((v / v_ref - 1.0).abs() <= 0.005, "water V({t}, {p}) = {v} vs {v_ref}");
+        assert!((rho / rho_ref - 1.0).abs() <= 0.003, "water ρ({t}, {p}) = {rho} vs {rho_ref}");
+    }
+    // Methane (G = 0.554), Setzmann & Wagner 1991 density (g/cc).
+    const METHANE: [(f64, f64, f64); 4] =
+        [(40.0, 10.0, 0.069974), (60.0, 20.0, 0.129170), (80.0, 30.0, 0.166782), (100.0, 40.0, 0.190680)];
+    for (t, p, rho_ref) in METHANE {
+        let (rho, _) = bw_gas(t, p, 0.554);
+        assert!((rho / rho_ref - 1.0).abs() <= 0.03, "methane ρ({t}, {p}) = {rho} vs {rho_ref}");
+    }
+    // Gas bulk modulus, loose sanity check only (spec: B&W's isothermal-ish
+    // approximation vs 14.6 MPa adiabatic at 40 °C, 10 MPa): within 25 %.
+    let (_, k) = bw_gas(40.0, 10.0, 0.554);
+    assert!((k * 1e3 / 14.6 - 1.0).abs() <= 0.25, "methane K(40, 10) = {} MPa", k * 1e3);
+    // Brine salinity term with the corrected −1820 S² coefficient (the
+    // printed paper's −820 is a typo; US 2011/0114385). −820 gives 37.812.
+    let (_, vw) = bw_water(25.0, 0.1);
+    let (_, vb, _) = bw_brine(25.0, 0.1, 0.035);
+    let dv = vb - vw;
+    assert!((dv - 36.587).abs() <= 1e-3, "V_B - V_w at (25 °C, 0.1 MPa, S 0.035) = {dv}, want 36.587 (-1820)");
+    assert!((dv - 37.812).abs() > 1.0, "brine velocity matches the -820 typo");
+}

@@ -101,9 +101,18 @@ pub fn clay_quartz_mineral(clay: f64) -> (f64, f64, f64) {
     )
 }
 
-/// Shale clay fraction after the D1 calibration (spec §10 D1).
+/// Shale clay volume fraction: a **fitted** parameter (spec §10 D1), tuned
+/// with [`SHALE_COORDINATION`] and φ_c 0.65 so shale Vp ≈ 3000 m/s at 2 km
+/// and the sand/shale contrast guard (test 8) passes. It makes the "shale" a
+/// silty mudstone; documented range 0.2-0.9.
 pub const SHALE_CLAY_FRACTION: f64 = 0.30;
-/// Shale coordination number after the D1 calibration.
+/// Shale Hertz-Mindlin coordination number: a **fitted** stiffness knob
+/// (spec §10 D1), not a measured contact count. Documented range 5-14; the
+/// empirical n(φ) of Mavko, Mukerji & Dvorkin (2009), *The Rock Physics
+/// Handbook*, 2nd ed., Cambridge UP, doi:10.1017/CBO9780511626753, gives ~9
+/// at 36 % porosity and fewer above, so 12 at φ_c 0.65 is a calibration.
+/// Using n as a free fit is standard in contact models (Avseth, Mukerji &
+/// Mavko 2005, doi:10.1017/CBO9780511600074).
 pub const SHALE_COORDINATION: f64 = 12.0;
 
 /// Parameters of the physical model (spec §5).
