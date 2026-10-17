@@ -62,7 +62,7 @@ jobs:
       - name: seismic noise smoke (bandpass + lateral + noise, cpu and gpu)
         run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --lateral-filter 3 --noise-snr-db 12.5 --noise-seed 7 --store /tmp/noise.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --noise-snr-db 12.5 --noise-legacy-seabed --store /tmp/noise-gpu.mdio
       - name: rock physics smoke (default, legacy switch, backus + gpu, multiprocess)
-        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --store /tmp/rp.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-toy-depth --store /tmp/rp-legacy.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --mixing backus --first-random-layer 0 --shape 24,20,64 --store /tmp/rp-backus-gpu.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --mixing backus --store /tmp/rp-mp.mdio
+        run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --store /tmp/rp.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-toy-depth --store /tmp/rp-legacy.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --legacy-rock-physics --store /tmp/rp-lrp.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --gas-saturation 0.5 --brine-salinity 0.08 --store /tmp/rp-phys-mp.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --mixing backus --first-random-layer 0 --shape 24,20,64 --store /tmp/rp-backus-gpu.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --mixing backus --store /tmp/rp-mp.mdio
       - name: depth-to-time smoke (time default + attrs, --legacy-depth-as-time, dt 2 ms, linear, multiprocess, gpu fallback)
         run: cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --chunk-i 5 --chunk-j 7 --bandpass 4,30 --noise-snr-db 12.5 --store /tmp/d2t.mdio && grep -q vp-twt /tmp/d2t.mdio/.zattrs && cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 24,20,64 --legacy-depth-as-time --store /tmp/d2t-legacy.mdio && ! grep -q vp-twt /tmp/d2t-legacy.mdio/.zattrs && cargo run --profile test -p synthoseis -- run --e2e --chunked --shape 24,20,64 --dt-ms 2 --twt-kernel linear --bandpass 4,30 --store /tmp/d2t-2ms.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 2 --chunk-j 4 --twt-samples 12 --store /tmp/d2t-mp.mdio && cargo run --profile test -p synthoseis -- run --e2e --chunked --gpu --shape 24,20,64 --store /tmp/d2t-gpu.mdio
       - name: zoeppritz smoke (textbook default, --legacy-zoeppritz cpu + gpu + multiprocess)
@@ -111,28 +111,43 @@ jobs:
           cargo run --profile test -p synthoseis -- run $FM --legacy-depth-as-time --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fm-gpu.mdio | tee /tmp/fm-gpu.txt
           grep -q "masked_in_salt=155 " /tmp/fm-gpu.txt
           # Time output, whole voxels (--legacy-whole-voxels = d8b96e69 default):
-          # counts of the written time cube.
+          # counts of the written time cube. Time labels follow Vp, so the
+          # physical rock physics moved these (gassmann spec §7; was 3774/72,
+          # 3846 through salt; 3889/3958 at 722c59af before the live-oil density
+          # fix); --legacy-rock-physics keeps the old counts.
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --store /tmp/fmt.mdio | tee /tmp/fmt.txt
-          grep -q "fault_voxels=3774, masked_in_salt=72 " /tmp/fmt.txt
+          grep -q "fault_voxels=3888, masked_in_salt=69 " /tmp/fmt.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --fault-labels-through-salt --store /tmp/fmt-through.mdio | tee /tmp/fmt-through.txt
-          grep -q "fault_voxels=3846 (--fault-labels-through-salt)" /tmp/fmt-through.txt
+          grep -q "fault_voxels=3957 (--fault-labels-through-salt)" /tmp/fmt-through.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
-          grep -q "masked_in_salt=72 " /tmp/fmt-gpu.txt
+          grep -q "masked_in_salt=69 " /tmp/fmt-gpu.txt
           # Time output, partial voxels (default since PR B2): the time-domain
           # fault cube is sampled through the partial traveltime. Continuous
           # salt partial-voxel maps: 3818/67 (was 3800/70, and 3870 through
-          # salt, before them; --legacy-salt-pv-maps keeps those).
+          # salt, before them; --legacy-salt-pv-maps keeps those). The physical
+          # rock physics moved them to 3894/69 (3963 through salt; rounded
+          # maps 3896/67); --legacy-rock-physics keeps 3818/67, 3885, 3800/70.
           cargo run --profile test -p synthoseis -- run $FM --store /tmp/fmp.mdio | tee /tmp/fmp.txt
-          grep -q "fault_voxels=3818, masked_in_salt=67 " /tmp/fmp.txt
+          grep -q "fault_voxels=3894, masked_in_salt=69 " /tmp/fmp.txt
           grep -q "^partial voxels: .*mode=subcell" /tmp/fmp.txt
           grep -q "^salt partial-voxel maps: continuous (clamped to the label cell)" /tmp/fmp.txt
           cargo run --profile test -p synthoseis -- run $FM --fault-labels-through-salt --store /tmp/fmp-through.mdio | tee /tmp/fmp-through.txt
-          grep -q "fault_voxels=3885 (--fault-labels-through-salt)" /tmp/fmp-through.txt
+          grep -q "fault_voxels=3963 (--fault-labels-through-salt)" /tmp/fmp-through.txt
           cargo run --profile test -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmp-gpu.mdio | tee /tmp/fmp-gpu.txt
-          grep -q "fault_voxels=3818, masked_in_salt=67 " /tmp/fmp-gpu.txt
+          grep -q "fault_voxels=3894, masked_in_salt=69 " /tmp/fmp-gpu.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-salt-pv-maps --store /tmp/fmp-rounded.mdio | tee /tmp/fmp-rounded.txt
-          grep -q "fault_voxels=3800, masked_in_salt=70 " /tmp/fmp-rounded.txt
+          grep -q "fault_voxels=3896, masked_in_salt=67 " /tmp/fmp-rounded.txt
           grep -q "^salt partial-voxel maps: rounded (--legacy-salt-pv-maps)" /tmp/fmp-rounded.txt
+          # --legacy-rock-physics (master 77131867) keeps every time-domain count.
+          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --store /tmp/fmp-lrp.mdio | tee /tmp/fmp-lrp.txt
+          grep -q "fault_voxels=3818, masked_in_salt=67 " /tmp/fmp-lrp.txt
+          grep -q "^rock physics: legacy trends (--legacy-rock-physics)" /tmp/fmp-lrp.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --fault-labels-through-salt --store /tmp/fmp-lrp-through.mdio | tee /tmp/fmp-lrp-through.txt
+          grep -q "fault_voxels=3885 (--fault-labels-through-salt)" /tmp/fmp-lrp-through.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-whole-voxels --store /tmp/fmt-lrp.mdio | tee /tmp/fmt-lrp.txt
+          grep -q "fault_voxels=3774, masked_in_salt=72 " /tmp/fmt-lrp.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-salt-pv-maps --store /tmp/fmp-lrp-rounded.mdio | tee /tmp/fmp-lrp-rounded.txt
+          grep -q "fault_voxels=3800, masked_in_salt=70 " /tmp/fmp-lrp-rounded.txt
       - name: filter edges smoke (physical default + attr, --legacy-filter-edges, multiprocess, exit 2 on the legacy axis)
         run: |
           set -euo pipefail

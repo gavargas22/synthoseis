@@ -86,7 +86,13 @@ const MASTER_BAD1DAA8_DEMO: u64 = 0x99e8_6ae5_7a12_b80c;
 /// `0x1dba_aaf9_2418_e1fe` (master a60ec34a, before the continuous salt
 /// partial-voxel maps moved the stack, time labels, time `fault_labels`
 /// and `salt_labels`; the closure summary is unchanged).
-const SCALED_DEFAULT_DEMO: u64 = 0x2296_0b5b_2e8b_c16c;
+/// Then `0x2296_0b5b_2e8b_c16c` (master 77131867, `SCALED_DEFAULT_DEMO_7713`,
+/// before the physical rock physics moved the stack and time labels;
+/// reproduced with `--legacy-rock-physics`), then `0x37ea_d99d_0f5d_237f`
+/// (722c59af, before the live-oil density fix: B&W eq. 24 ρ_G without a
+/// second temperature correction).
+const SCALED_DEFAULT_DEMO: u64 = 0x39c8_c368_beaa_b05a;
+const SCALED_DEFAULT_DEMO_7713: u64 = 0x2296_0b5b_2e8b_c16c;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte
 /// (every array and attribute); the default differs and is pinned.
@@ -104,6 +110,7 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
                 "--salt-legacy-vs",
                 "--legacy-filter-edges",
                 "--legacy-salt-pv-maps",
+                "--legacy-rock-physics",
             ],
         ]
         .concat(),
@@ -142,6 +149,15 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
         SCALED_DEFAULT_DEMO,
         "{:#018x}",
         store_dir_hash(&new)
+    );
+    let rp = dir.path().join("legacy-rp.mdio");
+    assert!(run(&[DEMO, &["--legacy-rock-physics"]].concat(), &rp)
+        .status
+        .success());
+    assert_eq!(
+        store_dir_hash(&rp),
+        SCALED_DEFAULT_DEMO_7713,
+        "--legacy-rock-physics = 77131867"
     );
 }
 

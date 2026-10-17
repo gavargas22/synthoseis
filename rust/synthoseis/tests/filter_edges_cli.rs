@@ -264,7 +264,9 @@ const PHYSICAL_A60EC34A: &[(&str, u64)] = &[
 /// salt partial-voxel maps). Only `whole` (whole voxels) keeps its
 /// a60ec34a value; every other case has a salt body (the 8³ cubes' has 0
 /// voxels inside the cube) and partial voxels.
-const PHYSICAL: &[(&str, u64)] = &[
+/// Master 77131867's physical-filter-edge default (legacy depth-trend rock
+/// physics); reproduced with `--legacy-rock-physics` (gassmann spec §6).
+const PHYSICAL_7713: &[(&str, u64)] = &[
     ("bplat", 0xbd08_c165_9d03_5b32),
     ("bplatnoise", 0xc73a_94c3_32fb_ed55),
     ("demo", 0x2296_0b5b_2e8b_c16c),
@@ -285,6 +287,31 @@ const PHYSICAL: &[(&str, u64)] = &[
     ("whole", 0x3da6_ba0a_97d5_8b13),
 ];
 
+/// The default with the physical rock physics (gassmann spec §7, moved).
+/// The live-oil density fix (B&W eq. 24, review N2) moved the three cubes
+/// with oil sand in their output: demo 0x37ea_d99d_0f5d_237f, salt
+/// 0x025f_70e0_4dd2_e002, whole 0x50fb_60e9_181e_ba38 at 722c59af.
+const PHYSICAL: &[(&str, u64)] = &[
+    ("bplat", 0x01b6_3fdb_55ff_a3da),
+    ("bplatnoise", 0x1fd5_9170_b12c_6dc8),
+    ("demo", 0x39c8_c368_beaa_b05a),
+    ("dt2lin", 0x76c2_c9ab_cb3e_9caf),
+    ("keep", 0xffd4_46ec_a669_dc71),
+    ("many_a0", 0x7888_7a9b_b355_53b0),
+    ("many_a15", 0x7cca_1e5a_9780_091c),
+    ("many_a30", 0xb460_73f9_ee27_23e9),
+    ("mp", 0x9fb2_5dea_a619_a57e),
+    ("mpk", 0x37f4_ea61_9421_4739),
+    ("noise", 0xb683_27ed_9199_f15e),
+    ("overlap", 0xb7d8_2efe_a005_4a36),
+    ("rich", 0xd915_0593_5618_f78b),
+    ("salt", 0x6e7e_3007_a7b0_3707),
+    ("single", 0x7cca_1e5a_9780_091c),
+    ("stream", 0x7cca_1e5a_9780_091c),
+    ("strips", 0x9fb2_5dea_a619_a57e),
+    ("whole", 0x383a_35e4_b1f8_4ae6),
+];
+
 const SUMMARY_PHYSICAL: &str =
     "filter edges: physical (water above, model below; reflect sideways)\n";
 const SUMMARY_LEGACY: &str = "filter edges: legacy 1c22b653 (--legacy-filter-edges)\n";
@@ -300,7 +327,12 @@ fn run_cases(dir: &Path, extra: &[&str], summary: &str, attr: Option<&str>) -> V
         let args: Vec<&str> = args
             .iter()
             .copied()
-            .chain(extra.iter().copied().filter(|f| !(whole && *f == "--legacy-salt-pv-maps")))
+            .chain(
+                extra
+                    .iter()
+                    .copied()
+                    .filter(|f| !(whole && *f == "--legacy-salt-pv-maps")),
+            )
             .collect();
         let out = run(&args, &dir.join(format!("{name}.mdio")));
         assert!(out.status.success(), "{name}: {out:?}");
@@ -357,7 +389,11 @@ fn legacy_filter_edges_reproduce_1c22b653_on_every_path() {
     let dir = tempfile::tempdir().unwrap();
     let got = run_cases(
         dir.path(),
-        &["--legacy-filter-edges", "--legacy-salt-pv-maps"],
+        &[
+            "--legacy-filter-edges",
+            "--legacy-salt-pv-maps",
+            "--legacy-rock-physics",
+        ],
         SUMMARY_LEGACY,
         None,
     );
@@ -375,8 +411,17 @@ fn legacy_filter_edges_reproduce_1c22b653_on_every_path() {
 #[test]
 fn legacy_salt_pv_maps_reproduces_a60ec34a_on_every_path() {
     let dir = tempfile::tempdir().unwrap();
-    let got = run_cases(dir.path(), &["--legacy-salt-pv-maps"], SUMMARY_PHYSICAL, Some("physical"));
-    check(&got, PHYSICAL_A60EC34A, "--legacy-salt-pv-maps vs master a60ec34a");
+    let got = run_cases(
+        dir.path(),
+        &["--legacy-salt-pv-maps", "--legacy-rock-physics"],
+        SUMMARY_PHYSICAL,
+        Some("physical"),
+    );
+    check(
+        &got,
+        PHYSICAL_A60EC34A,
+        "--legacy-salt-pv-maps vs master a60ec34a",
+    );
 }
 
 /// The physical default on the same cases: every store moves (angle
@@ -392,7 +437,30 @@ fn physical_filter_edges_default_pins() {
     for (name, h) in &got {
         let old = MASTER_1C22B653.iter().find(|(n, _)| n == name).unwrap().1;
         assert_ne!(*h, old, "{name}: the default moves");
+        let old = PHYSICAL_7713.iter().find(|(n, _)| n == name).unwrap().1;
+        assert_ne!(*h, old, "{name}: the physical rock physics moves it");
     }
+}
+
+/// Gassmann spec §6 / §8 test 7: `--legacy-rock-physics` reproduces master
+/// 77131867 byte for byte (every array and attribute) on every path
+/// (classic single, streaming, overlap, strips, multi-process with and
+/// without k-chunks, geometry-once angles), for every filter chain, whole
+/// and partial voxels, salt and faults.
+#[test]
+fn legacy_rock_physics_reproduces_77131867_on_every_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let got = run_cases(
+        dir.path(),
+        &["--legacy-rock-physics"],
+        SUMMARY_PHYSICAL,
+        Some("physical"),
+    );
+    check(
+        &got,
+        PHYSICAL_7713,
+        "--legacy-rock-physics vs master 77131867",
+    );
 }
 
 /// The legacy depth axis has no time-mode filter edges: no summary line,

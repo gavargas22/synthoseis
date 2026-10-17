@@ -108,7 +108,12 @@ impl SingleWorkerRunner {
         rock_physics: &RockPhysicsConfig,
         geometry: ToyGeometry,
     ) -> Result<pipeline::E2eReport, String> {
-        self.run_e2e_with_time(store, rock_physics, geometry, &pipeline::TimeConfig::default())
+        self.run_e2e_with_time(
+            store,
+            rock_physics,
+            geometry,
+            &pipeline::TimeConfig::default(),
+        )
     }
 
     /// [`Self::run_e2e_with_geometry`] with an explicit output axis
@@ -138,6 +143,8 @@ impl SingleWorkerRunner {
     }
 }
 
+pub mod closure_segments;
+pub mod lithology;
 pub mod parity;
 pub mod partial_model;
 pub mod partial_voxels;
@@ -150,16 +157,15 @@ mod pipeline_overlap_faults;
 pub mod pipeline_stream;
 pub mod rock_physics;
 pub mod salt;
-pub mod closure_segments;
-pub mod lithology;
-pub mod toy_geometry;
 #[cfg(test)]
 mod salt_pv_maps_tests;
 pub mod time_mode;
+pub mod toy_geometry;
 
 /// Spike-insertion kernel of the depth-to-time conversion (`--twt-kernel`).
 pub use synthoseis_seismic::TwtKernel;
 
+pub use lithology::ToyLithology;
 pub use partition::{
     partition_inline_strips, partition_jobs, JobPartition, JobPartitionPlan, MultiRunSummary,
     MultiWorkerRunner, SpatialStrip,
@@ -167,10 +173,6 @@ pub use partition::{
 pub use pipeline::{
     FaultConfig, FilterConfig, NoiseConfig, TimeAxis, TimeConfig, NOISE_NORM_ANGLE_DEG,
     RICKER_PEAK_HZ, VP_MIN_SEDIMENT,
-};
-pub use time_mode::{
-    generate_fault_labels_output, generate_labels_output, generate_output_labels,
-    generate_salt_labels_output, time_column_summary, OutputLabels, TimeColumnSummary,
 };
 pub use pipeline_geometry_many::{
     angle_store_path, angles_from_seismic_many, parse_angles_csv, run_e2e_geometry_once_as_report,
@@ -190,10 +192,14 @@ pub use pipeline_stream::{
     SeismicFilters, SeismicNoise, WorkingSetStats, DEFAULT_INCIDENCE_DEG, GENERATE_LABELS_CALLS,
 };
 pub use rock_physics::{
-    closure_census, elastic_model, ClosureCensus, ClosureMinimum, ElasticModel, MixingMethod, NetToGross, RockPhysicsConfig, RpmModel,
-    ZoeppritzForm,
+    closure_census, elastic_model, guarded_voxels, ClosureCensus, ClosureMinimum, CompactionForm,
+    DryFrame, ElasticModel, MixingMethod, NetToGross, PhysParams, RockModel, RockPhysicsConfig,
+    RpmModel, ZoeppritzForm,
 };
-pub use lithology::ToyLithology;
+pub use time_mode::{
+    generate_fault_labels_output, generate_labels_output, generate_output_labels,
+    generate_salt_labels_output, time_column_summary, OutputLabels, TimeColumnSummary,
+};
 pub use toy_geometry::ToyGeometry;
 
 #[cfg(test)]

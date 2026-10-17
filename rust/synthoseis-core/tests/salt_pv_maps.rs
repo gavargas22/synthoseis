@@ -136,7 +136,19 @@ fn far_field_and_output_change_gates_32() {
 #[test]
 #[ignore = "nightly: salt pv-maps far-field gate on the 64x64x256 demo"]
 fn far_field_gate_demo_64() {
-    gates(&demo(7, [64, 64, 256], 4), 0.005, 0, false);
+    let mut c = demo(7, [64, 64, 256], 4);
+    c.rock_physics.legacy_rock_physics = true;
+    gates(&c, 0.005, 0, false);
+}
+
+/// [`far_field_gate_demo_64`] under the physical rock physics (default):
+/// the burial-depth dependent end-members move 3 far time labels vs
+/// `--no-salt` (of 2466 far columns x 256 samples), rel. RMS 0.0002. The
+/// 0-label gate above holds under `--legacy-rock-physics`.
+#[test]
+#[ignore = "nightly: salt pv-maps far-field gate on the 64x64x256 demo, physical rock physics"]
+fn far_field_gate_demo_64_physical() {
+    gates(&demo(7, [64, 64, 256], 4), 0.005, 3, false);
 }
 
 /// §8.4 depth-label identity: default vs rounded maps, seeds 7 and 1,

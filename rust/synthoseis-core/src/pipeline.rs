@@ -596,10 +596,57 @@ impl E2eConfig {
 
     /// The depth-staircase warning for this run (time mode only), see
     /// [`TimeConfig::staircase_warning`].
+    /// Legacy rock physics only: the physical model's minimum is only known
+    /// after the run, see [`E2eConfig::time_warning_after_run`].
     pub fn time_warning(&self) -> Option<String> {
-        self.time_enabled()
+        let legacy = matches!(self.rock_physics.rock_model(), synthoseis_rpm::RockModel::Legacy);
+        (legacy && self.time_enabled())
             .then(|| self.time.staircase_warning(self.rock_physics.depth_step_m, VP_MIN_SEDIMENT))
             .flatten()
+    }
+
+    /// Physical rock physics only: the depth-staircase warning against the
+    /// lowest sediment Vp this process actually produced
+    /// ([`synthoseis_rpm::observed_vp_min`]), or, when no layer voxel was
+    /// evaluated here (multi-process parent), the [`E2eConfig::vp_min_sediment`]
+    /// bound.
+    pub fn time_warning_after_run(&self) -> Option<String> {
+        if matches!(self.rock_physics.rock_model(), synthoseis_rpm::RockModel::Legacy) || !self.time_enabled() {
+            return None;
+        }
+        let v = synthoseis_rpm::observed_vp_min()
+            .map(|v| v as f64)
+            .unwrap_or_else(|| self.vp_min_sediment())
+            .floor();
+        self.time.staircase_warning(self.rock_physics.depth_step_m, v)
+    }
+
+    /// Lowest sediment P velocity of this run's rock model (m/s), for the
+    /// depth-staircase warning. Legacy: [`VP_MIN_SEDIMENT`] (shale trend at
+    /// z = 0). Physical: the slowest end-member over burial depths of the
+    /// model at zero water depth (lowest fluid pressure), sand fluids only
+    /// when `fluids` is on; shallow gas sand reaches ~500-650 m/s.
+    pub fn vp_min_sediment(&self) -> f64 {
+        match self.rock_physics.rock_model() {
+            synthoseis_rpm::RockModel::Legacy => VP_MIN_SEDIMENT,
+            synthoseis_rpm::RockModel::Physical(p) => {
+                let fluids: &[synthoseis_rpm::Fluid] = if self.rock_physics.fluids {
+                    &[synthoseis_rpm::Fluid::Brine, synthoseis_rpm::Fluid::Oil, synthoseis_rpm::Fluid::Gas]
+                } else {
+                    &[synthoseis_rpm::Fluid::Brine]
+                };
+                let zmax = self.samples as f64 * self.rock_physics.depth_step_m;
+                let mut v = f64::INFINITY;
+                for i in 0..=64 {
+                    let z = (zmax * i as f64 / 64.0) as f32;
+                    v = v.min(synthoseis_rpm::physical_shale(z, 0.0, &p).vp as f64);
+                    for &f in fluids {
+                        v = v.min(synthoseis_rpm::physical_sand(f, z, 0.0, &p).vp as f64);
+                    }
+                }
+                v
+            }
+        }
     }
 
     /// The 40 Hz Ricker wavelet sampled at [`E2eConfig::digi_ms`].

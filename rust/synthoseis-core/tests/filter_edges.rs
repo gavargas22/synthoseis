@@ -42,6 +42,13 @@ fn demo(seed: u64, faults: usize) -> E2eConfig {
     }
 }
 
+/// `--legacy-rock-physics`: the §7 churn and truth-gate bands were
+/// predicted on the legacy depth-trend velocities (gassmann spec §7).
+fn legacy_rp(mut c: E2eConfig) -> E2eConfig {
+    c.rock_physics.legacy_rock_physics = true;
+    c
+}
+
 fn legacy(c: &E2eConfig) -> E2eConfig {
     let mut c = c.clone();
     c.time.legacy_filter_edges = true;
@@ -315,7 +322,7 @@ fn ricker_default_churn_only_in_the_last_7_samples() {
         (7u64, (3.5, 6.0), Some((0.010, 0.025))),
         (1, (1.0, 3.0), None),
     ] {
-        let c = demo(seed, 3);
+        let c = legacy_rp(demo(seed, 3));
         let nt = c.output_samples();
         assert_eq!(nt, 128);
         let (new, _) = generate_chunked(&c);
@@ -406,7 +413,7 @@ fn ricker_default_churn_only_in_the_last_7_samples() {
 /// edges are off by a rel. RMS of 0.12–0.22 on every sample.
 #[test]
 fn bandpass_truth_gate() {
-    let c = bandpass(&demo(7, 3), 1);
+    let c = bandpass(&legacy_rp(demo(7, 3)), 1);
     let nt = c.output_samples();
     let axis = axis_of(&c);
     let pbp = bp_4_30(&axis).edge_pad().unwrap();
@@ -505,7 +512,7 @@ fn keep_ricker_bandpass_truth_gate() {
 /// (`--no-salt` reads 1.7e-8 on the same columns), i.e. sub-ulp noise.
 #[test]
 fn bandpass_shift_invariance() {
-    let c = demo(7, 3);
+    let c = legacy_rp(demo(7, 3));
     let nt = c.output_samples();
     let axis = axis_of(&c);
     let f = bp_4_30(&axis);

@@ -103,7 +103,10 @@ fn with_trailing(fc: FilterConfig, on: bool) -> FilterConfig {
 
 /// Assert both the chunked and the classic whole-cube path hash to `want`.
 fn check(c: &E2eConfig, want: u64, what: &str) {
-    let c = &whole(c);
+    let mut c = whole(c);
+    // These goldens predate the physical rock physics (gassmann spec §7).
+    c.rock_physics.legacy_rock_physics = true;
+    let c = &c;
     let (v, _) = generate_chunked(c);
     assert_eq!(angle_hash(&v.angle_stack), want, "chunked {what}: {:#018x}", angle_hash(&v.angle_stack));
     assert_eq!(angle_hash(&generate_tiny_cube(c).angle_stack), want, "classic {what}");

@@ -5,6 +5,7 @@
 
 mod cli_e2e;
 mod cli_jobs;
+mod cli_rock;
 
 use std::path::PathBuf;
 
@@ -250,6 +251,8 @@ enum Commands {
         /// --legacy-whole-voxels. See docs/salt-bodies.md.
         #[arg(long, default_value_t = false)]
         legacy_salt_pv_maps: bool,
+        #[command(flatten)]
+        phys: cli_rock::PhysArgs,
         /// Legacy switch: write the depth-sampled seismic as time (each depth
         /// sample = one 4 ms sample, an implied constant 2000 m/s), master
         /// f3720fb2 bit for bit. Default: convert to two-way time from the
@@ -785,6 +788,7 @@ fn main() {
             salt_smooth_all_horizons,
             salt_legacy_vs,
             legacy_salt_pv_maps,
+            phys,
             legacy_depth_as_time,
             dt_ms,
             twt_samples,
@@ -948,6 +952,7 @@ fn main() {
                 min_closure_voxels,
                 legacy_closure_contact_cap,
             )
+            .and_then(|r| cli_rock::apply_rock_physics(r, &phys))
             .unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);
@@ -1045,6 +1050,7 @@ fn main() {
             }
 
             if e2e {
+                let (rock_w, time_w) = (rock.clone(), time.clone());
                 cli_e2e::run_e2e(
                     geo_many,
                     &angles,
@@ -1065,6 +1071,7 @@ fn main() {
                     geometry,
                     time,
                 );
+                cli_e2e::print_guarded_voxels(samples, &rock_w, &time_w);
             } else if workers == 1 {
                 cli_e2e::run_single_worker_placeholder(&config, store, seed);
             } else {
@@ -1158,6 +1165,7 @@ mod tests {
             salt_smooth_all_horizons,
             salt_legacy_vs,
             legacy_salt_pv_maps,
+            phys,
             legacy_depth_as_time,
             dt_ms,
             twt_samples,
@@ -1228,6 +1236,7 @@ mod tests {
             min_closure_voxels,
             legacy_closure_contact_cap,
         )
+        .and_then(|r| super::cli_rock::apply_rock_physics(r, &phys))
         .unwrap();
         (rock, geometry, time)
     }
@@ -1274,6 +1283,50 @@ mod tests {
             &["--legacy-salt-pv-maps"][..],
             &["--legacy-salt-pv-maps", "--salt-smooth-all-horizons", "--salt-legacy-vs"][..],
             &["--legacy-salt-pv-maps", "--legacy-depth-as-time"][..],
+            &["--legacy-rock-physics"][..],
+            &[
+                "--legacy-rock-physics",
+                "--legacy-salt-pv-maps",
+                "--legacy-filter-edges",
+            ][..],
+            &[
+                "--sand-phi0",
+                "0.45",
+                "--shale-athy-c",
+                "0.6",
+                "--brine-salinity",
+                "0.1",
+            ][..],
+            &[
+                "--gas-saturation",
+                "0.25",
+                "--oil-saturation",
+                "0.6",
+                "--oil-api",
+                "20",
+                "--oil-gor",
+                "0",
+            ][..],
+            &[
+                "--compaction-form",
+                "stress",
+                "--athy-sigma0",
+                "40",
+                "--dry-frame",
+                "critical-porosity",
+            ][..],
+            &[
+                "--seabed-temperature",
+                "10.5",
+                "--temperature-gradient",
+                "25",
+                "--gas-gravity",
+                "0.7",
+                "--sand-athy-c",
+                "0.3",
+                "--shale-phi0",
+                "0.6",
+            ][..],
         ] {
             let (rock, geometry, time) = rebuild_from_argv(&argv(extra));
             let mut worker = argv(&[]);
@@ -1295,6 +1348,30 @@ mod tests {
                 worker.iter().any(|a| a == "--legacy-salt-pv-maps"),
                 pv,
                 "{extra:?}: --legacy-salt-pv-maps in the worker argv"
+            );
+            let lrp = extra.contains(&"--legacy-rock-physics");
+            assert_eq!(
+                rock.legacy_rock_physics, lrp,
+                "{extra:?}: --legacy-rock-physics parsed"
+            );
+            assert_eq!(
+                back.0.legacy_rock_physics, lrp,
+                "{extra:?}: --legacy-rock-physics in the worker config"
+            );
+            assert_eq!(
+                back.0.phys, rock.phys,
+                "{extra:?}: physical parameters in the worker config"
+            );
+            let params = extra.iter().any(|a| {
+                a.starts_with("--")
+                    && !a.starts_with("--legacy")
+                    && !a.starts_with("--salt")
+                    && *a != "--no-salt"
+            });
+            assert_eq!(
+                rock.phys != synthoseis_core::PhysParams::default(),
+                params,
+                "{extra:?}: physical parameters parsed"
             );
         }
 

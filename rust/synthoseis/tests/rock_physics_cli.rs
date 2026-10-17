@@ -56,6 +56,11 @@ fn legacy_closures<'a>(args: &[&'a str]) -> Vec<&'a str> {
             }
         }
     }
+    // ... and the physical rock physics (gassmann spec §7); the toy model
+    // already implies the legacy trends.
+    if !has("--legacy-toy-depth") && !has("--legacy-rock-physics") {
+        v.push("--legacy-rock-physics");
+    }
     v
 }
 
@@ -93,7 +98,10 @@ fn whole_voxels<'a>(args: &[&'a str]) -> Vec<&'a str> {
 
 /// FNV-1a over the `data/fault_labels` u8 bytes.
 fn fault_labels_hash(p: &Path) -> u64 {
-    let v = synthoseis_io::MdioStore::open(p).unwrap().read_fault_labels_u8().unwrap();
+    let v = synthoseis_io::MdioStore::open(p)
+        .unwrap()
+        .read_fault_labels_u8()
+        .unwrap();
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     for b in v {
         h ^= b as u64;
@@ -104,7 +112,10 @@ fn fault_labels_hash(p: &Path) -> u64 {
 
 /// FNV-1a over the f32 bits of the stored angle stack.
 fn store_hash(p: &Path) -> u64 {
-    let v = synthoseis_io::MdioStore::open(p).unwrap().read_volume().unwrap();
+    let v = synthoseis_io::MdioStore::open(p)
+        .unwrap()
+        .read_volume()
+        .unwrap();
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     for x in v {
         for b in x.to_bits().to_le_bytes() {
@@ -165,8 +176,15 @@ fn legacy_toy_depth_flag_reproduces_master_stores() {
         let out = run(&with(base, &["--legacy-toy-depth"]), &legacy);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(stdout.contains("rock physics: legacy toy depth"), "{stdout}");
-        assert_eq!(store_hash(&legacy), master, "{name}: legacy switch vs master");
+        assert!(
+            stdout.contains("rock physics: legacy toy depth"),
+            "{stdout}"
+        );
+        assert_eq!(
+            store_hash(&legacy),
+            master,
+            "{name}: legacy switch vs master"
+        );
 
         let default = dir.path().join(format!("{name}-default.mdio"));
         let out = run(base, &default);
@@ -177,7 +195,11 @@ fn legacy_toy_depth_flag_reproduces_master_stores() {
             "{stdout}"
         );
         assert!(stdout.contains("zoeppritz=textbook"), "{stdout}");
-        assert_ne!(store_hash(&default), master, "{name}: default must be the corrected model");
+        assert_ne!(
+            store_hash(&default),
+            master,
+            "{name}: default must be the corrected model"
+        );
     }
 }
 
@@ -210,13 +232,25 @@ fn legacy_zoeppritz_flag_reproduces_master_33a3a93_stores() {
         let legacy = dir.path().join(format!("{name}-lz.mdio"));
         // 33a3a93 had only the planar toy geometry.
         let out = run(
-            &with(base, &["--legacy-zoeppritz", "--toy-geometry", "planar"]),
+            &with(
+                base,
+                &[
+                    "--legacy-zoeppritz",
+                    "--toy-geometry",
+                    "planar",
+                    "--legacy-rock-physics",
+                ],
+            ),
             &legacy,
         );
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("zoeppritz=legacy (det typo)"), "{stdout}");
-        assert_eq!(store_hash(&legacy), master, "{name}: --legacy-zoeppritz vs master 33a3a93");
+        assert_eq!(
+            store_hash(&legacy),
+            master,
+            "{name}: --legacy-zoeppritz vs master 33a3a93"
+        );
         let fixed = dir.path().join(format!("{name}-fixed.mdio"));
         assert!(run(&with(base, &["--toy-geometry", "planar"]), &fixed)
             .status
@@ -229,7 +263,10 @@ fn legacy_zoeppritz_flag_reproduces_master_33a3a93_stores() {
     }
     // Redundant with the toy switch (which implies it): still master 10f4dcd.
     let both = dir.path().join("both.mdio");
-    let out = run(&with(PLAIN, &["--legacy-toy-depth", "--legacy-zoeppritz"]), &both);
+    let out = run(
+        &with(PLAIN, &["--legacy-toy-depth", "--legacy-zoeppritz"]),
+        &both,
+    );
     assert!(out.status.success(), "{out:?}");
     assert_eq!(store_hash(&both), MASTER_PLAIN);
 }
@@ -266,21 +303,121 @@ fn model_flags_reach_multiprocess_workers() {
 
     let default = dir.path().join("default.mdio");
     assert!(run(MP, &default).status.success());
-    assert_ne!(store_hash(&default), store_hash(&mp), "flags must change the model");
+    assert_ne!(
+        store_hash(&default),
+        store_hash(&mp),
+        "flags must change the model"
+    );
+}
+
+/// Physical parameter flags and `--legacy-rock-physics` reach multi-process
+/// workers: the multi-process store equals the single-process store for
+/// each setting, and the settings differ from each other.
+#[test]
+fn rock_physics_flags_reach_multiprocess_workers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut hashes = Vec::new();
+    for (name, flags) in [
+        ("physical", &[][..]),
+        ("legacy", &["--legacy-rock-physics"][..]),
+        (
+            "params",
+            &[
+                "--gas-saturation",
+                "0.3",
+                "--brine-salinity",
+                "0.08",
+                "--sand-athy-c",
+                "0.35",
+                "--dry-frame",
+                "critical-porosity",
+            ][..],
+        ),
+    ] {
+        let mp = dir.path().join(format!("{name}-mp.mdio"));
+        let out = run(&with(MP, flags), &mp);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let line = if name == "legacy" {
+            "rock physics: legacy trends"
+        } else {
+            "rock physics: physical (Athy"
+        };
+        assert!(stdout.contains(line), "{name}: {stdout}");
+        let one = dir.path().join(format!("{name}-one.mdio"));
+        let single: Vec<&str> = with(&MP[3..], flags);
+        assert!(run(&single, &one).status.success(), "{name}");
+        assert_eq!(
+            store_hash(&mp),
+            store_hash(&one),
+            "{name}: multi-process vs single process"
+        );
+        hashes.push(store_hash(&mp));
+    }
+    assert_ne!(hashes[0], hashes[1]);
+    assert_ne!(hashes[0], hashes[2]);
 }
 
 #[test]
 fn invalid_rock_physics_flags_exit_2() {
     let dir = tempfile::tempdir().expect("tempdir");
     for (bad, msg) in [
-        (["--legacy-toy-depth", "--mixing", "backus"].as_slice(), "no effect with --legacy-toy-depth"),
-        (&["--legacy-toy-depth", "--no-fluids"], "no effect with --legacy-toy-depth"),
-        (&["--mixing", "wyllie"], "--mixing expects inverse-velocity or backus"),
+        (
+            ["--legacy-toy-depth", "--mixing", "backus"].as_slice(),
+            "no effect with --legacy-toy-depth",
+        ),
+        (
+            &["--legacy-toy-depth", "--no-fluids"],
+            "no effect with --legacy-toy-depth",
+        ),
+        (
+            &["--mixing", "wyllie"],
+            "--mixing expects inverse-velocity or backus",
+        ),
         (&["--net-to-gross", "1.5"], "net"),
+        // Physical rock physics (gassmann spec §5, §6).
+        (
+            &["--legacy-rock-physics", "--sand-phi0", "0.45"],
+            "no effect with --legacy-rock-physics",
+        ),
+        (
+            &["--legacy-rock-physics", "--gas-saturation", "0.5"],
+            "no effect with --legacy-rock-physics",
+        ),
+        (
+            &["--legacy-rock-physics", "--dry-frame", "soft-sand"],
+            "no effect with --legacy-rock-physics",
+        ),
+        (
+            &["--legacy-rock-physics", "--compaction-form", "depth"],
+            "no effect with --legacy-rock-physics",
+        ),
+        (
+            &["--legacy-toy-depth", "--brine-salinity", "0.05"],
+            "no effect with --legacy-toy-depth",
+        ),
+        (
+            &["--legacy-toy-depth", "--legacy-rock-physics"],
+            "implied by --legacy-toy-depth",
+        ),
+        (&["--brine-salinity", "0.5"], "--brine-salinity must be in"),
+        (&["--sand-phi0", "0.9"], "--sand-phi0 must be in"),
+        (&["--dry-frame", "stiff"], "--dry-frame must be"),
+        (
+            &["--compaction-form", "porosity"],
+            "--compaction-form must be",
+        ),
+        (
+            &["--athy-sigma0", "50"],
+            "--athy-sigma0 needs --compaction-form stress",
+        ),
     ] {
         let out = run(&with(PLAIN, bad), &dir.path().join("bad.mdio"));
         assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
-        assert!(String::from_utf8_lossy(&out.stderr).contains(msg), "{bad:?}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(msg),
+            "{bad:?}: {out:?}"
+        );
     }
 }
 
@@ -362,17 +499,31 @@ fn alternating_lithology_reproduces_master_after_30() {
         ("deep", DEEP, MASTER30_DEEP),
     ] {
         let alt = dir.path().join(format!("{name}-alt.mdio"));
-        let out = run_master(&with(base, &["--toy-lithology", "alternating", "--no-salt"]), &alt);
+        let out = run_master(
+            &with(base, &["--toy-lithology", "alternating", "--no-salt"]),
+            &alt,
+        );
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(stdout.contains("toy lithology: alternating"), "{name}: {stdout}");
-        assert_eq!(store_hash(&alt), master, "{name}: --toy-lithology alternating vs master after #30");
+        assert!(
+            stdout.contains("toy lithology: alternating"),
+            "{name}: {stdout}"
+        );
+        assert_eq!(
+            store_hash(&alt),
+            master,
+            "{name}: --toy-lithology alternating vs master after #30"
+        );
     }
     let markov = dir.path().join("deep-markov.mdio");
     let out = run_master(DEEP, &markov);
     assert!(out.status.success(), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).contains("toy lithology: markov (sand fraction"));
-    assert_ne!(store_hash(&markov), MASTER30_DEEP, "default must use the Markov lithology");
+    assert_ne!(
+        store_hash(&markov),
+        MASTER30_DEEP,
+        "default must use the Markov lithology"
+    );
 }
 
 /// Lithology and salt options reach multi-process workers (real worker
@@ -385,7 +536,12 @@ fn lithology_flags_reach_multiprocess_workers() {
     let dir = tempfile::tempdir().expect("tempdir");
     for flags in [
         &[][..],
-        &["--sand-layer-fraction", "0.5", "--sand-layer-thickness", "1"][..],
+        &[
+            "--sand-layer-fraction",
+            "0.5",
+            "--sand-layer-thickness",
+            "1",
+        ][..],
         &["--toy-lithology", "alternating"][..],
         &["--toy-geometry", "planar"][..],
         &["--closures-per-layer"][..],
@@ -396,7 +552,11 @@ fn lithology_flags_reach_multiprocess_workers() {
         &["--salt-legacy-vs"][..],
         // `run` adds --legacy-whole-voxels unless the run picks a voxel
         // mode, and --legacy-salt-pv-maps needs partial voxels.
-        &["--legacy-salt-pv-maps", "--partial-voxel-reflectivity", "cell"][..],
+        &[
+            "--legacy-salt-pv-maps",
+            "--partial-voxel-reflectivity",
+            "cell",
+        ][..],
     ] {
         let single = dir.path().join("single.mdio");
         let out = run(&with(&MP[3..], flags), &single);
@@ -404,7 +564,11 @@ fn lithology_flags_reach_multiprocess_workers() {
         let mp = dir.path().join("mp.mdio");
         let out = run(&with(MP, flags), &mp);
         assert!(out.status.success(), "{flags:?}: {out:?}");
-        assert_eq!(store_hash(&single), store_hash(&mp), "{flags:?}: multiprocess vs single");
+        assert_eq!(
+            store_hash(&single),
+            store_hash(&mp),
+            "{flags:?}: multiprocess vs single"
+        );
     }
 }
 
@@ -488,8 +652,15 @@ fn closures_per_layer_flag_reproduces_master_8b5988f() {
         let out = run_master(&with(base, &["--closures-per-layer", "--no-salt"]), &pl);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(stdout.contains("closures: per sand layer (--closures-per-layer"), "{name}: {stdout}");
-        assert_eq!(store_hash(&pl), master, "{name}: --closures-per-layer vs master 8b5988f");
+        assert!(
+            stdout.contains("closures: per sand layer (--closures-per-layer"),
+            "{name}: {stdout}"
+        );
+        assert_eq!(
+            store_hash(&pl),
+            master,
+            "{name}: --closures-per-layer vs master 8b5988f"
+        );
     }
     let unit = dir.path().join("sand-unit.mdio");
     let out = run_master(&with(SAND, &["--no-salt"]), &unit);
@@ -539,28 +710,68 @@ fn closures_unsegmented_flag_reproduces_master_ef2dc42() {
         ("mp", MP, MASTER8B_MP, true),
         ("deep", DEEP, MASTER8B_DEEP, true),
         ("sand", SAND, SAND_UNIT, true),
-        ("faulted7", &with(FAULTED, &["--seed", "7"])[..], MASTEREF_FAULTED_7, false),
-        ("faulted4", &with(FAULTED, &["--seed", "4"])[..], MASTEREF_FAULTED_4, false),
+        (
+            "faulted7",
+            &with(FAULTED, &["--seed", "7"])[..],
+            MASTEREF_FAULTED_7,
+            false,
+        ),
+        (
+            "faulted4",
+            &with(FAULTED, &["--seed", "4"])[..],
+            MASTEREF_FAULTED_4,
+            false,
+        ),
     ] {
         let un = dir.path().join(format!("{name}-un.mdio"));
         let out = run_master(&with(base, &["--closures-unsegmented", "--no-salt"]), &un);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(stdout.contains("unsegmented (--closures-unsegmented, master ef2dc42)"), "{name}: {stdout}");
-        assert_eq!(store_hash(&un), master, "{name}: --closures-unsegmented vs master ef2dc42");
+        assert!(
+            stdout.contains("unsegmented (--closures-unsegmented, master ef2dc42)"),
+            "{name}: {stdout}"
+        );
+        assert_eq!(
+            store_hash(&un),
+            master,
+            "{name}: --closures-unsegmented vs master ef2dc42"
+        );
         let seg = dir.path().join(format!("{name}-seg.mdio"));
         let out = run_master(&with(base, &["--no-salt"]), &seg);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(String::from_utf8_lossy(&out.stdout).contains("3D-segmented across faults"));
-        assert_eq!(store_hash(&seg) == master, segmented_same, "{name}: segmented vs ef2dc42");
+        assert_eq!(
+            store_hash(&seg) == master,
+            segmented_same,
+            "{name}: segmented vs ef2dc42"
+        );
     }
     for (seed, want) in [("7", SEGMENTED_FAULTED_7), ("4", SEGMENTED_FAULTED_4)] {
         let p = dir.path().join(format!("seg{seed}.mdio"));
-        assert!(run_master(&with(FAULTED, &["--seed", seed, "--no-salt"]), &p).status.success());
+        assert!(
+            run_master(&with(FAULTED, &["--seed", seed, "--no-salt"]), &p)
+                .status
+                .success()
+        );
         assert_eq!(store_hash(&p), want, "segmented faulted seed {seed}");
         // Tiling does not change the segmented output.
         let q = dir.path().join(format!("seg{seed}-tiles.mdio"));
-        let tiled = with(&FAULTED[4..], &["--shape", "32,32,128", "--chunk-i", "3", "--chunk-j", "7", "--chunk-k", "16", "--seed", seed, "--no-salt"]);
+        let tiled = with(
+            &FAULTED[4..],
+            &[
+                "--shape",
+                "32,32,128",
+                "--chunk-i",
+                "3",
+                "--chunk-j",
+                "7",
+                "--chunk-k",
+                "16",
+                "--seed",
+                seed,
+                "--no-salt",
+            ],
+        );
         assert!(run_master(&tiled, &q).status.success());
         assert_eq!(store_hash(&q), want, "segmented faulted seed {seed}, tiles");
     }
@@ -595,23 +806,48 @@ fn no_salt_flag_reproduces_master_b4f4259() {
         ("mp", MP, MASTERB4_MP, SALT_MP, 0),
         ("deep", DEEP, MASTERB4_DEEP, SALT_DEEP, 2996),
         ("sand", SAND, MASTERB4_SAND, SALT_SAND, 4083),
-        ("faulted7", &faulted7[..], MASTERB4_FAULTED_7, SALT_FAULTED_7, 2336),
+        (
+            "faulted7",
+            &faulted7[..],
+            MASTERB4_FAULTED_7,
+            SALT_FAULTED_7,
+            2336,
+        ),
     ] {
         let off = dir.path().join(format!("{name}-off.mdio"));
         let out = run_master(&with(base, &["--no-salt"]), &off);
         assert!(out.status.success(), "{name}: {out:?}");
-        assert!(String::from_utf8_lossy(&out.stdout).contains("salt: off (--no-salt, master b4f4259)"));
-        assert_eq!(store_hash(&off), master, "{name}: --no-salt vs master b4f4259");
-        assert!(!off.join("data").join("salt_labels").exists(), "{name}: no salt_labels without salt");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("salt: off (--no-salt, master b4f4259)")
+        );
+        assert_eq!(
+            store_hash(&off),
+            master,
+            "{name}: --no-salt vs master b4f4259"
+        );
+        assert!(
+            !off.join("data").join("salt_labels").exists(),
+            "{name}: no salt_labels without salt"
+        );
         let on = dir.path().join(format!("{name}-on.mdio"));
         let out = run_master(base, &on);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(stdout.contains(&format!("{voxels} voxels in")), "{name}: {stdout}");
+        assert!(
+            stdout.contains(&format!("{voxels} voxels in")),
+            "{name}: {stdout}"
+        );
         assert_eq!(store_hash(&on), salted, "{name}: salt default");
         assert_ne!(salted, master);
-        let mask = synthoseis_io::MdioStore::open(&on).unwrap().read_salt_labels_u8().unwrap();
-        assert_eq!(mask.iter().map(|&v| v as usize).sum::<usize>(), voxels, "{name}: salt_labels");
+        let mask = synthoseis_io::MdioStore::open(&on)
+            .unwrap()
+            .read_salt_labels_u8()
+            .unwrap();
+        assert_eq!(
+            mask.iter().map(|&v| v as usize).sum::<usize>(),
+            voxels,
+            "{name}: salt_labels"
+        );
     }
 }
 
@@ -642,7 +878,15 @@ fn fault_labels_through_salt_flag_reproduces_master_2b3850ba() {
     let faulted7 = with(FAULTED, &["--seed", "7"]);
     let faulted4 = with(FAULTED, &["--seed", "4"]);
     for (name, base, angles, b4, salt34, masked, in_salt) in [
-        ("rich", RICH, SALT_RICH, MASTERB4_FAULTLABELS_RICH, SALT34_FAULTLABELS_RICH, SALTMASK_FAULTLABELS_RICH, 0),
+        (
+            "rich",
+            RICH,
+            SALT_RICH,
+            MASTERB4_FAULTLABELS_RICH,
+            SALT34_FAULTLABELS_RICH,
+            SALTMASK_FAULTLABELS_RICH,
+            0,
+        ),
         (
             "faulted7",
             &faulted7[..],
@@ -666,25 +910,47 @@ fn fault_labels_through_salt_flag_reproduces_master_2b3850ba() {
         let out = run_master(base, &p);
         assert!(out.status.success(), "{name}: {out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(stdout.contains(&format!("masked_in_salt={in_salt} ")), "{name}: {stdout}");
+        assert!(
+            stdout.contains(&format!("masked_in_salt={in_salt} ")),
+            "{name}: {stdout}"
+        );
         assert_eq!(fault_labels_hash(&p), masked, "{name}: masked default");
-        assert_eq!(store_hash(&p), angles, "{name}: angle stack unchanged by the mask");
+        assert_eq!(
+            store_hash(&p),
+            angles,
+            "{name}: angle stack unchanged by the mask"
+        );
         let store = synthoseis_io::MdioStore::open(&p).unwrap();
         let f = store.read_fault_labels_u8().unwrap();
         let s = store.read_salt_labels_u8().unwrap();
-        assert!(f.iter().zip(&s).all(|(a, b)| a & b == 0), "{name}: fault and salt");
+        assert!(
+            f.iter().zip(&s).all(|(a, b)| a & b == 0),
+            "{name}: fault and salt"
+        );
 
         let p = dir.path().join(format!("{name}-through.mdio"));
         let out = run_master(&with(base, &["--fault-labels-through-salt"]), &p);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(String::from_utf8_lossy(&out.stdout).contains("(--fault-labels-through-salt)"));
-        assert_eq!(fault_labels_hash(&p), salt34, "{name}: --fault-labels-through-salt vs master 2b3850ba");
-        assert_eq!(store_hash(&p), angles, "{name}: --fault-labels-through-salt angle stack");
+        assert_eq!(
+            fault_labels_hash(&p),
+            salt34,
+            "{name}: --fault-labels-through-salt vs master 2b3850ba"
+        );
+        assert_eq!(
+            store_hash(&p),
+            angles,
+            "{name}: --fault-labels-through-salt angle stack"
+        );
         assert_eq!(masked == salt34, in_salt == 0, "{name}");
 
         let p = dir.path().join(format!("{name}-off.mdio"));
         assert!(run_master(&with(base, &["--no-salt"]), &p).status.success());
-        assert_eq!(fault_labels_hash(&p), b4, "{name}: --no-salt fault labels vs master b4f4259");
+        assert_eq!(
+            fault_labels_hash(&p),
+            b4,
+            "{name}: --no-salt fault labels vs master b4f4259"
+        );
     }
 }
 
@@ -700,7 +966,15 @@ fn salt_smooth_all_horizons_reproduces_ccce5cc9_demo() {
     const CCCE5CC9_DEMO: u64 = 0xe43f_d5c4_e35d_71c0;
     let smooth = dir.path().join("smooth.mdio");
     let out = run_time(
-        &with(DEMO, &["--salt-smooth-all-horizons", "--salt-legacy-vs", "--legacy-filter-edges"]),
+        &with(
+            DEMO,
+            &[
+                "--salt-smooth-all-horizons",
+                "--salt-legacy-vs",
+                "--legacy-filter-edges",
+                "--legacy-rock-physics",
+            ],
+        ),
         &smooth,
     );
     assert!(out.status.success(), "{out:?}");
@@ -709,7 +983,12 @@ fn salt_smooth_all_horizons_reproduces_ccce5cc9_demo() {
         stdout.contains("drag: smooth-all (--salt-smooth-all-horizons)"),
         "{stdout}"
     );
-    assert_eq!(store_hash(&smooth), CCCE5CC9_DEMO, "{:#018x}", store_hash(&smooth));
+    assert_eq!(
+        store_hash(&smooth),
+        CCCE5CC9_DEMO,
+        "{:#018x}",
+        store_hash(&smooth)
+    );
     let lift = dir.path().join("lift.mdio");
     let out = run_time(&with(DEMO, &["--legacy-filter-edges"]), &lift);
     assert!(out.status.success(), "{out:?}");
@@ -728,7 +1007,17 @@ fn salt_legacy_vs_reproduces_f15b87ac_demo() {
     /// 2250), with f15b87ac's filter edges (`--legacy-filter-edges`).
     const F15B87AC_DEMO: u64 = 0x2a86_81eb_4b10_7b1d;
     let legacy = dir.path().join("legacy.mdio");
-    let out = run_time(&with(DEMO, &["--salt-legacy-vs", "--legacy-filter-edges"]), &legacy);
+    let out = run_time(
+        &with(
+            DEMO,
+            &[
+                "--salt-legacy-vs",
+                "--legacy-filter-edges",
+                "--legacy-rock-physics",
+            ],
+        ),
+        &legacy,
+    );
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -736,13 +1025,16 @@ fn salt_legacy_vs_reproduces_f15b87ac_demo() {
         "{stdout}"
     );
     assert!(stdout.contains("drag: lift-only"), "{stdout}");
-    assert_eq!(store_hash(&legacy), F15B87AC_DEMO, "{:#018x}", store_hash(&legacy));
+    assert_eq!(
+        store_hash(&legacy),
+        F15B87AC_DEMO,
+        "{:#018x}",
+        store_hash(&legacy)
+    );
     let neu = dir.path().join("new.mdio");
     let out = run_time(&with(DEMO, &["--legacy-filter-edges"]), &neu);
     assert!(out.status.success(), "{out:?}");
-    assert!(
-        String::from_utf8_lossy(&out.stdout)
-            .contains("salt properties: rho 2.17, Vp 4500, Vs 2600")
-    );
+    assert!(String::from_utf8_lossy(&out.stdout)
+        .contains("salt properties: rho 2.17, Vp 4500, Vs 2600"));
     assert_ne!(store_hash(&neu), store_hash(&legacy));
 }
