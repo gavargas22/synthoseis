@@ -88,8 +88,10 @@ const MASTER_BAD1DAA8_DEMO: u64 = 0x99e8_6ae5_7a12_b80c;
 /// and `salt_labels`; the closure summary is unchanged).
 /// Then `0x2296_0b5b_2e8b_c16c` (master 77131867, `SCALED_DEFAULT_DEMO_7713`,
 /// before the physical rock physics moved the stack and time labels;
-/// reproduced with `--legacy-rock-physics`).
-const SCALED_DEFAULT_DEMO: u64 = 0x37ea_d99d_0f5d_237f;
+/// reproduced with `--legacy-rock-physics`), then `0x37ea_d99d_0f5d_237f`
+/// (722c59af, before the live-oil density fix: B&W eq. 24 ρ_G without a
+/// second temperature correction).
+const SCALED_DEFAULT_DEMO: u64 = 0x39c8_c368_beaa_b05a;
 const SCALED_DEFAULT_DEMO_7713: u64 = 0x2296_0b5b_2e8b_c16c;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte

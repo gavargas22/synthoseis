@@ -543,13 +543,26 @@ fn fault_label_salt_mask_in_time_mode() {
 #[test]
 fn staircase_warning_and_gpu_fallback_log() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let out = run(&with(PLAIN, &["--dt-ms", "2"]), &dir.path().join("w.mdio"));
+    let out = run(&with(PLAIN, &["--dt-ms", "2", "--legacy-rock-physics"]), &dir.path().join("w.mdio"));
     assert!(out.status.success(), "{out:?}");
     assert!(
         stderr(&out).contains("warning: depth step 4 m > Vp_min 1580 m/s x dt / 1.2 = 2.63 m"),
         "{}",
         stderr(&out)
     );
+    // Physical rock physics: the warning names the slowest sediment Vp the
+    // run actually produced (spec review N1), not the legacy 1580.
+    let out = run(&with(PLAIN, &["--dt-ms", "2"]), &dir.path().join("wp.mdio"));
+    assert!(out.status.success(), "{out:?}");
+    let err = stderr(&out);
+    let v: f64 = err
+        .split("warning: depth step 4 m > Vp_min ")
+        .nth(1)
+        .and_then(|r| r.split(' ').next())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| panic!("{err}"));
+    assert!((400.0..2000.0).contains(&v), "{err}");
+    assert!(!err.contains("Vp_min 1580 "), "{err}");
     let out = run(PLAIN, &dir.path().join("q.mdio"));
     assert!(
         !stderr(&out).contains("warning: depth step"),

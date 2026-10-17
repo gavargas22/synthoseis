@@ -260,8 +260,10 @@ fn default_demo_cube_goldens() {
 }
 
 /// Physical rock physics defaults (gassmann spec), whole / partial voxels.
-const LAYERED_STACK15_PHYSICAL: u64 = 0x5006_3e05_9cfc_ca78;
-const LAYERED_STACK15_PV_PHYSICAL: u64 = 0x866a_d067_08f2_3519;
+/// 722c59af pins before the live-oil density fix (review N2):
+/// 0x5006_3e05_9cfc_ca78 / 0x866a_d067_08f2_3519.
+const LAYERED_STACK15_PHYSICAL: u64 = 0x0f21_4856_b147_75dd;
+const LAYERED_STACK15_PV_PHYSICAL: u64 = 0x97b0_3d86_0f1f_8eef;
 
 const LAYERED_STACK15_SCALED: u64 = 0x74e6_e4cc_66ee_1feb;
 const LAYERED_STACK15_PV_SCALED: u64 = 0x997a_244c_56ae_2549;

@@ -1050,6 +1050,7 @@ fn main() {
             }
 
             if e2e {
+                let (rock_w, time_w) = (rock.clone(), time.clone());
                 cli_e2e::run_e2e(
                     geo_many,
                     &angles,
@@ -1070,7 +1071,7 @@ fn main() {
                     geometry,
                     time,
                 );
-                cli_e2e::print_guarded_voxels();
+                cli_e2e::print_guarded_voxels(samples, &rock_w, &time_w);
             } else if workers == 1 {
                 cli_e2e::run_single_worker_placeholder(&config, store, seed);
             } else {

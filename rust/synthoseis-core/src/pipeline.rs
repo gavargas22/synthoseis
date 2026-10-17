@@ -596,10 +596,29 @@ impl E2eConfig {
 
     /// The depth-staircase warning for this run (time mode only), see
     /// [`TimeConfig::staircase_warning`].
+    /// Legacy rock physics only: the physical model's minimum is only known
+    /// after the run, see [`E2eConfig::time_warning_after_run`].
     pub fn time_warning(&self) -> Option<String> {
-        self.time_enabled()
-            .then(|| self.time.staircase_warning(self.rock_physics.depth_step_m, self.vp_min_sediment()))
+        let legacy = matches!(self.rock_physics.rock_model(), synthoseis_rpm::RockModel::Legacy);
+        (legacy && self.time_enabled())
+            .then(|| self.time.staircase_warning(self.rock_physics.depth_step_m, VP_MIN_SEDIMENT))
             .flatten()
+    }
+
+    /// Physical rock physics only: the depth-staircase warning against the
+    /// lowest sediment Vp this process actually produced
+    /// ([`synthoseis_rpm::observed_vp_min`]), or, when no layer voxel was
+    /// evaluated here (multi-process parent), the [`E2eConfig::vp_min_sediment`]
+    /// bound.
+    pub fn time_warning_after_run(&self) -> Option<String> {
+        if matches!(self.rock_physics.rock_model(), synthoseis_rpm::RockModel::Legacy) || !self.time_enabled() {
+            return None;
+        }
+        let v = synthoseis_rpm::observed_vp_min()
+            .map(|v| v as f64)
+            .unwrap_or_else(|| self.vp_min_sediment())
+            .floor();
+        self.time.staircase_warning(self.rock_physics.depth_step_m, v)
     }
 
     /// Lowest sediment P velocity of this run's rock model (m/s), for the

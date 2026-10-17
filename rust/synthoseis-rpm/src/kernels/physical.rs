@@ -217,6 +217,25 @@ impl PhysParams {
 /// (spec §4.3). Reported in the run summary.
 pub static GUARDED_VOXELS: AtomicU64 = AtomicU64::new(0);
 
+/// Lowest sediment-layer Vp (f32 bits; positive floats order as u32) this
+/// process produced, for the run-end depth-staircase warning. `u32::MAX`
+/// until a layer voxel is evaluated.
+pub static VP_MIN_OBSERVED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
+
+#[inline]
+fn note_vp(vp: f32) {
+    let b = vp.to_bits();
+    if vp > 0.0 && b < VP_MIN_OBSERVED.load(Ordering::Relaxed) {
+        VP_MIN_OBSERVED.fetch_min(b, Ordering::Relaxed);
+    }
+}
+
+/// [`VP_MIN_OBSERVED`] in m/s, if any layer voxel was evaluated.
+pub fn observed_vp_min() -> Option<f32> {
+    let b = VP_MIN_OBSERVED.load(Ordering::Relaxed);
+    (b != u32::MAX).then(|| f32::from_bits(b))
+}
+
 /// Athy porosity φ0·exp(−c z) with z in metres, c in 1/km (unclamped).
 #[inline]
 pub fn athy_porosity(phi0: f64, c_per_km: f64, z_m: f64) -> f64 {
@@ -589,11 +608,13 @@ pub fn physical_voxel_properties(
             let s = shifts[layer];
             let z = depth[shifted_index(k, s.layer + s.props[0][0], nk)];
             let shale = physical_shale(z, w, p);
-            if ng > 0.0 {
+            let e = if ng > 0.0 {
                 mix_f32(shale, physical_sand(fluid, z, w, p), ng, mixing)
             } else {
                 shale
-            }
+            };
+            note_vp(e.vp);
+            e
         }
     }
 }

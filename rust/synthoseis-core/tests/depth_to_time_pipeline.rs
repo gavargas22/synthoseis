@@ -482,8 +482,16 @@ fn dt_2ms_invariance_and_staircase_warning() {
         rock_physics: RockPhysicsConfig { depth_step_m: 4.0, ..cfg.rock_physics.clone() },
         ..cfg.clone()
     };
-    let w = coarse.time_warning().expect("dz = 4 m at dt = 2 ms must warn");
+    // Legacy rock physics warns before the run against 1580 m/s.
+    let mut legacy = coarse.clone();
+    legacy.rock_physics.legacy_rock_physics = true;
+    let w = legacy.time_warning().expect("dz = 4 m at dt = 2 ms must warn");
     assert!(w.contains("depth step 4 m") && w.contains("2.63"), "{w}");
+    // Physical rock physics warns after the run against the model minimum
+    // (here, with nothing evaluated yet in this check, the end-member bound).
+    assert!(coarse.time_warning().is_none());
+    let w = coarse.time_warning_after_run().expect("physical dz = 4 m at dt = 2 ms must warn");
+    assert!(w.contains("depth step 4 m > Vp_min"), "{w}");
     assert_eq!(coarse.output_samples(), 192);
     // The legacy axis never warns.
     assert!(E2eConfig { time: TimeConfig::legacy(), ..coarse }.time_warning().is_none());

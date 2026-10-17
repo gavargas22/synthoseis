@@ -288,10 +288,13 @@ const PHYSICAL_7713: &[(&str, u64)] = &[
 ];
 
 /// The default with the physical rock physics (gassmann spec §7, moved).
+/// The live-oil density fix (B&W eq. 24, review N2) moved the three cubes
+/// with oil sand in their output: demo 0x37ea_d99d_0f5d_237f, salt
+/// 0x025f_70e0_4dd2_e002, whole 0x50fb_60e9_181e_ba38 at 722c59af.
 const PHYSICAL: &[(&str, u64)] = &[
     ("bplat", 0x01b6_3fdb_55ff_a3da),
     ("bplatnoise", 0x1fd5_9170_b12c_6dc8),
-    ("demo", 0x37ea_d99d_0f5d_237f),
+    ("demo", 0x39c8_c368_beaa_b05a),
     ("dt2lin", 0x76c2_c9ab_cb3e_9caf),
     ("keep", 0xffd4_46ec_a669_dc71),
     ("many_a0", 0x7888_7a9b_b355_53b0),
@@ -302,11 +305,11 @@ const PHYSICAL: &[(&str, u64)] = &[
     ("noise", 0xb683_27ed_9199_f15e),
     ("overlap", 0xb7d8_2efe_a005_4a36),
     ("rich", 0xd915_0593_5618_f78b),
-    ("salt", 0x025f_70e0_4dd2_e002),
+    ("salt", 0x6e7e_3007_a7b0_3707),
     ("single", 0x7cca_1e5a_9780_091c),
     ("stream", 0x7cca_1e5a_9780_091c),
     ("strips", 0x9fb2_5dea_a619_a57e),
-    ("whole", 0x50fb_60e9_181e_ba38),
+    ("whole", 0x383a_35e4_b1f8_4ae6),
 ];
 
 const SUMMARY_PHYSICAL: &str =
