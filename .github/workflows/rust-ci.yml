@@ -113,11 +113,12 @@ jobs:
           # Time output, whole voxels (--legacy-whole-voxels = d8b96e69 default):
           # counts of the written time cube. Time labels follow Vp, so the
           # physical rock physics moved these (gassmann spec §7; was 3774/72,
-          # 3846 through salt); --legacy-rock-physics keeps the old counts.
+          # 3846 through salt; 3889/3958 at 722c59af before the live-oil density
+          # fix); --legacy-rock-physics keeps the old counts.
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --store /tmp/fmt.mdio | tee /tmp/fmt.txt
-          grep -q "fault_voxels=3889, masked_in_salt=69 " /tmp/fmt.txt
+          grep -q "fault_voxels=3888, masked_in_salt=69 " /tmp/fmt.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --fault-labels-through-salt --store /tmp/fmt-through.mdio | tee /tmp/fmt-through.txt
-          grep -q "fault_voxels=3958 (--fault-labels-through-salt)" /tmp/fmt-through.txt
+          grep -q "fault_voxels=3957 (--fault-labels-through-salt)" /tmp/fmt-through.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
           grep -q "masked_in_salt=69 " /tmp/fmt-gpu.txt
           # Time output, partial voxels (default since PR B2): the time-domain
