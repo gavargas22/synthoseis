@@ -289,3 +289,18 @@ fn batzle_wang_spot_values() {
     assert!((dv - 36.587).abs() <= 1e-3, "V_B - V_w at (25 °C, 0.1 MPa, S 0.035) = {dv}, want 36.587 (-1820)");
     assert!((dv - 37.812).abs() > 1.0, "brine velocity matches the -820 typo");
 }
+
+/// Live-oil density is B&W eq. 24's ρ_G at saturation, with no second
+/// eq. 18-19 temperature correction (that divided by 1.040 at 64 °C; with the eq. 18 pressure term the net
+/// effect was 1.7 % low at 20 MPa).
+/// Defaults API 32, GOR 100, G 0.6 at 64 °C, 20 MPa.
+#[test]
+fn live_oil_density_is_rho_g_at_saturation() {
+    let (api, gor, g, t, p): (f64, f64, f64, f64, f64) = (32.0, 100.0, 0.6, 64.0, 20.0);
+    let rho0 = 141.5 / (api + 131.5);
+    let b0 = 0.972 + 0.00038 * (2.4 * gor * (g / rho0).sqrt() + t + 17.8).powf(1.175);
+    let rho_g = (rho0 + 0.0012 * g * gor) / b0;
+    let (rho, _) = bw_oil(t, p, api, gor, g);
+    assert_eq!(rho, rho_g);
+    assert!((rho - 0.74448).abs() < 5e-5, "live oil ρ = {rho}");
+}

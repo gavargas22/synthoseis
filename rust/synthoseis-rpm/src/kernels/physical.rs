@@ -312,14 +312,19 @@ pub fn bw_gas(t: f64, p: f64, gravity: f64) -> (f64, f64) {
 }
 
 /// Live-oil density (g/cc) and bulk modulus (GPa), Batzle & Wang (1992)
-/// eqs. 18-24 (API, GOR in L/L, gas gravity).
+/// eqs. 20-24 (API, GOR in L/L, gas gravity): velocity from the eq. 22-23
+/// pseudo-density, density ρ_G (eq. 24) at saturation.
 pub fn bw_oil(t: f64, p: f64, api: f64, gor: f64, gravity: f64) -> (f64, f64) {
     let rho0 = 141.5 / (api + 131.5);
     let b0 = 0.972 + 0.00038 * (2.4 * gor * (gravity / rho0).sqrt() + t + 17.8).powf(1.175);
     let rho_p = rho0 / b0 / (1.0 + 0.001 * gor);
-    let rho_g = (rho0 + 0.0012 * gravity * gor) / b0;
-    let rho_pt = rho_g + (0.00277 * p - 1.71e-7 * p * p * p) * (rho_g - 1.15).powi(2) + 3.49e-4 * p;
-    let rho = rho_pt / (0.972 + 3.81e-4 * (t + 17.78).powf(1.175));
+    // B&W 1992 eq. 24: ρ_G is the live-oil density at saturation, and B0
+    // already carries the thermal expansion at T. Eqs. 18-19 adjust a
+    // density *from standard conditions* (eq. 19's divisor is ~1 at 15.6 °C);
+    // applying them to ρ_G again counted temperature twice (~4 % low at
+    // 64 °C). The reservoir is taken to be at saturation (GOR is the
+    // in-situ dissolved gas), so ρ = ρ_G, as in rockphypy `BW.rho_K_go`.
+    let rho = (rho0 + 0.0012 * gravity * gor) / b0;
     let v = 2096.0 * (rho_p / (2.6 - rho_p)).sqrt() - 3.7 * t
         + 4.64 * p
         + 0.0115 * (4.12 * (1.08 / rho_p - 1.0).sqrt() - 1.0) * t * p;

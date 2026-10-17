@@ -598,8 +598,36 @@ impl E2eConfig {
     /// [`TimeConfig::staircase_warning`].
     pub fn time_warning(&self) -> Option<String> {
         self.time_enabled()
-            .then(|| self.time.staircase_warning(self.rock_physics.depth_step_m, VP_MIN_SEDIMENT))
+            .then(|| self.time.staircase_warning(self.rock_physics.depth_step_m, self.vp_min_sediment()))
             .flatten()
+    }
+
+    /// Lowest sediment P velocity of this run's rock model (m/s), for the
+    /// depth-staircase warning. Legacy: [`VP_MIN_SEDIMENT`] (shale trend at
+    /// z = 0). Physical: the slowest end-member over burial depths of the
+    /// model at zero water depth (lowest fluid pressure), sand fluids only
+    /// when `fluids` is on; shallow gas sand reaches ~500-650 m/s.
+    pub fn vp_min_sediment(&self) -> f64 {
+        match self.rock_physics.rock_model() {
+            synthoseis_rpm::RockModel::Legacy => VP_MIN_SEDIMENT,
+            synthoseis_rpm::RockModel::Physical(p) => {
+                let fluids: &[synthoseis_rpm::Fluid] = if self.rock_physics.fluids {
+                    &[synthoseis_rpm::Fluid::Brine, synthoseis_rpm::Fluid::Oil, synthoseis_rpm::Fluid::Gas]
+                } else {
+                    &[synthoseis_rpm::Fluid::Brine]
+                };
+                let zmax = self.samples as f64 * self.rock_physics.depth_step_m;
+                let mut v = f64::INFINITY;
+                for i in 0..=64 {
+                    let z = (zmax * i as f64 / 64.0) as f32;
+                    v = v.min(synthoseis_rpm::physical_shale(z, 0.0, &p).vp as f64);
+                    for &f in fluids {
+                        v = v.min(synthoseis_rpm::physical_sand(f, z, 0.0, &p).vp as f64);
+                    }
+                }
+                v
+            }
+        }
     }
 
     /// The 40 Hz Ricker wavelet sampled at [`E2eConfig::digi_ms`].
