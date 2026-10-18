@@ -45,7 +45,7 @@ fn main() {
     let fraction: Option<f64> = args.get(6).and_then(|s| s.parse().ok());
     let thickness: f64 = arg(&args, 7, 2.0);
     std::fs::create_dir_all(&out).expect("create out dir");
-    let base = E2eConfig {
+    let base = E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         geometry: ToyGeometry::Layered,
         seed,

@@ -155,7 +155,7 @@ fn assert_never_stricter(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) 
 }
 
 /// §6.3 gate, per PR: 32×32×128 without faults keeps a trap in at least 8
-/// of 12 seeds (master's 500: 3), and the kept closure volume is >= 98 % of
+/// of 12 seeds (master's 500: 3; 8 at 7e80f2af, 5 with the folds), and the kept closure volume is >= 98 % of
 /// all closure voxels on the 32² cubes (master: >= 59.1 %). The 64² and
 /// 128² cubes run nightly ([`scaled_minimum_survival_medium_cubes`]).
 #[test]
@@ -167,18 +167,24 @@ fn scaled_minimum_survival() {
             closure_census(&c, &labels, sh).unwrap().kept() > 0
         })
         .count();
-    let with_trap_500 = (1..=12u64)
-        .filter(|&s| {
-            let c = with_minimum(&cfg([32, 32, 128], 0, s), ClosureMinimum::LEGACY);
-            let (labels, sh) = generate_labels(&c);
-            closure_census(&c, &labels, sh).unwrap().kept() > 0
-        })
-        .count();
+    let trap_500 = |legacy_fold: bool| {
+        (1..=12u64)
+            .filter(|&s| {
+                let mut c = with_minimum(&cfg([32, 32, 128], 0, s), ClosureMinimum::LEGACY);
+                c.rock_physics.legacy_fold_geometry = legacy_fold;
+                let (labels, sh) = generate_labels(&c);
+                closure_census(&c, &labels, sh).unwrap().kept() > 0
+            })
+            .count()
+    };
+    let with_trap_500 = trap_500(false);
+    // 8 at 7e80f2af (`--legacy-fold-geometry`); the folds move it.
+    assert_eq!(trap_500(true), 8);
     eprintln!(
         "32x32x128 f0: seeds with a kept trap: {with_trap_500}/12 at 500, {with_trap}/12 scaled"
     );
     assert!(with_trap >= 8, "{with_trap}/12");
-    assert_eq!(with_trap_500, 8);
+    assert_eq!(with_trap_500, 6);
     assert_kept_volume(&[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)]);
 }
 
@@ -213,21 +219,37 @@ fn assert_kept_volume(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
 /// §6.4: the salt case of `tests/rock_physics.rs` (24×20×128, seed 102, 4
 /// faults, sand 0.4) keeps 5 compartments on the default (T = 20), the
 /// closures walled against the salt flank among them; fixed 500 keeps 2
-/// under lift-only drag (0 under smooth-all).
+/// under lift-only drag at 7e80f2af, 1 on the folded default (0 under
+/// smooth-all). Pinned at 7e80f2af
+/// (`--legacy-fold-geometry`) and on the folded default (folds spec §7).
 #[test]
 fn salt_case_keeps_walled_closures_on_the_default() {
-    let mut c = cfg([24, 20, 128], 4, 102);
-    c.geometry = ToyGeometry::Layered;
-    c.rock_physics.sand_layer_fraction = Some(0.4);
-    let (labels, sh) = generate_labels(&c);
-    let k = closure_census(&c, &labels, sh).unwrap();
-    let mut sizes = k.sizes.clone();
-    sizes.sort_unstable_by(|a, b| b.cmp(a));
-    eprintln!("salt case compartments {sizes:?}");
-    assert_eq!(sizes, [1070, 632, 364, 351, 138, 6, 2, 1, 1, 1, 1, 1]);
-    assert_eq!((k.minimum, k.kept()), (20, 5));
-    let legacy = closure_census(&with_minimum(&c, ClosureMinimum::LEGACY), &labels, sh).unwrap();
-    assert_eq!(legacy.kept(), 2);
+    // 7e80f2af (`--legacy-fold-geometry`) and the folded default.
+    for (legacy_fold, want, kept, kept_500) in [
+        (true, &[1070, 632, 364, 351, 138, 6, 2, 1, 1, 1, 1, 1][..], 5, 2),
+        (false, &[618, 336, 245, 206, 171, 3, 2, 2, 2, 1, 1, 1, 1][..], 5, 1),
+    ] {
+        let mut c = cfg([24, 20, 128], 4, 102);
+        c.geometry = ToyGeometry::Layered;
+        c.rock_physics.sand_layer_fraction = Some(0.4);
+        c.rock_physics.legacy_fold_geometry = legacy_fold;
+        let (labels, sh) = generate_labels(&c);
+        let k = closure_census(&c, &labels, sh).unwrap();
+        let mut sizes = k.sizes.clone();
+        sizes.sort_unstable_by(|a, b| b.cmp(a));
+        eprintln!("salt case compartments {sizes:?}");
+        assert_eq!(sizes, want);
+        assert_eq!((k.minimum, k.kept()), (20, kept));
+        let legacy = closure_census(&with_minimum(&c, ClosureMinimum::LEGACY), &labels, sh).unwrap();
+        assert_eq!(legacy.kept(), kept_500, "legacy_fold={legacy_fold}");
+        if !legacy_fold {
+            continue_rest(&c, &labels, sh);
+        }
+    }
+}
+
+fn continue_rest(c: &E2eConfig, labels: &[u8], sh: [usize; 3]) {
+    let c = c.clone();
     // The kept closures reach the model as hydrocarbon or brine contacts.
     let m = rpm(&c, &labels, sh);
     let contacts = m

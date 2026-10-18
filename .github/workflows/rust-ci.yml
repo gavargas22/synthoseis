@@ -115,39 +115,70 @@ jobs:
           # physical rock physics moved these (gassmann spec §7; was 3774/72,
           # 3846 through salt; 3889/3958 at 722c59af before the live-oil density
           # fix); --legacy-rock-physics keeps the old counts.
+          # The analytic folds moved them again (folds spec §7: 3903/68, 3971
+          # through salt; 3888/69, 3957
+          # through salt at 7e80f2af); --legacy-fold-geometry keeps those.
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --store /tmp/fmt.mdio | tee /tmp/fmt.txt
-          grep -q "fault_voxels=3888, masked_in_salt=69 " /tmp/fmt.txt
+          grep -q "fault_voxels=3903, masked_in_salt=68 " /tmp/fmt.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --fault-labels-through-salt --store /tmp/fmt-through.mdio | tee /tmp/fmt-through.txt
-          grep -q "fault_voxels=3957 (--fault-labels-through-salt)" /tmp/fmt-through.txt
+          grep -q "fault_voxels=3971 (--fault-labels-through-salt)" /tmp/fmt-through.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
-          grep -q "masked_in_salt=69 " /tmp/fmt-gpu.txt
+          grep -q "masked_in_salt=68 " /tmp/fmt-gpu.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --legacy-fold-geometry --store /tmp/fmt-lfg.mdio | tee /tmp/fmt-lfg.txt
+          grep -q "fault_voxels=3888, masked_in_salt=69 " /tmp/fmt-lfg.txt
+          grep -q "^folds: off (--legacy-fold-geometry)" /tmp/fmt-lfg.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --legacy-fold-geometry --fault-labels-through-salt --store /tmp/fmt-lfg-through.mdio | tee /tmp/fmt-lfg-through.txt
+          grep -q "fault_voxels=3957 (--fault-labels-through-salt)" /tmp/fmt-lfg-through.txt
           # Time output, partial voxels (default since PR B2): the time-domain
           # fault cube is sampled through the partial traveltime. Continuous
           # salt partial-voxel maps: 3818/67 (was 3800/70, and 3870 through
           # salt, before them; --legacy-salt-pv-maps keeps those). The physical
           # rock physics moved them to 3894/69 (3963 through salt; rounded
           # maps 3896/67); --legacy-rock-physics keeps 3818/67, 3885, 3800/70.
+          # Folds (folds spec §7): 3908/69, 3977 through salt, rounded maps
+          # 3916/71; --legacy-fold-geometry keeps 3894/69, 3963, 3896/67.
           cargo run --profile test -p synthoseis -- run $FM --store /tmp/fmp.mdio | tee /tmp/fmp.txt
-          grep -q "fault_voxels=3894, masked_in_salt=69 " /tmp/fmp.txt
+          grep -q "fault_voxels=3908, masked_in_salt=69 " /tmp/fmp.txt
+          grep -q "^folds: 1 cylindrical + 1 dome/basin, style similar" /tmp/fmp.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-fold-geometry --store /tmp/fmp-lfg.mdio | tee /tmp/fmp-lfg.txt
+          grep -q "fault_voxels=3894, masked_in_salt=69 " /tmp/fmp-lfg.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-fold-geometry --fault-labels-through-salt --store /tmp/fmp-lfg-through.mdio | tee /tmp/fmp-lfg-through.txt
+          grep -q "fault_voxels=3963 (--fault-labels-through-salt)" /tmp/fmp-lfg-through.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-fold-geometry --legacy-salt-pv-maps --store /tmp/fmp-lfg-rounded.mdio | tee /tmp/fmp-lfg-rounded.txt
+          grep -q "fault_voxels=3896, masked_in_salt=67 " /tmp/fmp-lfg-rounded.txt
           grep -q "^partial voxels: .*mode=subcell" /tmp/fmp.txt
           grep -q "^salt partial-voxel maps: continuous (clamped to the label cell)" /tmp/fmp.txt
           cargo run --profile test -p synthoseis -- run $FM --fault-labels-through-salt --store /tmp/fmp-through.mdio | tee /tmp/fmp-through.txt
-          grep -q "fault_voxels=3963 (--fault-labels-through-salt)" /tmp/fmp-through.txt
+          grep -q "fault_voxels=3977 (--fault-labels-through-salt)" /tmp/fmp-through.txt
           cargo run --profile test -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmp-gpu.mdio | tee /tmp/fmp-gpu.txt
-          grep -q "fault_voxels=3894, masked_in_salt=69 " /tmp/fmp-gpu.txt
+          grep -q "fault_voxels=3908, masked_in_salt=69 " /tmp/fmp-gpu.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-salt-pv-maps --store /tmp/fmp-rounded.mdio | tee /tmp/fmp-rounded.txt
-          grep -q "fault_voxels=3896, masked_in_salt=67 " /tmp/fmp-rounded.txt
+          grep -q "fault_voxels=3916, masked_in_salt=71 " /tmp/fmp-rounded.txt
           grep -q "^salt partial-voxel maps: rounded (--legacy-salt-pv-maps)" /tmp/fmp-rounded.txt
-          # --legacy-rock-physics (master 77131867) keeps every time-domain count.
-          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --store /tmp/fmp-lrp.mdio | tee /tmp/fmp-lrp.txt
+          # --legacy-rock-physics --legacy-fold-geometry (master 77131867) keeps every time-domain count.
+          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-fold-geometry --store /tmp/fmp-lrp.mdio | tee /tmp/fmp-lrp.txt
           grep -q "fault_voxels=3818, masked_in_salt=67 " /tmp/fmp-lrp.txt
           grep -q "^rock physics: legacy trends (--legacy-rock-physics)" /tmp/fmp-lrp.txt
-          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --fault-labels-through-salt --store /tmp/fmp-lrp-through.mdio | tee /tmp/fmp-lrp-through.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-fold-geometry --fault-labels-through-salt --store /tmp/fmp-lrp-through.mdio | tee /tmp/fmp-lrp-through.txt
           grep -q "fault_voxels=3885 (--fault-labels-through-salt)" /tmp/fmp-lrp-through.txt
-          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-whole-voxels --store /tmp/fmt-lrp.mdio | tee /tmp/fmt-lrp.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-fold-geometry --legacy-whole-voxels --store /tmp/fmt-lrp.mdio | tee /tmp/fmt-lrp.txt
           grep -q "fault_voxels=3774, masked_in_salt=72 " /tmp/fmt-lrp.txt
-          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-salt-pv-maps --store /tmp/fmp-lrp-rounded.mdio | tee /tmp/fmp-lrp-rounded.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-fold-geometry --legacy-salt-pv-maps --store /tmp/fmp-lrp-rounded.mdio | tee /tmp/fmp-lrp-rounded.txt
           grep -q "fault_voxels=3800, masked_in_salt=70 " /tmp/fmp-lrp-rounded.txt
+      - name: analytic folds smoke (similar default, parallel, fold flags + multiprocess, legacy switch, exit 2)
+        run: |
+          set -euo pipefail
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,128 --store /tmp/fo.mdio | tee /tmp/fo.txt
+          grep -q "^folds: 1 cylindrical + 1 dome/basin, style similar" /tmp/fo.txt
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --shape 32,32,128 --fold-style parallel --folds-cylindrical 2 --folds-domes 0 --store /tmp/fo-par.mdio | tee /tmp/fo-par.txt
+          grep -q "^folds: 2 cylindrical + 0 dome/basin, style parallel" /tmp/fo-par.txt
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 4 --chunk-j 4 --fold-growth 0.5 --bin-m 25 --store /tmp/fo-mp.mdio
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --legacy-fold-geometry --store /tmp/fo-lfg.mdio | tee /tmp/fo-lfg.txt
+          grep -q "^folds: off (--legacy-fold-geometry)" /tmp/fo-lfg.txt
+          set +e
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --legacy-fold-geometry --fold-style parallel --store /tmp/fo-bad1.mdio; test $? -eq 2 || exit 1
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --toy-geometry planar --legacy-fold-geometry --store /tmp/fo-bad2.mdio; test $? -eq 2 || exit 1
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --folds-domes 7 --store /tmp/fo-bad3.mdio; test $? -eq 2 || exit 1
       - name: filter edges smoke (physical default + attr, --legacy-filter-edges, multiprocess, exit 2 on the legacy axis)
         run: |
           set -euo pipefail

@@ -5,6 +5,7 @@
 
 mod cli_e2e;
 mod cli_jobs;
+mod cli_fold;
 mod cli_rock;
 
 use std::path::PathBuf;
@@ -253,6 +254,8 @@ enum Commands {
         legacy_salt_pv_maps: bool,
         #[command(flatten)]
         phys: cli_rock::PhysArgs,
+        #[command(flatten)]
+        folds: cli_fold::FoldArgs,
         /// Legacy switch: write the depth-sampled seismic as time (each depth
         /// sample = one 4 ms sample, an implied constant 2000 m/s), master
         /// f3720fb2 bit for bit. Default: convert to two-way time from the
@@ -789,6 +792,7 @@ fn main() {
             salt_legacy_vs,
             legacy_salt_pv_maps,
             phys,
+            folds,
             legacy_depth_as_time,
             dt_ms,
             twt_samples,
@@ -953,6 +957,7 @@ fn main() {
                 legacy_closure_contact_cap,
             )
             .and_then(|r| cli_rock::apply_rock_physics(r, &phys))
+            .and_then(|r| cli_fold::apply_folds(r, geometry, &folds))
             .unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);
@@ -1166,6 +1171,7 @@ mod tests {
             salt_legacy_vs,
             legacy_salt_pv_maps,
             phys,
+            folds,
             legacy_depth_as_time,
             dt_ms,
             twt_samples,
@@ -1237,6 +1243,7 @@ mod tests {
             legacy_closure_contact_cap,
         )
         .and_then(|r| super::cli_rock::apply_rock_physics(r, &phys))
+        .and_then(|r| super::cli_fold::apply_folds(r, geometry, &folds))
         .unwrap();
         (rock, geometry, time)
     }
@@ -1327,6 +1334,22 @@ mod tests {
                 "--shale-phi0",
                 "0.6",
             ][..],
+            &["--legacy-fold-geometry"][..],
+            &["--legacy-fold-geometry", "--legacy-rock-physics", "--salt-legacy-vs"][..],
+            &[
+                "--fold-style",
+                "parallel",
+                "--folds-cylindrical",
+                "2",
+                "--folds-domes",
+                "0",
+                "--bin-m",
+                "25",
+                "--fold-growth",
+                "0.5",
+                "--fold-max-dip",
+                "1.5",
+            ][..],
         ] {
             let (rock, geometry, time) = rebuild_from_argv(&argv(extra));
             let mut worker = argv(&[]);
@@ -1362,12 +1385,25 @@ mod tests {
                 back.0.phys, rock.phys,
                 "{extra:?}: physical parameters in the worker config"
             );
+            let fold_flag = |a: &str| a.starts_with("--fold") || a == "--bin-m";
             let params = extra.iter().any(|a| {
                 a.starts_with("--")
                     && !a.starts_with("--legacy")
                     && !a.starts_with("--salt")
                     && *a != "--no-salt"
+                    && !fold_flag(a)
             });
+            assert_eq!(
+                back.0.legacy_fold_geometry,
+                extra.contains(&"--legacy-fold-geometry"),
+                "{extra:?}: --legacy-fold-geometry in the worker config"
+            );
+            assert_eq!(back.0.fold, rock.fold, "{extra:?}: fold config in the worker config");
+            assert_eq!(
+                rock.fold != synthoseis_core::FoldConfig::default(),
+                extra.iter().any(|a| fold_flag(a)),
+                "{extra:?}: fold flags parsed"
+            );
             assert_eq!(
                 rock.phys != synthoseis_core::PhysParams::default(),
                 params,

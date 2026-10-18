@@ -11,6 +11,8 @@ pub fn run_e2e_strip_stitched(
     cfg: &E2eConfig,
     workers: usize,
 ) -> Result<(E2eReport, WorkingSetStats), String> {
+    let cached = cfg.with_geometry_cache();
+    let cfg = &cached;
     let workers = workers.max(1);
     if workers <= 1 {
         return if cfg.store_path.is_some() {

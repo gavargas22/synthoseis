@@ -793,6 +793,8 @@ pub struct RunSummary {
 }
 
 pub fn run_summary(cfg: &E2eConfig) -> RunSummary {
+    let cached = cfg.with_geometry_cache();
+    let cfg = &cached;
     let axis = cfg.time_axis();
     let reflectivity = cfg.effective_partial_voxels();
     if axis.is_none() && reflectivity.is_none() {

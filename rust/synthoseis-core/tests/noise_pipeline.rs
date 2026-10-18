@@ -40,7 +40,7 @@ fn bits(v: &[f32]) -> Vec<u32> {
 }
 
 fn cfg(seed: u64, shape: [usize; 3], chunks: [usize; 3], faults: usize) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed,

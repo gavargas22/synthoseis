@@ -54,6 +54,8 @@ pub fn generate_chunked(cfg: &E2eConfig) -> (E2eVolumes, WorkingSetStats) {
 
 /// Like [`generate_chunked`], but with an explicit Zoeppritz incidence angle.
 pub fn generate_chunked_at_angle(cfg: &E2eConfig, angle_deg: f64) -> (E2eVolumes, WorkingSetStats) {
+    let cached = cfg.with_geometry_cache();
+    let cfg = &cached;
     let (labels, shape) = generate_labels(cfg);
     generate_angle_stack_from_labels(cfg, &labels, shape, angle_deg)
 }

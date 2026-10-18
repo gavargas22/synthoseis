@@ -3,6 +3,8 @@
 /// Labels remain a full u8 volume. Angle samples are fused per spatial tile
 /// (full nk for the wavelet) and written via [`MdioStore::write_chunk`].
 pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats), String> {
+    let cached = cfg.with_geometry_cache();
+    let cfg = &cached;
     let path = cfg
         .store_path
         .as_ref()

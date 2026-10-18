@@ -47,7 +47,7 @@ fn main() {
     let legacy_reach = args.get(6).map(|s| s == "legacy").unwrap_or(false);
     std::fs::create_dir_all(&out).expect("create out dir");
 
-    let base = E2eConfig {
+    let base = E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed,
