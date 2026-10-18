@@ -53,10 +53,15 @@ pub fn apply_folds(
         return Err("fold flags have no effect with --legacy-fold-geometry".into());
     }
     if any && rock.legacy_toy_depth {
-        return Err("fold flags and --legacy-fold-geometry have no effect with --legacy-toy-depth".into());
+        return Err(
+            "fold flags and --legacy-fold-geometry have no effect with --legacy-toy-depth".into(),
+        );
     }
     if any && geometry == ToyGeometry::Planar {
-        return Err("fold flags and --legacy-fold-geometry have no effect with --toy-geometry planar".into());
+        return Err(
+            "fold flags and --legacy-fold-geometry have no effect with --toy-geometry planar"
+                .into(),
+        );
     }
     rock.legacy_fold_geometry = a.legacy_fold_geometry;
     let mut f = FoldConfig::default();

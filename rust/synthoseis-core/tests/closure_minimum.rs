@@ -155,7 +155,7 @@ fn assert_never_stricter(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) 
 }
 
 /// §6.3 gate, per PR: 32×32×128 without faults keeps a trap in at least 8
-/// of 12 seeds (master's 500: 3), and the kept closure volume is >= 98 % of
+/// of 12 seeds (master's 500: 3; 8 at 7e80f2af, 5 with the folds), and the kept closure volume is >= 98 % of
 /// all closure voxels on the 32² cubes (master: >= 59.1 %). The 64² and
 /// 128² cubes run nightly ([`scaled_minimum_survival_medium_cubes`]).
 #[test]
@@ -219,7 +219,8 @@ fn assert_kept_volume(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
 /// §6.4: the salt case of `tests/rock_physics.rs` (24×20×128, seed 102, 4
 /// faults, sand 0.4) keeps 5 compartments on the default (T = 20), the
 /// closures walled against the salt flank among them; fixed 500 keeps 2
-/// under lift-only drag (0 under smooth-all).
+/// under lift-only drag (0 under smooth-all). Pinned at 7e80f2af
+/// (`--legacy-fold-geometry`) and on the folded default (folds spec §7).
 #[test]
 fn salt_case_keeps_walled_closures_on_the_default() {
     // 7e80f2af (`--legacy-fold-geometry`) and the folded default.

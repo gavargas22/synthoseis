@@ -64,7 +64,9 @@ impl FoldStyle {
         match s {
             "similar" => Ok(FoldStyle::Similar),
             "parallel" => Ok(FoldStyle::Parallel),
-            o => Err(format!("--fold-style must be similar or parallel, got {o:?}")),
+            o => Err(format!(
+                "--fold-style must be similar or parallel, got {o:?}"
+            )),
         }
     }
 }
@@ -104,7 +106,10 @@ impl Default for FoldConfig {
 impl FoldConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.cylindrical > 4 {
-            return Err(format!("--folds-cylindrical must be in 0-4, got {}", self.cylindrical));
+            return Err(format!(
+                "--folds-cylindrical must be in 0-4, got {}",
+                self.cylindrical
+            ));
         }
         if self.domes > 6 {
             return Err(format!("--folds-domes must be in 0-6, got {}", self.domes));
@@ -116,7 +121,10 @@ impl FoldConfig {
             return Err(format!("--fold-growth must be in 0-3, got {}", self.growth));
         }
         if !(0.1..=2.0).contains(&self.max_dip) {
-            return Err(format!("--fold-max-dip must be in 0.1-2, got {}", self.max_dip));
+            return Err(format!(
+                "--fold-max-dip must be in 0.1-2, got {}",
+                self.max_dip
+            ));
         }
         if !(self.dz_m.is_finite() && self.dz_m > 0.0) {
             return Err(format!("fold dz must be > 0, got {}", self.dz_m));
@@ -164,7 +172,16 @@ impl Fold {
     /// metres (axial-surface lean).
     pub fn eval(&self, x: f64, y: f64, d: f64) -> (f64, f64, f64) {
         match *self {
-            Fold::Cylindrical { x0, theta, wavelength, amp, phase, tan_plunge, pericline, cot_dip } => {
+            Fold::Cylindrical {
+                x0,
+                theta,
+                wavelength,
+                amp,
+                phase,
+                tan_plunge,
+                pericline,
+                cot_dip,
+            } => {
                 let (c, s) = (theta.cos(), theta.sin());
                 let (dx, dy) = (x - x0[0], y - x0[1]);
                 let sc = dx * c + dy * s - d * cot_dip;
@@ -183,7 +200,15 @@ impl Fold {
                 // s = (dx c + dy s), a = (−dx s + dy c).
                 (f, df_ds * c - df_da * s, df_ds * s + df_da * c)
             }
-            Fold::Dome { x0, theta, sign, amp, ra, rb, cot_dip } => {
+            Fold::Dome {
+                x0,
+                theta,
+                sign,
+                amp,
+                ra,
+                rb,
+                cot_dip,
+            } => {
                 let l = Self::lean_dir(theta);
                 let (cx, cy) = (x0[0] + d * cot_dip * l[0], x0[1] + d * cot_dip * l[1]);
                 let (c, s) = (theta.cos(), theta.sin());
@@ -203,9 +228,18 @@ impl Fold {
     /// amplitude, and the amplitude-independent slope (plunge).
     fn slope_terms(&self) -> (f64, f64) {
         match *self {
-            Fold::Cylindrical { wavelength, pericline, tan_plunge, .. } => {
+            Fold::Cylindrical {
+                wavelength,
+                pericline,
+                tan_plunge,
+                ..
+            } => {
                 let k = TAU / wavelength;
-                let pe = if pericline.is_finite() { (-0.5f64).exp() / pericline } else { 0.0 };
+                let pe = if pericline.is_finite() {
+                    (-0.5f64).exp() / pericline
+                } else {
+                    0.0
+                };
                 ((k * k + pe * pe).sqrt(), tan_plunge.abs())
             }
             Fold::Dome { rb, .. } => ((-0.5f64).exp() / rb, 0.0),
@@ -215,9 +249,17 @@ impl Fold {
     /// Bound of the curvature (1/m) per metre of amplitude.
     fn curvature_term(&self) -> f64 {
         match *self {
-            Fold::Cylindrical { wavelength, pericline, .. } => {
+            Fold::Cylindrical {
+                wavelength,
+                pericline,
+                ..
+            } => {
                 let k = TAU / wavelength;
-                let p = if pericline.is_finite() { 1.0 / pericline } else { 0.0 };
+                let p = if pericline.is_finite() {
+                    1.0 / pericline
+                } else {
+                    0.0
+                };
                 (k + p) * (k + p)
             }
             Fold::Dome { rb, .. } => 1.0 / (rb * rb),
@@ -264,7 +306,10 @@ impl FoldSet {
         let nmax = ni.max(nj).max(1) as f64;
         let nmin = ni.min(nj).max(1) as f64;
         let depth_m = nk as f64 * cfg.dz_m;
-        let centre = [0.5 * (ni as f64 - 1.0).max(0.0) * bin, 0.5 * (nj as f64 - 1.0).max(0.0) * bin];
+        let centre = [
+            0.5 * (ni as f64 - 1.0).max(0.0) * bin,
+            0.5 * (nj as f64 - 1.0).max(0.0) * bin,
+        ];
         let lean = |k: u64| {
             let dip = uni(70.0, 90.0, seed, k, 7).to_radians();
             let sense = if u(seed, k, 8) < 0.5 { -1.0 } else { 1.0 };
@@ -297,7 +342,10 @@ impl FoldSet {
             let ra = (uni(0.10, 0.25, seed, k, 0) * nmin).max(MIN_DOME_RADIUS_COLS);
             let rb = (ra / uni(1.0, 3.0, seed, k, 1)).max(MIN_DOME_RADIUS_COLS);
             folds.push(Fold::Dome {
-                x0: [uni(0.15, 0.85, seed, k, 2) * ni as f64 * bin, uni(0.15, 0.85, seed, k, 3) * nj as f64 * bin],
+                x0: [
+                    uni(0.15, 0.85, seed, k, 2) * ni as f64 * bin,
+                    uni(0.15, 0.85, seed, k, 3) * nj as f64 * bin,
+                ],
                 theta: uni(0.0, PI, seed, k, 4),
                 sign: if u(seed, k, 5) < 0.6 { -1.0 } else { 1.0 },
                 amp: uni(0.03, 0.08, seed, k, 6) * depth_m,
@@ -306,7 +354,11 @@ impl FoldSet {
                 cot_dip: lean(k),
             });
         }
-        let mut set = FoldSet { folds, scaled: 0, cfg: *cfg };
+        let mut set = FoldSet {
+            folds,
+            scaled: 0,
+            cfg: *cfg,
+        };
         set.apply_limits(column_m);
         set
     }
@@ -324,7 +376,10 @@ impl FoldSet {
 
     /// Worst-case curvature (1/m) of the whole field.
     pub fn curvature_bound(&self) -> f64 {
-        self.folds.iter().map(|f| f.amp() * f.curvature_term()).sum()
+        self.folds
+            .iter()
+            .map(|f| f.amp() * f.curvature_term())
+            .sum()
     }
 
     /// §4.3: scale all amplitudes by one factor so the summed dip bound is
@@ -377,7 +432,11 @@ impl FoldSet {
             self.cfg.cylindrical,
             self.cfg.domes,
             self.cfg.style.as_str(),
-            if self.scaled > 0 { format!(" ({} scaled to the dip/curvature limit)", self.scaled) } else { String::new() }
+            if self.scaled > 0 {
+                format!(" ({} scaled to the dip/curvature limit)", self.scaled)
+            } else {
+                String::new()
+            }
         )
     }
 }
@@ -451,14 +510,14 @@ fn normal(set: &FoldSet, x: f64, y: f64) -> (f64, f64, f64) {
     (-fx / n, -fy / n, 1.0 / n)
 }
 
-/// Foot point `(x', y')` with `(x', y') + t n_xy(x', y') = (x, y)`:
-/// fixed-count Newton with a central-difference Jacobian of the analytic
-/// normal. Depth is positive down, so the horizon above `S` is at
-/// `S − t n_z` with `n` pointing down-normal... see [`parallel_offset`].
+/// Foot point `(x', y')` on the reference surface `S` whose point at true
+/// distance `t` above `S` lands on column `(x, y)`. With depth positive
+/// down and `n = (−S_x, −S_y, 1)/N` the downward unit normal ([`normal`]),
+/// that point is `(x', y', S) − t n`, so the solve is
+/// `(x', y') − t n_xy(x', y') = (x, y)`: fixed-count Newton
+/// ([`PARALLEL_NEWTON_ITERS`]) with a central-difference Jacobian of the
+/// analytic normal. Contracts while `t κ < 1` (spec §3.5, §4.3).
 pub fn foot_point(set: &FoldSet, x: f64, y: f64, t: f64) -> (f64, f64) {
-    // Upward normal in (x, y, depth) with depth down: the point above S at
-    // distance t is (x', y', S) − t (−S_x, −S_y, 1)/N = x' + t S_x/N ...
-    // so P_xy = x' − t n_xy with n_xy = −∇S/N as defined in `normal`.
     let (mut px, mut py) = (x, y);
     let h = 1e-3 * set.cfg.bin_m;
     for _ in 0..PARALLEL_NEWTON_ITERS {
@@ -496,7 +555,12 @@ pub fn parallel_offset(set: &FoldSet, x: f64, y: f64, t: f64) -> f64 {
 /// Apply the folds to the f64 stack (deepest first) in place, then clamp
 /// the base below the cube (`z_base ≥ nk + 1`) and every horizon at or
 /// below the seabed. Returns the drawn fold set.
-pub fn apply_folds(stack: &mut [Vec<f64>], seed: u64, shape: [usize; 3], cfg: &FoldConfig) -> FoldSet {
+pub fn apply_folds(
+    stack: &mut [Vec<f64>],
+    seed: u64,
+    shape: [usize; 3],
+    cfg: &FoldConfig,
+) -> FoldSet {
     let [ni, nj, nk] = shape;
     let nh = stack.len();
     let tp = taper(stack, cfg);
@@ -525,7 +589,13 @@ pub fn apply_folds(stack: &mut [Vec<f64>], seed: u64, shape: [usize; 3], cfg: &F
 /// Inverse of [`apply_folds`] for tests: subtract the same shifts (the
 /// clamps are not undone, so the base and seabed-clamped samples are not
 /// restored). `unfolded` is the unfolded stack the taper was taken from.
-pub fn unfold(folded: &mut [Vec<f64>], unfolded_ref: &[Vec<f64>], set: &FoldSet, ni: usize, nj: usize) {
+pub fn unfold(
+    folded: &mut [Vec<f64>],
+    unfolded_ref: &[Vec<f64>],
+    set: &FoldSet,
+    ni: usize,
+    nj: usize,
+) {
     let sh = shifts(set, unfolded_ref, ni, nj);
     for (layer, d) in folded.iter_mut().zip(&sh) {
         for (v, dv) in layer.iter_mut().zip(d) {
