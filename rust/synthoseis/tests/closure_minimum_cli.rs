@@ -6,7 +6,19 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// Run on the 7e80f2af (unfolded) layered geometry: every pin of this file
+/// predates the analytic folds (folds spec §7), so `--legacy-fold-geometry`
+/// is added unless the run already passes it or uses a fold-free geometry.
+/// [`run_folded`] runs the folded default.
 fn run(args: &[&str], store: &Path) -> Output {
+    let mut v: Vec<&str> = args.to_vec();
+    if !args.iter().any(|a| *a == "--legacy-fold-geometry" || *a == "planar" || *a == "--legacy-toy-depth") {
+        v.push("--legacy-fold-geometry");
+    }
+    run_folded(&v, store)
+}
+
+fn run_folded(args: &[&str], store: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_synthoseis"))
         .args(["run", "--e2e", "--chunked"])
         .args(args)
@@ -91,7 +103,10 @@ const MASTER_BAD1DAA8_DEMO: u64 = 0x99e8_6ae5_7a12_b80c;
 /// reproduced with `--legacy-rock-physics`), then `0x37ea_d99d_0f5d_237f`
 /// (722c59af, before the live-oil density fix: B&W eq. 24 ρ_G without a
 /// second temperature correction).
-const SCALED_DEFAULT_DEMO: u64 = 0x39c8_c368_beaa_b05a;
+/// 7e80f2af default, kept under `--legacy-fold-geometry` (folds spec §7).
+const SCALED_DEFAULT_DEMO_7E80: u64 = 0x39c8_c368_beaa_b05a;
+/// Folded default (analytic folds): moves labels, closures and stacks.
+const SCALED_DEFAULT_DEMO: u64 = 0xf0ef_3fe6_6dc6_f537;
 const SCALED_DEFAULT_DEMO_7713: u64 = 0x2296_0b5b_2e8b_c16c;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte
@@ -146,9 +161,24 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
     assert_ne!(volume_bits(&new), volume_bits(&legacy));
     assert_eq!(
         store_dir_hash(&new),
-        SCALED_DEFAULT_DEMO,
+        SCALED_DEFAULT_DEMO_7E80,
         "{:#018x}",
         store_dir_hash(&new)
+    );
+    // Folded default (folds spec §7): one more compartment over the folds.
+    let folded = dir.path().join("folded.mdio");
+    let out = run_folded(DEMO, &folded);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .contains("closures: minimum 20 voxels (scaled ni·nj/180, floor 20, cap 500), kept 2 of 4 compartments\n"),
+        "{out:?}"
+    );
+    assert_eq!(
+        store_dir_hash(&folded),
+        SCALED_DEFAULT_DEMO,
+        "{:#018x}",
+        store_dir_hash(&folded)
     );
     let rp = dir.path().join("legacy-rp.mdio");
     assert!(run(&[DEMO, &["--legacy-rock-physics", "--legacy-fold-geometry"]].concat(), &rp)
@@ -196,6 +226,7 @@ fn min_closure_voxels_equals_library_fixed() {
         rock_physics: synthoseis_core::RockPhysicsConfig {
             sand_layer_fraction: Some(0.4),
             closure_minimum: synthoseis_core::ClosureMinimum::Fixed(100),
+            legacy_fold_geometry: true,
             ..Default::default()
         },
         ..Default::default()
@@ -435,6 +466,7 @@ fn summary_closure_counter_matches_model_unsegmented_and_per_layer() {
                 closures_unsegmented: mode == "--closures-unsegmented",
                 closures_per_layer: mode == "--closures-per-layer",
                 closure_minimum: m,
+                legacy_fold_geometry: true,
                 ..Default::default()
             },
             ..Default::default()

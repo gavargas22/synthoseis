@@ -291,7 +291,9 @@ const PHYSICAL_7713: &[(&str, u64)] = &[
 /// The live-oil density fix (B&W eq. 24, review N2) moved the three cubes
 /// with oil sand in their output: demo 0x37ea_d99d_0f5d_237f, salt
 /// 0x025f_70e0_4dd2_e002, whole 0x50fb_60e9_181e_ba38 at 722c59af.
-const PHYSICAL: &[(&str, u64)] = &[
+/// Master 7e80f2af default (before the analytic folds); reproduced with
+/// `--legacy-fold-geometry` on every path (folds spec §6 / §8 test 6).
+const PHYSICAL_7E80: &[(&str, u64)] = &[
     ("bplat", 0x01b6_3fdb_55ff_a3da),
     ("bplatnoise", 0x1fd5_9170_b12c_6dc8),
     ("demo", 0x39c8_c368_beaa_b05a),
@@ -310,6 +312,29 @@ const PHYSICAL: &[(&str, u64)] = &[
     ("stream", 0x7cca_1e5a_9780_091c),
     ("strips", 0x9fb2_5dea_a619_a57e),
     ("whole", 0x383a_35e4_b1f8_4ae6),
+];
+
+/// The default with the analytic folds (folds spec §7, moved: labels and
+/// stacks follow the folded horizons).
+const PHYSICAL: &[(&str, u64)] = &[
+    ("bplat", 0x3d38_0dbf_d8f0_7a51),
+    ("bplatnoise", 0xa738_98a6_71b1_73e8),
+    ("demo", 0xf0ef_3fe6_6dc6_f537),
+    ("dt2lin", 0x579a_9329_084a_2777),
+    ("keep", 0x9042_5bb7_4057_9c11),
+    ("many_a0", 0x9e87_bbfc_529e_067a),
+    ("many_a15", 0xa2ee_2025_035b_edf3),
+    ("many_a30", 0xe796_7096_cbdb_dc2c),
+    ("mp", 0x7156_e4a0_83d3_5175),
+    ("mpk", 0x2894_d9b9_b55e_bbfe),
+    ("noise", 0xaa9c_5d05_a48e_6f67),
+    ("overlap", 0x5007_871e_518d_c33b),
+    ("rich", 0xa4b5_da54_4d7b_49a1),
+    ("salt", 0x0881_74b7_9b54_46de),
+    ("single", 0xa2ee_2025_035b_edf3),
+    ("stream", 0xa2ee_2025_035b_edf3),
+    ("strips", 0x7156_e4a0_83d3_5175),
+    ("whole", 0xd5ac_a022_6d98_70e1),
 ];
 
 const SUMMARY_PHYSICAL: &str =
@@ -364,19 +389,18 @@ fn run_cases(dir: &Path, extra: &[&str], summary: &str, attr: Option<&str>) -> V
 }
 
 fn check(got: &[(String, u64)], want: &[(&str, u64)], what: &str) {
-    assert_eq!(got.len(), want.len());
     let mut bad = Vec::new();
     for (name, h) in got {
-        let w = want
-            .iter()
-            .find(|(n, _)| n == name)
-            .unwrap_or_else(|| panic!("{name}: no pin"))
-            .1;
+        let Some(&(_, w)) = want.iter().find(|(n, _)| n == name) else {
+            bad.push(format!("    (\"{name}\", {h:#018x}), // no pin"));
+            continue;
+        };
         if *h != w {
             bad.push(format!("{name}: {h:#018x} (pinned {w:#018x})"));
         }
     }
     assert!(bad.is_empty(), "{what}:\n{}", bad.join("\n"));
+    assert_eq!(got.len(), want.len());
 }
 
 /// §7.7: `--legacy-filter-edges` reproduces master 1c22b653 bit for bit
@@ -439,7 +463,21 @@ fn physical_filter_edges_default_pins() {
         assert_ne!(*h, old, "{name}: the default moves");
         let old = PHYSICAL_7713.iter().find(|(n, _)| n == name).unwrap().1;
         assert_ne!(*h, old, "{name}: the physical rock physics moves it");
+        let old = PHYSICAL_7E80.iter().find(|(n, _)| n == name).unwrap().1;
+        assert_ne!(*h, old, "{name}: the folds move it");
     }
+}
+
+/// Folds spec §6 / §8 test 6: `--legacy-fold-geometry` reproduces master
+/// 7e80f2af byte for byte (every array and attribute) on every path
+/// (classic single, streaming, overlap, strips, multi-process with and
+/// without k-chunks, geometry-once angles), for every filter chain, whole
+/// and partial voxels, salt and faults.
+#[test]
+fn legacy_fold_geometry_reproduces_7e80f2af_on_every_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let got = run_cases(dir.path(), &["--legacy-fold-geometry"], SUMMARY_PHYSICAL, Some("physical"));
+    check(&got, PHYSICAL_7E80, "--legacy-fold-geometry vs master 7e80f2af");
 }
 
 /// Gassmann spec §6 / §8 test 7: `--legacy-rock-physics` reproduces master

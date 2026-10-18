@@ -119,9 +119,16 @@ const TIME_RICH_7713: u64 = 0x0d20_ed82_22ad_ea6d;
 const TIME_MP_7713: u64 = 0x252f_e055_c471_f1b3;
 // The time-mode default with the physical rock physics (gassmann spec §7,
 // moved: two-way time and reflectivity follow the new Vp, Vs, rho).
-const TIME_PLAIN: u64 = 0x1cba_f3cc_574a_a4d6;
-const TIME_RICH: u64 = 0x61d5_eb6b_de70_e4a0;
-const TIME_MP: u64 = 0x7398_8c15_739a_69f7;
+// Master 7e80f2af (physical rock physics, unfolded layered geometry);
+// reproduced with `--legacy-fold-geometry` (folds spec §7).
+const TIME_PLAIN_7E80: u64 = 0x1cba_f3cc_574a_a4d6;
+const TIME_RICH_7E80: u64 = 0x61d5_eb6b_de70_e4a0;
+const TIME_MP_7E80: u64 = 0x7398_8c15_739a_69f7;
+// The time-mode default with the analytic folds (folds spec §7, moved:
+// labels, time and reflectivity follow the folded horizons).
+const TIME_PLAIN: u64 = 0x7ee7_dcd7_c1ef_67bb;
+const TIME_RICH: u64 = 0xa82a_7f57_9702_ea12;
+const TIME_MP: u64 = 0x111e_77b5_144d_b4fd;
 
 #[test]
 fn legacy_depth_as_time_reproduces_master_f3720fb2() {
@@ -132,13 +139,13 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
             "plain",
             PLAIN,
             MASTERD2T_PLAIN,
-            Some((TIME_PLAIN, TIME_PLAIN_7713, TIME_PLAIN_1C22)),
+            Some((TIME_PLAIN, TIME_PLAIN_7E80, TIME_PLAIN_7713, TIME_PLAIN_1C22)),
         ),
         (
             "rich",
             RICH,
             MASTERD2T_RICH,
-            Some((TIME_RICH, TIME_RICH_7713, TIME_RICH_1C22)),
+            Some((TIME_RICH, TIME_RICH_7E80, TIME_RICH_7713, TIME_RICH_1C22)),
         ),
         (
             "rich-trailing",
@@ -150,7 +157,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
             "mp",
             MP,
             MASTERD2T_MP,
-            Some((TIME_MP, TIME_MP_7713, TIME_MP_1C22)),
+            Some((TIME_MP, TIME_MP_7E80, TIME_MP_7713, TIME_MP_1C22)),
         ),
     ] {
         let legacy = dir.path().join(format!("{name}-legacy.mdio"));
@@ -183,7 +190,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
             assert!(attrs.get(k).is_none(), "{name}: legacy store has {k}");
         }
         assert_eq!(s.config().digi, 4.0);
-        let Some((time, time_7713, time_1c22)) = time else {
+        let Some((time, time_7e80, time_7713, time_1c22)) = time else {
             continue;
         };
         let default = dir.path().join(format!("{name}-time.mdio"));
@@ -199,6 +206,15 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
             time, master,
             "{name}: time mode must differ from the legacy axis"
         );
+        let lf = dir.path().join(format!("{name}-time-7e80.mdio"));
+        let out = run(&with(base, &["--legacy-fold-geometry"]), &lf);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert_eq!(
+            store_hash(&lf),
+            time_7e80,
+            "{name}: --legacy-fold-geometry vs master 7e80f2af"
+        );
+        assert_ne!(time, time_7e80, "{name}: folds move the stack");
         let rp = dir.path().join(format!("{name}-time-7713.mdio"));
         let out = run(&with(base, &["--legacy-rock-physics", "--legacy-fold-geometry"]), &rp);
         assert!(out.status.success(), "{name}: {out:?}");
@@ -460,7 +476,10 @@ fn invalid_time_flags_exit_2() {
 /// only; the library test `time_mode_fault_salt_mask_removed_count_every_path`
 /// covers the other writers.)
 /// Fault ∩ salt voxels removed in time mode, seed 7, physical default.
+/// Folded default (folds spec §7): 71, the same count as 7e80f2af
+/// (`PHYS_MASKED_7E80`, `--legacy-fold-geometry`), with different voxels.
 const PHYS_MASKED: usize = 71;
+const PHYS_MASKED_7E80: usize = 71;
 
 #[test]
 fn fault_label_salt_mask_in_time_mode() {
@@ -491,6 +510,13 @@ fn fault_label_salt_mask_in_time_mode() {
     // follow Vp, so the physical default moves it (gassmann spec §7).
     assert!(
         stdout(&out).contains(&format!("masked_in_salt={PHYS_MASKED} ")),
+        "{}",
+        stdout(&out)
+    );
+    let out = run(&with(FAULTED7, &["--legacy-fold-geometry"]), &dir.path().join("legacy-fold.mdio"));
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        stdout(&out).contains(&format!("masked_in_salt={PHYS_MASKED_7E80} ")),
         "{}",
         stdout(&out)
     );

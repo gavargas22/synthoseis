@@ -84,9 +84,18 @@ const MP: &[&str] = &[
 // `DEFAULT_*` and `WHOLE_*` moved again with the physical rock physics
 // (gassmann spec §7); master 77131867's values are `*_7713` and are
 // reproduced with `--legacy-rock-physics`.
-const DEFAULT_PLAIN: u64 = 0xda29_ca4c_fa9b_a276;
-const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0x8033_d531_528f_a878;
-const DEFAULT_MP: u64 = 0xf054_6bf3_765d_4902;
+//
+// `DEFAULT_*` and `WHOLE_*` moved again with the analytic folds (folds spec
+// §7); master 7e80f2af's values are `*_7E80` and are reproduced with
+// `--legacy-fold-geometry`.
+const DEFAULT_PLAIN: u64 = 0x44bf_3698_d16d_a3d6;
+const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0x6f0c_0571_62b1_2e92;
+const DEFAULT_MP: u64 = 0xc112_78b0_86f7_37bb;
+const DEFAULT_PLAIN_7E80: u64 = 0xda29_ca4c_fa9b_a276;
+const DEFAULT_PLAIN_LEGACY_AXIS_7E80: u64 = 0x8033_d531_528f_a878;
+const DEFAULT_MP_7E80: u64 = 0xf054_6bf3_765d_4902;
+const WHOLE_PLAIN_7E80: u64 = 0x3546_0607_cdc9_7b13;
+const WHOLE_MP_7E80: u64 = 0xbe7e_6b4e_d66e_e92c;
 const DEFAULT_PLAIN_7713: u64 = 0xd59f_0b05_6072_4ef4;
 const DEFAULT_PLAIN_LEGACY_AXIS_7713: u64 = 0x526a_50f7_562b_04f3;
 const DEFAULT_MP_7713: u64 = 0xcf00_54b2_6533_c33a;
@@ -95,8 +104,8 @@ const WHOLE_MP_7713: u64 = 0x91c3_c68d_c372_80f1;
 const DEFAULT_PLAIN_A60E: u64 = 0xc5f1_6ffa_eed0_333e;
 const DEFAULT_PLAIN_LEGACY_AXIS_A60E: u64 = 0xa2f4_7082_3b85_5563;
 const DEFAULT_MP_A60E: u64 = 0x91c3_c68d_c372_80f1;
-const WHOLE_PLAIN: u64 = 0x3546_0607_cdc9_7b13;
-const WHOLE_MP: u64 = 0xbe7e_6b4e_d66e_e92c;
+const WHOLE_PLAIN: u64 = 0x9b73_f8c5_342d_82f0;
+const WHOLE_MP: u64 = 0xe94f_c577_84e8_d2e5;
 const DEFAULT_PLAIN_1C22: u64 = 0x82bf_e625_85ee_8c92;
 const DEFAULT_MP_1C22: u64 = 0x28e5_1787_5502_bb1d;
 const WHOLE_PLAIN_1C22: u64 = 0x6420_9caa_660f_d978;
@@ -149,6 +158,23 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
         assert_eq!(attrs(&d)["voxel_model"], "partial-z", "{name}");
         assert_eq!(attrs(&d)["partial_voxel_reflectivity"], mode, "{name}");
         assert_eq!(store_hash(&d), pinned, "{name}: new default {:#018x}", store_hash(&d));
+        // `--legacy-fold-geometry` restores master 7e80f2af's default.
+        let (d7e80, w7e80) = match name {
+            "time" => (DEFAULT_PLAIN_7E80, Some(WHOLE_PLAIN_7E80)),
+            "legacy-axis" => (DEFAULT_PLAIN_LEGACY_AXIS_7E80, None),
+            _ => (DEFAULT_MP_7E80, Some(WHOLE_MP_7E80)),
+        };
+        let r = dir.path().join(format!("{name}-legacy-fold.mdio"));
+        let out = run(&with(&base, &["--legacy-fold-geometry"]), &r);
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(stdout(&out).contains("folds: off (--legacy-fold-geometry)\n"), "{name}");
+        assert_eq!(store_hash(&r), d7e80, "{name}: --legacy-fold-geometry = 7e80f2af");
+        assert_ne!(store_hash(&r), store_hash(&d), "{name}: the folds move the default");
+        if let Some(w) = w7e80 {
+            let r = dir.path().join(format!("{name}-legacy-fold-whole.mdio"));
+            assert!(run(&with(&base, &["--legacy-fold-geometry", "--legacy-whole-voxels"]), &r).status.success());
+            assert_eq!(store_hash(&r), w, "{name}: --legacy-fold-geometry --legacy-whole-voxels = 7e80f2af");
+        }
         // `--legacy-rock-physics` restores master 77131867's default.
         let (d7713, w7713) = match name {
             "time" => (DEFAULT_PLAIN_7713, Some(WHOLE_PLAIN_7713)),

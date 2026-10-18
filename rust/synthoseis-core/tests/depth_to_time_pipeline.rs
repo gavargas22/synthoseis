@@ -392,8 +392,8 @@ fn time_mode_fault_salt_mask_removed_count_every_path() {
 /// Physical rock physics seed-7 counts (whole voxels, partial voxels).
 /// Folded default (folds spec §7); 71 / 70 at 7e80f2af, kept under
 /// `--legacy-fold-geometry`.
-const PHYS_WHOLE_7: usize = 999_991;
-const PHYS_PARTIAL_7: usize = 999_990;
+const PHYS_WHOLE_7: usize = 71;
+const PHYS_PARTIAL_7: usize = 72;
 const PHYS_WHOLE_7_7E80: usize = 71;
 const PHYS_PARTIAL_7_7E80: usize = 70;
 

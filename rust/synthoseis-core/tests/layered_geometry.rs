@@ -246,9 +246,12 @@ fn default_demo_cube_goldens() {
     assert_eq!(fnv(p.labels.iter().copied()), LAYERED_LABELS);
     assert_eq!(ah(&w.angle_stack), LAYERED_STACK15_SCALED);
     assert_eq!(ah(&p.angle_stack), LAYERED_STACK15_PV_SCALED);
-    // Physical rock physics (default): labels unchanged, both stacks move.
-    let (w, _) = generate_chunked(&whole(&phys));
-    let (p, _) = generate_chunked(&phys);
+    // Physical rock physics (7e80f2af default, kept under
+    // `--legacy-fold-geometry`): labels unchanged, both stacks move.
+    let mut phys7e80 = phys.clone();
+    phys7e80.rock_physics.legacy_fold_geometry = true;
+    let (w, _) = generate_chunked(&whole(&phys7e80));
+    let (p, _) = generate_chunked(&phys7e80);
     eprintln!(
         "physical: whole {:#018x} partial {:#018x}",
         ah(&w.angle_stack),
@@ -258,7 +261,25 @@ fn default_demo_cube_goldens() {
     assert_eq!(fnv(p.labels.iter().copied()), LAYERED_LABELS);
     assert_eq!(ah(&w.angle_stack), LAYERED_STACK15_PHYSICAL);
     assert_eq!(ah(&p.angle_stack), LAYERED_STACK15_PV_PHYSICAL);
+    // Analytic folds (default, folds spec §7): labels and both stacks move.
+    let (w, _) = generate_chunked(&whole(&phys));
+    let (p, _) = generate_chunked(&phys);
+    eprintln!(
+        "folded: labels {:#018x} whole {:#018x} partial {:#018x}",
+        fnv(w.labels.iter().copied()),
+        ah(&w.angle_stack),
+        ah(&p.angle_stack)
+    );
+    assert_eq!(fnv(w.labels.iter().copied()), LAYERED_LABELS_FOLDED);
+    assert_eq!(fnv(p.labels.iter().copied()), LAYERED_LABELS_FOLDED);
+    assert_eq!(ah(&w.angle_stack), LAYERED_STACK15_FOLDED);
+    assert_eq!(ah(&p.angle_stack), LAYERED_STACK15_PV_FOLDED);
 }
+
+/// Folded default of the 64×64×128 seed-7 demo (folds spec §7).
+const LAYERED_LABELS_FOLDED: u64 = 0xe781_6a7d_864d_b339;
+const LAYERED_STACK15_FOLDED: u64 = 0x616b_6e56_27b4_3113;
+const LAYERED_STACK15_PV_FOLDED: u64 = 0x2459_daff_d362_a243;
 
 /// Physical rock physics defaults (gassmann spec), whole / partial voxels.
 /// 722c59af pins before the live-oil density fix (review N2):

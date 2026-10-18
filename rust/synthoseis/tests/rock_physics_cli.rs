@@ -242,7 +242,7 @@ fn legacy_zoeppritz_flag_reproduces_master_33a3a93_stores() {
                     "--legacy-zoeppritz",
                     "--toy-geometry",
                     "planar",
-                    "--legacy-rock-physics", "--legacy-fold-geometry",
+                    "--legacy-rock-physics",
                 ],
             ),
             &legacy,
