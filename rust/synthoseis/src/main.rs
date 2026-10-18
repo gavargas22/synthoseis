@@ -1334,6 +1334,22 @@ mod tests {
                 "--shale-phi0",
                 "0.6",
             ][..],
+            &["--legacy-fold-geometry"][..],
+            &["--legacy-fold-geometry", "--legacy-rock-physics", "--salt-legacy-vs"][..],
+            &[
+                "--fold-style",
+                "parallel",
+                "--folds-cylindrical",
+                "2",
+                "--folds-domes",
+                "0",
+                "--bin-m",
+                "25",
+                "--fold-growth",
+                "0.5",
+                "--fold-max-dip",
+                "1.5",
+            ][..],
         ] {
             let (rock, geometry, time) = rebuild_from_argv(&argv(extra));
             let mut worker = argv(&[]);
@@ -1369,12 +1385,25 @@ mod tests {
                 back.0.phys, rock.phys,
                 "{extra:?}: physical parameters in the worker config"
             );
+            let fold_flag = |a: &str| a.starts_with("--fold") || a == "--bin-m";
             let params = extra.iter().any(|a| {
                 a.starts_with("--")
                     && !a.starts_with("--legacy")
                     && !a.starts_with("--salt")
                     && *a != "--no-salt"
+                    && !fold_flag(a)
             });
+            assert_eq!(
+                back.0.legacy_fold_geometry,
+                extra.contains(&"--legacy-fold-geometry"),
+                "{extra:?}: --legacy-fold-geometry in the worker config"
+            );
+            assert_eq!(back.0.fold, rock.fold, "{extra:?}: fold config in the worker config");
+            assert_eq!(
+                rock.fold != synthoseis_core::FoldConfig::default(),
+                extra.iter().any(|a| fold_flag(a)),
+                "{extra:?}: fold flags parsed"
+            );
             assert_eq!(
                 rock.phys != synthoseis_core::PhysParams::default(),
                 params,
