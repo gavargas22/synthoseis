@@ -42,6 +42,8 @@ pub const PARALLEL_CURVATURE_LIMIT: f64 = 0.8;
 /// Newton iterations of the parallel-style foot-point solve (fixed count,
 /// so the result is bit-reproducible).
 pub const PARALLEL_NEWTON_ITERS: usize = 8;
+/// Fixed bisection steps of the shared amplitude factor (§4.3 dip limit).
+pub const LIMIT_BISECTION_ITERS: usize = 48;
 
 /// Fold style (spec §3.4 / §3.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -85,7 +87,8 @@ pub struct FoldConfig {
     pub dz_m: f64,
     /// Growth exponent q (0-3, D3).
     pub growth: f64,
-    /// Maximum dip in samples per column (0.1-2, D7).
+    /// Maximum dip of the added folds in samples per column (0.1-2, D7;
+    /// default 2), checked against the measured slope on the grid.
     pub max_dip: f64,
 }
 
@@ -98,7 +101,7 @@ impl Default for FoldConfig {
             bin_m: 12.5,
             dz_m: crate::toy_geometry::GEOMETRY_DIGI_M,
             growth: 1.0,
-            max_dip: 1.0,
+            max_dip: 2.0,
         }
     }
 }
@@ -224,8 +227,25 @@ impl Fold {
         }
     }
 
+    /// Gradient `(∂F/∂x, ∂F/∂y)` split into the amplitude-proportional part
+    /// and the plunge part (independent of amplitude).
+    fn grad_split(&self, x: f64, y: f64, d: f64) -> ([f64; 2], [f64; 2]) {
+        let (_, gx, gy) = self.eval(x, y, d);
+        match *self {
+            Fold::Cylindrical {
+                theta, tan_plunge, ..
+            } => {
+                let (c, s) = (theta.cos(), theta.sin());
+                let p = [-s * tan_plunge, c * tan_plunge];
+                ([gx - p[0], gy - p[1]], p)
+            }
+            Fold::Dome { .. } => ([gx, gy], [0.0, 0.0]),
+        }
+    }
+
     /// Bound of the amplitude-proportional slope (m/m) per metre of
-    /// amplitude, and the amplitude-independent slope (plunge).
+    /// amplitude, and the amplitude-independent slope (plunge). Kept for
+    /// the old summed-bound diagnostic ([`FoldSet::dip_bound`]).
     fn slope_terms(&self) -> (f64, f64) {
         match *self {
             Fold::Cylindrical {
@@ -285,6 +305,12 @@ pub struct FoldSet {
     pub folds: Vec<Fold>,
     /// Folds whose amplitude was scaled down to a §4.3 limit.
     pub scaled: usize,
+    /// The one factor all amplitudes were scaled by (1 = unscaled).
+    pub factor: f64,
+    /// Measured largest |slope| of the added folds on the grid, samples per
+    /// column, before and after the limit (see [`FoldSet::measured_dip`]).
+    pub dip_before: f64,
+    pub dip_after: f64,
     pub cfg: FoldConfig,
 }
 
@@ -298,9 +324,10 @@ fn uni(lo: f64, hi: f64, seed: u64, k: u64, p: u64) -> f64 {
 
 impl FoldSet {
     /// Draw the folds of a cube (spec §5) and apply the §4.3 limits.
-    /// `column_m` is the true thickness of the folded column (base to
+    /// `tp` is the [`taper`] of the unfolded stack (burial and growth taper
+    /// per horizon, deepest first); `tp[0].0` is the folded column (base to
     /// seabed, metres) used by the parallel-style curvature limit.
-    pub fn draw(seed: u64, shape: [usize; 3], cfg: &FoldConfig, column_m: f64) -> Self {
+    pub fn draw(seed: u64, shape: [usize; 3], cfg: &FoldConfig, tp: &[(f64, f64)]) -> Self {
         let [ni, nj, nk] = shape;
         let bin = cfg.bin_m;
         let nmax = ni.max(nj).max(1) as f64;
@@ -357,13 +384,18 @@ impl FoldSet {
         let mut set = FoldSet {
             folds,
             scaled: 0,
+            factor: 1.0,
+            dip_before: 0.0,
+            dip_after: 0.0,
             cfg: *cfg,
         };
-        set.apply_limits(column_m);
+        set.apply_limits(shape, tp);
         set
     }
 
-    /// Worst-case dip of the whole field in samples per column (τ_base = 1).
+    /// Old summed per-fold bound of the dip (samples per column, τ = 1):
+    /// Σ peak slopes. Conservative (the peaks rarely coincide); kept only as
+    /// a diagnostic, the limit uses [`FoldSet::measured_dip`].
     pub fn dip_bound(&self) -> f64 {
         let (mut a, mut c) = (0.0, 0.0);
         for f in &self.folds {
@@ -382,21 +414,89 @@ impl FoldSet {
             .sum()
     }
 
-    /// §4.3: scale all amplitudes by one factor so the summed dip bound is
-    /// at most `max_dip`, and (parallel) `column_m · κ ≤ 0.8`. Scaling
-    /// keeps every draw.
-    fn apply_limits(&mut self, column_m: f64) {
-        let ratio = self.cfg.dz_m / self.cfg.bin_m;
-        let budget = self.cfg.max_dip * ratio;
-        let (mut a, mut c) = (0.0, 0.0);
-        for f in &self.folds {
-            let (g, k) = f.slope_terms();
-            a += f.amp() * g;
-            c += k;
+    /// Slope samples of the added folds on the grid: per point the
+    /// amplitude part `A` and plunge part `P` of `τ ∇F` (the slope at
+    /// amplitude factor `f` is `|f A + P|`). Similar: every folded horizon
+    /// at its burial (lean) and taper; parallel: the reference surface
+    /// (`d = 0`, τ = 1), which the offset horizons follow.
+    fn slope_samples(&self, shape: [usize; 3], tp: &[(f64, f64)]) -> Vec<[f64; 4]> {
+        let [ni, nj, _] = shape;
+        let bin = self.cfg.bin_m;
+        let levels: Vec<(f64, f64)> = match self.cfg.style {
+            FoldStyle::Similar => tp
+                .iter()
+                .take(tp.len().saturating_sub(1))
+                .filter(|(_, t)| *t > 0.0)
+                .copied()
+                .collect(),
+            FoldStyle::Parallel => vec![(0.0, 1.0)],
+        };
+        let mut out = Vec::with_capacity(levels.len() * ni * nj);
+        for &(d, t) in &levels {
+            for i in 0..ni {
+                for j in 0..nj {
+                    let (x, y) = (i as f64 * bin, j as f64 * bin);
+                    let mut v = [0.0; 4];
+                    for f in &self.folds {
+                        let (a, p) = f.grad_split(x, y, d);
+                        v[0] += t * a[0];
+                        v[1] += t * a[1];
+                        v[2] += t * p[0];
+                        v[3] += t * p[1];
+                    }
+                    out.push(v);
+                }
+            }
         }
+        out
+    }
+
+    fn max_slope(samples: &[[f64; 4]], f: f64) -> f64 {
+        samples
+            .iter()
+            .map(|v| (f * v[0] + v[2]).hypot(f * v[1] + v[3]))
+            .fold(0.0, f64::max)
+    }
+
+    /// Measured largest |slope| of the added folds (fold 0, the dome and
+    /// tilt of the unfolded stack, is not included), samples per column,
+    /// from the analytic gradient on the grid.
+    pub fn measured_dip(&self, shape: [usize; 3], tp: &[(f64, f64)]) -> f64 {
+        Self::max_slope(&self.slope_samples(shape, tp), 1.0) * self.cfg.bin_m / self.cfg.dz_m
+    }
+
+    /// §4.3 (review fix): scale all amplitudes by one factor so the measured
+    /// largest |slope| of the summed fields on the grid is at most
+    /// `max_dip` samples per column, and (parallel) the curvature bound
+    /// `column_m · κ ≤ 0.8`. Plunge is not proportional to amplitude, so
+    /// the factor comes from a fixed-count bisection
+    /// ([`LIMIT_BISECTION_ITERS`]) of the convex `max |f A + P|`, rounded
+    /// down. Scaling keeps every draw.
+    ///
+    /// The parallel bound uses the full column `tp[0]` (base to seabed):
+    /// correct, and conservative for the shallower horizons.
+    fn apply_limits(&mut self, shape: [usize; 3], tp: &[(f64, f64)]) {
+        let column_m = tp.first().map_or(0.0, |v| v.0);
+        let to_samples = self.cfg.bin_m / self.cfg.dz_m;
+        let budget = self.cfg.max_dip / to_samples;
+        let samples = self.slope_samples(shape, tp);
+        let g1 = Self::max_slope(&samples, 1.0);
+        self.dip_before = g1 * to_samples;
         let mut factor = 1.0f64;
-        if a + c > budget && a > 0.0 {
-            factor = ((budget - c) / a).max(0.0);
+        if g1 > budget {
+            let (mut lo, mut hi) = (0.0f64, 1.0f64);
+            if Self::max_slope(&samples, 0.0) > budget {
+                hi = 0.0;
+            }
+            for _ in 0..LIMIT_BISECTION_ITERS {
+                let mid = 0.5 * (lo + hi);
+                if Self::max_slope(&samples, mid) <= budget {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            factor = lo;
         }
         if self.cfg.style == FoldStyle::Parallel && column_m > 0.0 {
             let kappa = self.curvature_bound();
@@ -411,7 +511,9 @@ impl FoldSet {
                     self.scaled += 1;
                 }
             }
+            self.factor = factor;
         }
+        self.dip_after = Self::max_slope(&samples, self.factor) * to_samples;
     }
 
     /// `(F, ∂F/∂x, ∂F/∂y)` of the total field, metres.
@@ -433,7 +535,7 @@ impl FoldSet {
             self.cfg.domes,
             self.cfg.style.as_str(),
             if self.scaled > 0 {
-                format!(" ({} scaled to the dip/curvature limit)", self.scaled)
+                format!(" (all folds scaled by {:.3} to the dip/curvature limit)", self.factor)
             } else {
                 String::new()
             }
@@ -516,7 +618,8 @@ fn normal(set: &FoldSet, x: f64, y: f64) -> (f64, f64, f64) {
 /// that point is `(x', y', S) − t n`, so the solve is
 /// `(x', y') − t n_xy(x', y') = (x, y)`: fixed-count Newton
 /// ([`PARALLEL_NEWTON_ITERS`]) with a central-difference Jacobian of the
-/// analytic normal. Contracts while `t κ < 1` (spec §3.5, §4.3).
+/// analytic normal (the spec asks for the analytic Hessian; the central
+/// difference, step 1e-3 bin, is used instead). Contracts while `t κ < 1` (spec §3.5, §4.3).
 pub fn foot_point(set: &FoldSet, x: f64, y: f64, t: f64) -> (f64, f64) {
     let (mut px, mut py) = (x, y);
     let h = 1e-3 * set.cfg.bin_m;
@@ -564,7 +667,7 @@ pub fn apply_folds(
     let [ni, nj, nk] = shape;
     let nh = stack.len();
     let tp = taper(stack, cfg);
-    let set = FoldSet::draw(seed, shape, cfg, tp[0].0);
+    let set = FoldSet::draw(seed, shape, cfg, &tp);
     if nh < 2 || set.folds.is_empty() {
         return set;
     }

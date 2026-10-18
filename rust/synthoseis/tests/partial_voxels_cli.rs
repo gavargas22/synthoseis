@@ -88,8 +88,8 @@ const MP: &[&str] = &[
 // `DEFAULT_*` and `WHOLE_*` moved again with the analytic folds (folds spec
 // §7); master 7e80f2af's values are `*_7E80` and are reproduced with
 // `--legacy-fold-geometry`.
-const DEFAULT_PLAIN: u64 = 0x44bf_3698_d16d_a3d6;
-const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0x6f0c_0571_62b1_2e92;
+const DEFAULT_PLAIN: u64 = 0xa50f_4bfa_7724_ad01;
+const DEFAULT_PLAIN_LEGACY_AXIS: u64 = 0xac88_b6e9_d9da_fb24;
 const DEFAULT_MP: u64 = 0xc112_78b0_86f7_37bb;
 const DEFAULT_PLAIN_7E80: u64 = 0xda29_ca4c_fa9b_a276;
 const DEFAULT_PLAIN_LEGACY_AXIS_7E80: u64 = 0x8033_d531_528f_a878;
@@ -104,7 +104,7 @@ const WHOLE_MP_7713: u64 = 0x91c3_c68d_c372_80f1;
 const DEFAULT_PLAIN_A60E: u64 = 0xc5f1_6ffa_eed0_333e;
 const DEFAULT_PLAIN_LEGACY_AXIS_A60E: u64 = 0xa2f4_7082_3b85_5563;
 const DEFAULT_MP_A60E: u64 = 0x91c3_c68d_c372_80f1;
-const WHOLE_PLAIN: u64 = 0x9b73_f8c5_342d_82f0;
+const WHOLE_PLAIN: u64 = 0x3df7_8a73_2d58_4380;
 const WHOLE_MP: u64 = 0xe94f_c577_84e8_d2e5;
 const DEFAULT_PLAIN_1C22: u64 = 0x82bf_e625_85ee_8c92;
 const DEFAULT_MP_1C22: u64 = 0x28e5_1787_5502_bb1d;

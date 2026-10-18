@@ -49,7 +49,7 @@ fn config(
     fraction: Option<f64>,
     thickness: f64,
 ) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         geometry: ToyGeometry::Layered,
         seed,

@@ -325,12 +325,12 @@ const ROUND_WANT_7E80: usize = 144;
 const ROUND_FACES_7E80: [usize; 3] = [31, 32, 34];
 const SMOOTH_WANT_7E80: usize = 153;
 const SMOOTH_FACES_7E80: [usize; 3] = [31, 33, 34];
-const PHYS_WANT: usize = 147;
-const PHYS_FACES: [usize; 3] = [32, 32, 34];
-const ROUND_WANT: usize = 145;
-const ROUND_FACES: [usize; 3] = [31, 32, 34];
-const SMOOTH_WANT: usize = 153;
-const SMOOTH_FACES: [usize; 3] = [31, 30, 34];
+const PHYS_WANT: usize = 145;
+const PHYS_FACES: [usize; 3] = [31, 32, 35];
+const ROUND_WANT: usize = 144;
+const ROUND_FACES: [usize; 3] = [31, 31, 35];
+const SMOOTH_WANT: usize = 155;
+const SMOOTH_FACES: [usize; 3] = [31, 32, 36];
 fn fault_salt_across_chunk_edges(cfg: E2eConfig, want: usize, faces: [usize; 3]) {
     let m = mask_cubes(&cfg);
     let removed = assert_mask_removes_overlap("seed 4 output labels", &m.masked, &m.through, &m.salt);
@@ -409,8 +409,8 @@ fn time_mode_fault_salt_mask_removed_count_every_path() {
 /// Physical rock physics seed-7 counts (whole voxels, partial voxels).
 /// Folded default (folds spec §7); 71 / 70 at 7e80f2af, kept under
 /// `--legacy-fold-geometry`.
-const PHYS_WHOLE_7: usize = 71;
-const PHYS_PARTIAL_7: usize = 72;
+const PHYS_WHOLE_7: usize = 70;
+const PHYS_PARTIAL_7: usize = 70;
 const PHYS_WHOLE_7_7E80: usize = 71;
 const PHYS_PARTIAL_7_7E80: usize = 70;
 

@@ -317,24 +317,24 @@ const PHYSICAL_7E80: &[(&str, u64)] = &[
 /// The default with the analytic folds (folds spec §7, moved: labels and
 /// stacks follow the folded horizons).
 const PHYSICAL: &[(&str, u64)] = &[
-    ("bplat", 0x3d38_0dbf_d8f0_7a51),
-    ("bplatnoise", 0xa738_98a6_71b1_73e8),
-    ("demo", 0xf0ef_3fe6_6dc6_f537),
-    ("dt2lin", 0x579a_9329_084a_2777),
-    ("keep", 0x9042_5bb7_4057_9c11),
+    ("bplat", 0xd95e_9523_a7bb_0c4a),
+    ("bplatnoise", 0x4dca_3584_6f2e_a3cb),
+    ("demo", 0xaa6e_6db9_448b_ee99),
+    ("dt2lin", 0xad81_062f_2a0f_b4e8),
+    ("keep", 0xbe9a_f4c9_1cc5_9720),
     ("many_a0", 0x9e87_bbfc_529e_067a),
     ("many_a15", 0xa2ee_2025_035b_edf3),
     ("many_a30", 0xe796_7096_cbdb_dc2c),
     ("mp", 0x7156_e4a0_83d3_5175),
     ("mpk", 0x2894_d9b9_b55e_bbfe),
-    ("noise", 0xaa9c_5d05_a48e_6f67),
+    ("noise", 0x3667_0d82_8c43_5f1e),
     ("overlap", 0x5007_871e_518d_c33b),
-    ("rich", 0xa4b5_da54_4d7b_49a1),
-    ("salt", 0x0881_74b7_9b54_46de),
+    ("rich", 0x742e_0fb5_6408_f52c),
+    ("salt", 0x7050_d33e_c307_97ee),
     ("single", 0xa2ee_2025_035b_edf3),
     ("stream", 0xa2ee_2025_035b_edf3),
     ("strips", 0x7156_e4a0_83d3_5175),
-    ("whole", 0xd5ac_a022_6d98_70e1),
+    ("whole", 0x8391_3684_b244_1842),
 ];
 
 const SUMMARY_PHYSICAL: &str =

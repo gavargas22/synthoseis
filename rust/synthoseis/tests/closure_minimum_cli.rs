@@ -106,7 +106,7 @@ const MASTER_BAD1DAA8_DEMO: u64 = 0x99e8_6ae5_7a12_b80c;
 /// 7e80f2af default, kept under `--legacy-fold-geometry` (folds spec §7).
 const SCALED_DEFAULT_DEMO_7E80: u64 = 0x39c8_c368_beaa_b05a;
 /// Folded default (analytic folds): moves labels, closures and stacks.
-const SCALED_DEFAULT_DEMO: u64 = 0xf0ef_3fe6_6dc6_f537;
+const SCALED_DEFAULT_DEMO: u64 = 0xaa6e_6db9_448b_ee99;
 const SCALED_DEFAULT_DEMO_7713: u64 = 0x2296_0b5b_2e8b_c16c;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte
@@ -165,13 +165,13 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
         "{:#018x}",
         store_dir_hash(&new)
     );
-    // Folded default (folds spec §7): one more compartment over the folds.
+    // Folded default (folds spec §7): 4 compartments, 1 kept (7e80f2af: 3, 2 kept).
     let folded = dir.path().join("folded.mdio");
     let out = run_folded(DEMO, &folded);
     assert!(out.status.success(), "{out:?}");
     assert!(
         String::from_utf8_lossy(&out.stdout)
-            .contains("closures: minimum 20 voxels (scaled ni·nj/180, floor 20, cap 500), kept 2 of 4 compartments\n"),
+            .contains("closures: minimum 20 voxels (scaled ni·nj/180, floor 20, cap 500), kept 1 of 4 compartments\n"),
         "{out:?}"
     );
     assert_eq!(

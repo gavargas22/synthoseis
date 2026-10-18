@@ -184,7 +184,7 @@ fn scaled_minimum_survival() {
         "32x32x128 f0: seeds with a kept trap: {with_trap_500}/12 at 500, {with_trap}/12 scaled"
     );
     assert!(with_trap >= 8, "{with_trap}/12");
-    assert_eq!(with_trap_500, 5);
+    assert_eq!(with_trap_500, 6);
     assert_kept_volume(&[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)]);
 }
 
@@ -219,14 +219,15 @@ fn assert_kept_volume(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
 /// §6.4: the salt case of `tests/rock_physics.rs` (24×20×128, seed 102, 4
 /// faults, sand 0.4) keeps 5 compartments on the default (T = 20), the
 /// closures walled against the salt flank among them; fixed 500 keeps 2
-/// under lift-only drag (0 under smooth-all). Pinned at 7e80f2af
+/// under lift-only drag at 7e80f2af, 1 on the folded default (0 under
+/// smooth-all). Pinned at 7e80f2af
 /// (`--legacy-fold-geometry`) and on the folded default (folds spec §7).
 #[test]
 fn salt_case_keeps_walled_closures_on_the_default() {
     // 7e80f2af (`--legacy-fold-geometry`) and the folded default.
     for (legacy_fold, want, kept, kept_500) in [
         (true, &[1070, 632, 364, 351, 138, 6, 2, 1, 1, 1, 1, 1][..], 5, 2),
-        (false, &[1041, 522, 278, 263, 160, 5, 4, 2, 2, 1][..], 5, 2),
+        (false, &[618, 336, 245, 206, 171, 3, 2, 2, 2, 1, 1, 1, 1][..], 5, 1),
     ] {
         let mut c = cfg([24, 20, 128], 4, 102);
         c.geometry = ToyGeometry::Layered;

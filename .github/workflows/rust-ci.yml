@@ -115,12 +115,13 @@ jobs:
           # physical rock physics moved these (gassmann spec §7; was 3774/72,
           # 3846 through salt; 3889/3958 at 722c59af before the live-oil density
           # fix); --legacy-rock-physics keeps the old counts.
-          # The analytic folds moved them again (folds spec §7; 3888/69, 3957
+          # The analytic folds moved them again (folds spec §7: 3903/68, 3971
+          # through salt; 3888/69, 3957
           # through salt at 7e80f2af); --legacy-fold-geometry keeps those.
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --store /tmp/fmt.mdio | tee /tmp/fmt.txt
-          grep -q "fault_voxels=3892, masked_in_salt=68 " /tmp/fmt.txt
+          grep -q "fault_voxels=3903, masked_in_salt=68 " /tmp/fmt.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --fault-labels-through-salt --store /tmp/fmt-through.mdio | tee /tmp/fmt-through.txt
-          grep -q "fault_voxels=3960 (--fault-labels-through-salt)" /tmp/fmt-through.txt
+          grep -q "fault_voxels=3971 (--fault-labels-through-salt)" /tmp/fmt-through.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
           grep -q "masked_in_salt=68 " /tmp/fmt-gpu.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --legacy-fold-geometry --store /tmp/fmt-lfg.mdio | tee /tmp/fmt-lfg.txt
@@ -134,10 +135,10 @@ jobs:
           # salt, before them; --legacy-salt-pv-maps keeps those). The physical
           # rock physics moved them to 3894/69 (3963 through salt; rounded
           # maps 3896/67); --legacy-rock-physics keeps 3818/67, 3885, 3800/70.
-          # Folds (folds spec §7): 3895/69, 3964 through salt, rounded maps
-          # 3898/69; --legacy-fold-geometry keeps 3894/69, 3963, 3896/67.
+          # Folds (folds spec §7): 3908/69, 3977 through salt, rounded maps
+          # 3916/71; --legacy-fold-geometry keeps 3894/69, 3963, 3896/67.
           cargo run --profile test -p synthoseis -- run $FM --store /tmp/fmp.mdio | tee /tmp/fmp.txt
-          grep -q "fault_voxels=3895, masked_in_salt=69 " /tmp/fmp.txt
+          grep -q "fault_voxels=3908, masked_in_salt=69 " /tmp/fmp.txt
           grep -q "^folds: 1 cylindrical + 1 dome/basin, style similar" /tmp/fmp.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-fold-geometry --store /tmp/fmp-lfg.mdio | tee /tmp/fmp-lfg.txt
           grep -q "fault_voxels=3894, masked_in_salt=69 " /tmp/fmp-lfg.txt
@@ -148,11 +149,11 @@ jobs:
           grep -q "^partial voxels: .*mode=subcell" /tmp/fmp.txt
           grep -q "^salt partial-voxel maps: continuous (clamped to the label cell)" /tmp/fmp.txt
           cargo run --profile test -p synthoseis -- run $FM --fault-labels-through-salt --store /tmp/fmp-through.mdio | tee /tmp/fmp-through.txt
-          grep -q "fault_voxels=3964 (--fault-labels-through-salt)" /tmp/fmp-through.txt
+          grep -q "fault_voxels=3977 (--fault-labels-through-salt)" /tmp/fmp-through.txt
           cargo run --profile test -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmp-gpu.mdio | tee /tmp/fmp-gpu.txt
-          grep -q "fault_voxels=3895, masked_in_salt=69 " /tmp/fmp-gpu.txt
+          grep -q "fault_voxels=3908, masked_in_salt=69 " /tmp/fmp-gpu.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-salt-pv-maps --store /tmp/fmp-rounded.mdio | tee /tmp/fmp-rounded.txt
-          grep -q "fault_voxels=3898, masked_in_salt=69 " /tmp/fmp-rounded.txt
+          grep -q "fault_voxels=3916, masked_in_salt=71 " /tmp/fmp-rounded.txt
           grep -q "^salt partial-voxel maps: rounded (--legacy-salt-pv-maps)" /tmp/fmp-rounded.txt
           # --legacy-rock-physics --legacy-fold-geometry (master 77131867) keeps every time-domain count.
           cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-fold-geometry --store /tmp/fmp-lrp.mdio | tee /tmp/fmp-lrp.txt

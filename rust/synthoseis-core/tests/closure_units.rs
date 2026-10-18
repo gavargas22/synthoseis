@@ -212,7 +212,7 @@ fn unit_closure_placement_matches_legacy() {
 }
 
 fn layered(seed: u64, shape: [usize; 3], rp: RockPhysicsConfig) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         seed,
         inline_count: shape[0],

@@ -4,7 +4,7 @@ use synthoseis_core::pipeline::{E2eConfig, FaultConfig, FilterConfig, RockPhysic
 use synthoseis_core::ToyGeometry;
 
 fn layered(seed: u64, shape: [usize; 3], rp: RockPhysicsConfig) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         seed,
         inline_count: shape[0],

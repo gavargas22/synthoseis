@@ -11,7 +11,9 @@ pub struct FoldArgs {
     #[arg(long, default_value_t = false)]
     pub legacy_fold_geometry: bool,
     /// Fold style: `similar` (vertical shear, default) or `parallel`
-    /// (flexural slip, true thickness preserved).
+    /// (opt-in flexural slip: no axial-plane lean, clamped at the seabed,
+    /// true thickness preserved for the fold part only, not the unfolded
+    /// dome and tilt).
     #[arg(long)]
     pub fold_style: Option<String>,
     /// Number of cylindrical folds per cube (0-4, default 1).
@@ -26,7 +28,9 @@ pub struct FoldArgs {
     /// Fold growth exponent q (0-3, default 1; 0 = post-depositional).
     #[arg(long)]
     pub fold_growth: Option<f64>,
-    /// Maximum fold dip in samples per column (0.1-2, default 1).
+    /// Maximum dip of the added folds in samples per column, measured on
+    /// the grid (0.1-2, default 2). The unfolded dome and tilt are not
+    /// counted.
     #[arg(long)]
     pub fold_max_dip: Option<f64>,
 }

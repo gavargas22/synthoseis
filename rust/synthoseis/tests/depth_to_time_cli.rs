@@ -126,8 +126,8 @@ const TIME_RICH_7E80: u64 = 0x61d5_eb6b_de70_e4a0;
 const TIME_MP_7E80: u64 = 0x7398_8c15_739a_69f7;
 // The time-mode default with the analytic folds (folds spec §7, moved:
 // labels, time and reflectivity follow the folded horizons).
-const TIME_PLAIN: u64 = 0x7ee7_dcd7_c1ef_67bb;
-const TIME_RICH: u64 = 0xa82a_7f57_9702_ea12;
+const TIME_PLAIN: u64 = 0x3ccb_02ae_342d_a4b7;
+const TIME_RICH: u64 = 0xa436_e7b4_9e25_9573;
 const TIME_MP: u64 = 0x111e_77b5_144d_b4fd;
 
 #[test]
@@ -476,9 +476,9 @@ fn invalid_time_flags_exit_2() {
 /// only; the library test `time_mode_fault_salt_mask_removed_count_every_path`
 /// covers the other writers.)
 /// Fault ∩ salt voxels removed in time mode, seed 7, physical default.
-/// Folded default (folds spec §7): 71, the same count as 7e80f2af
-/// (`PHYS_MASKED_7E80`, `--legacy-fold-geometry`), with different voxels.
-const PHYS_MASKED: usize = 71;
+/// Folded default (folds spec §7): 70; 7e80f2af has 71
+/// (`PHYS_MASKED_7E80`, `--legacy-fold-geometry`).
+const PHYS_MASKED: usize = 70;
 const PHYS_MASKED_7E80: usize = 71;
 
 #[test]

@@ -46,7 +46,7 @@ pub fn maybe_run_worker(
         eprintln!("parse partition plan: {e}");
         std::process::exit(1);
     });
-    let cfg = synthoseis_core::pipeline::E2eConfig {
+    let cfg = synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
         time: time.clone(),
         faults: Default::default(),
         filters: Default::default(),
@@ -57,7 +57,7 @@ pub fn maybe_run_worker(
         store_path: Some(store_path.clone()),
         chunk_shape: chunk_shape.or_else(|| {
             Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
-                &synthoseis_core::pipeline::E2eConfig {
+                &synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
                     time: time.clone(),
                     faults: Default::default(),
                     filters: Default::default(),
@@ -112,7 +112,7 @@ pub fn maybe_write_partition_plan(
     let plan = if chunked || chunk_i.is_some() {
         let ci = chunk_shape.map(|c| c[0]).unwrap_or_else(|| {
             synthoseis_core::pipeline_stream::resolve_chunk_shape(
-                &synthoseis_core::pipeline::E2eConfig {
+                &synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
                     time: time.clone(),
                     faults: Default::default(),
                     filters: Default::default(),
@@ -316,7 +316,7 @@ pub fn maybe_run_multiprocess(
     });
     let resolved = chunk_shape.or_else(|| {
         Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
-            &synthoseis_core::pipeline::E2eConfig {
+            &synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
                 time: time.clone(),
                 faults: Default::default(),
                 filters: Default::default(),
@@ -331,7 +331,7 @@ pub fn maybe_run_multiprocess(
             },
         ))
     });
-    let cfg = synthoseis_core::pipeline::E2eConfig {
+    let cfg = synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
         time: time.clone(),
         faults: Default::default(),
         filters: Default::default(),

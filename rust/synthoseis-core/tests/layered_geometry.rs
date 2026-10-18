@@ -30,7 +30,7 @@ fn ah(v: &[f32]) -> u64 {
 }
 
 fn demo(seed: u64, shape: [usize; 3], faults: usize) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: synthoseis_core::TimeConfig::legacy(),
         seed,
         inline_count: shape[0],
@@ -277,9 +277,9 @@ fn default_demo_cube_goldens() {
 }
 
 /// Folded default of the 64×64×128 seed-7 demo (folds spec §7).
-const LAYERED_LABELS_FOLDED: u64 = 0xe781_6a7d_864d_b339;
-const LAYERED_STACK15_FOLDED: u64 = 0x616b_6e56_27b4_3113;
-const LAYERED_STACK15_PV_FOLDED: u64 = 0x2459_daff_d362_a243;
+const LAYERED_LABELS_FOLDED: u64 = 0xc9ce_0ab5_426d_9de0;
+const LAYERED_STACK15_FOLDED: u64 = 0xc6ce_3252_21a1_42c0;
+const LAYERED_STACK15_PV_FOLDED: u64 = 0xa8b8_995f_3720_8e50;
 
 /// Physical rock physics defaults (gassmann spec), whole / partial voxels.
 /// 722c59af pins before the live-oil density fix (review N2):

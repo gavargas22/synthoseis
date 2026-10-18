@@ -49,7 +49,7 @@ pub fn run_e2e(
                 std::process::exit(2);
             })
         };
-        let cfg = synthoseis_core::pipeline::E2eConfig {
+        let cfg = synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
             time: time.clone(),
             faults: synthoseis_core::FaultConfig::with_count(faults),
             filters: filters.clone(),
@@ -60,7 +60,7 @@ pub fn run_e2e(
             store_path: store.clone(),
             chunk_shape: chunk_shape.or_else(|| {
                 Some(synthoseis_core::resolve_chunk_shape(
-                    &synthoseis_core::pipeline::E2eConfig {
+                    &synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
                         time: time.clone(),
                         faults: Default::default(),
                         filters: Default::default(),
@@ -77,7 +77,8 @@ pub fn run_e2e(
             }),
             rock_physics: rock.clone(),
             geometry,
-        };
+        }
+        .with_geometry_cache();
         let (report, stats) =
             run_e2e_geometry_once_seismic_many(&cfg, &angle_list).unwrap_or_else(|e| {
                 eprintln!("geometry-once seismic-many failed: {e}");
@@ -115,7 +116,7 @@ pub fn run_e2e(
         });
         let resolved = chunk_shape.or_else(|| {
             Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
-                &synthoseis_core::pipeline::E2eConfig {
+                &synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
                     time: time.clone(),
                     faults: Default::default(),
                     filters: Default::default(),
@@ -170,7 +171,7 @@ pub fn run_e2e(
     }
 
     if chunked || chunk_shape.is_some() {
-        let cfg = synthoseis_core::pipeline::E2eConfig {
+        let cfg = synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
             time: time.clone(),
             faults: synthoseis_core::FaultConfig::with_count(faults),
             filters: filters.clone(),
@@ -181,7 +182,7 @@ pub fn run_e2e(
             store_path: store.clone(),
             chunk_shape: chunk_shape.or_else(|| {
                 Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
-                    &synthoseis_core::pipeline::E2eConfig {
+                    &synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
                         time: time.clone(),
                         faults: Default::default(),
                         filters: Default::default(),
@@ -198,7 +199,8 @@ pub fn run_e2e(
             }),
             rock_physics: rock.clone(),
             geometry,
-        };
+        }
+        .with_geometry_cache();
         let result = if overlap {
             synthoseis_core::run_e2e_streaming_overlapped(&cfg)
         } else {
@@ -323,7 +325,7 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
     let nh = match g {
         synthoseis_core::ToyGeometry::Planar => 3,
         synthoseis_core::ToyGeometry::Layered => {
-            synthoseis_core::toy_geometry::layered_horizon_maps_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config()).1
+            synthoseis_core::pipeline_stream::toy_horizon_maps_continuous(cfg).map_or_else(|| synthoseis_core::toy_geometry::layered_horizon_maps_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config()).1, |m| m.1)
         }
     };
     println!("toy geometry: {} ({nh} horizons)", g.as_str());

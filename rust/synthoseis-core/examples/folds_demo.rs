@@ -19,10 +19,67 @@ fn f32s(path: PathBuf, v: &[f32]) {
     }
 }
 
+/// Closure voxels by fluid `[brine, oil, gas]` of a run.
+fn fluids(c: &E2eConfig, labels: &[u8], sh: [usize; 3]) -> [usize; 3] {
+    let mut v = [0usize; 3];
+    if let ElasticModel::Rpm(m) = elastic_model(c, labels, sh) {
+        for l in &m.layers {
+            if let Some(f) = &l.fluids {
+                for cl in &f.closures {
+                    v[match cl.0 {
+                        Fluid::Brine => 0,
+                        Fluid::Oil => 1,
+                        Fluid::Gas => 2,
+                    }] += cl.4;
+                }
+            }
+        }
+    }
+    v
+}
+
+fn pct(v: [usize; 3]) -> String {
+    let t = v.iter().sum::<usize>().max(1) as f64;
+    format!(
+        "{:.1} / {:.1} / {:.1} %",
+        100.0 * v[0] as f64 / t,
+        100.0 * v[1] as f64 / t,
+        100.0 * v[2] as f64 / t
+    )
+}
+
+/// Measured largest |slope| and amplitudes of the default folds.
+fn slopes() {
+    let cfg = synthoseis_core::folds::FoldConfig::default();
+    for (seed, nk) in [(1u64, 256usize), (4, 256), (7, 128), (12, 256)] {
+        let shape = [64, 64, nk];
+        let st = synthoseis_core::toy_geometry::layered_stack_unfolded(seed, shape);
+        let tp = synthoseis_core::folds::taper(&st, &cfg);
+        let s = synthoseis_core::folds::FoldSet::draw(seed, shape, &cfg, &tp);
+        let amps: Vec<String> = s.folds.iter().map(|f| format!("{:.2}", f.amp())).collect();
+        let sh = synthoseis_core::folds::shifts(&s, &st, 64, 64);
+        let mx = sh.iter().flatten().fold(0.0f64, |a, v| a.max(v.abs()));
+        println!(
+            "seed {seed} [64,64,{nk}]: largest fold shift {mx:.2} samples = {:.1} m",
+            mx * cfg.dz_m
+        );
+        println!(
+            "seed {seed} [64,64,{nk}]: measured max |slope| unscaled {:.3}, after limit {:.3} samples/column (limit {}); factor {:.4}; amplitudes m [{}]; old summed bound {:.3}",
+            s.dip_before,
+            s.dip_after,
+            cfg.max_dip,
+            s.factor,
+            amps.join(", "),
+            s.dip_bound()
+        );
+    }
+}
+
 fn sweep() {
     let (mut a, mut b, mut more, mut less) = (0usize, 0usize, 0, 0);
+    let (mut fl, mut ff) = ([0usize; 3], [0usize; 3]);
     for seed in 1..=20u64 {
-        let k = |legacy: bool| {
+        let k = |legacy: bool, acc: &mut [usize; 3]| {
             let mut c = E2eConfig {
                 seed,
                 inline_count: 64,
@@ -33,9 +90,13 @@ fn sweep() {
             };
             c.rock_physics.legacy_fold_geometry = legacy;
             let (labels, sh) = generate_labels(&c);
+            let v = fluids(&c, &labels, sh);
+            for x in 0..3 {
+                acc[x] += v[x];
+            }
             closure_census(&c, &labels, sh).unwrap().kept()
         };
-        let (l, f) = (k(true), k(false));
+        let (l, f) = (k(true, &mut fl), k(false, &mut ff));
         println!("seed {seed}: kept closures legacy {l} folded {f}");
         a += l;
         b += f;
@@ -47,11 +108,21 @@ fn sweep() {
         }
     }
     println!("total kept: legacy {a}, folded {b}; folded more on {more} seeds, fewer on {less}");
+    println!(
+        "closure voxels brine / oil / gas: legacy {:?} = {}, folded {:?} = {}",
+        fl,
+        pct(fl),
+        ff,
+        pct(ff)
+    );
 }
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("sweep") {
         return sweep();
+    }
+    if std::env::args().nth(1).as_deref() == Some("slopes") {
+        return slopes();
     }
     let out = PathBuf::from(
         std::env::args()
@@ -125,6 +196,10 @@ fn main() {
                 out.join(format!("{name}_{tag}_horizons_{nj}x{nh}.f32")),
                 &hz,
             );
+            // Map view: depth of the middle horizon over the whole grid.
+            let ni = shape[0];
+            let mid: Vec<f32> = (0..ni * nj).map(|c| maps[c * nh + nh / 2] as f32).collect();
+            f32s(out.join(format!("{name}_{tag}_map_{ni}x{nj}.f32")), &mid);
             let nk = sh[2];
             let lab: Vec<f32> = labels[i * nj * nk..(i + 1) * nj * nk]
                 .iter()

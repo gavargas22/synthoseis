@@ -671,6 +671,9 @@ pub fn salt_body_from_maps(cfg: &E2eConfig, maps: &[f64], nh: usize) -> Option<S
 
 /// Salt body of `cfg` (`None` when salt is off). A pure function of `cfg`.
 pub fn salt_body(cfg: &E2eConfig) -> Option<SaltBody> {
+    if let Some(c) = crate::geometry_cache::GeometryCache::get(cfg) {
+        return c.salt.clone();
+    }
     if !cfg.effective_salt() {
         return None;
     }

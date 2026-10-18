@@ -24,7 +24,7 @@ fn ah(v: &[f32]) -> u64 {
 }
 
 fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: synthoseis_core::TimeConfig::legacy(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed: 7,
@@ -40,7 +40,7 @@ fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
 }
 
 fn rich(rock: RockPhysicsConfig) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: synthoseis_core::TimeConfig::legacy(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed: 10,

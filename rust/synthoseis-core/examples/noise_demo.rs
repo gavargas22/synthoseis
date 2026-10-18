@@ -61,7 +61,7 @@ fn main() {
     std::fs::create_dir_all(&out).expect("create out dir");
     let angles = [5.0, 15.0, 25.0];
 
-    let base = E2eConfig {
+    let base = E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed,
