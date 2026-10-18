@@ -256,7 +256,10 @@ fn assert_mask_removes_overlap(what: &str, masked: &[u8], through: &[u8], salt: 
 #[test]
 #[ignore = "nightly: fault/salt mask across chunk edges, every writer path"]
 fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
-    fault_salt_across_chunk_edges(rich(4, [24, 24, 128], None, 3), PHYS_WANT, PHYS_FACES);
+    let mut cfg = rich(4, [24, 24, 128], None, 3);
+    fault_salt_across_chunk_edges(cfg.clone(), PHYS_WANT, PHYS_FACES);
+    cfg.rock_physics.legacy_fold_geometry = true;
+    fault_salt_across_chunk_edges(cfg, PHYS_WANT_7E80, PHYS_FACES_7E80);
 }
 
 /// The 77131867 pin (146, faces 33 / 29 / 35) under `--legacy-rock-physics`.
@@ -278,6 +281,9 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_rounded_pv_map
     let mut cfg = rich(4, [24, 24, 128], None, 3);
     cfg.rock_physics.salt_legacy_pv_maps = true;
     fault_salt_across_chunk_edges(cfg.clone(), ROUND_WANT, ROUND_FACES);
+    let mut lf = cfg.clone();
+    lf.rock_physics.legacy_fold_geometry = true;
+    fault_salt_across_chunk_edges(lf, ROUND_WANT_7E80, ROUND_FACES_7E80);
     cfg.rock_physics.legacy_rock_physics = true;
     cfg.rock_physics.legacy_fold_geometry = true;
     fault_salt_across_chunk_edges(cfg, 147, [32, 29, 36]);
@@ -294,6 +300,9 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_smooth_all() {
     let mut cfg = rich(4, [24, 24, 128], None, 3);
     cfg.rock_physics.salt_smooth_all_horizons = true;
     fault_salt_across_chunk_edges(cfg.clone(), SMOOTH_WANT, SMOOTH_FACES);
+    let mut lf = cfg.clone();
+    lf.rock_physics.legacy_fold_geometry = true;
+    fault_salt_across_chunk_edges(lf, SMOOTH_WANT_7E80, SMOOTH_FACES_7E80);
     cfg.rock_physics.legacy_rock_physics = true;
     cfg.rock_physics.legacy_fold_geometry = true;
     fault_salt_across_chunk_edges(cfg, 149, [31, 29, 36]);
@@ -307,13 +316,21 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_smooth_all() {
 /// through the time axis (the burial-depth Vp changes every traveltime):
 /// 146 → 145 (faces 33 / 29 / 35 → 31 / 32 / 34), rounded pv maps 147 → 144
 /// (31 / 32 / 34), smooth-all 149 → 153 (31 / 33 / 34). The 77131867 pins
-/// hold under `--legacy-rock-physics`.
-const PHYS_WANT: usize = 145;
-const PHYS_FACES: [usize; 3] = [31, 32, 34];
-const ROUND_WANT: usize = 144;
+/// hold under `--legacy-rock-physics`. Those 7e80f2af values are
+/// `*_7E80` and hold under `--legacy-fold-geometry`; the analytic folds
+/// (folds spec §7) move the default counts again.
+const PHYS_WANT_7E80: usize = 145;
+const PHYS_FACES_7E80: [usize; 3] = [31, 32, 34];
+const ROUND_WANT_7E80: usize = 144;
+const ROUND_FACES_7E80: [usize; 3] = [31, 32, 34];
+const SMOOTH_WANT_7E80: usize = 153;
+const SMOOTH_FACES_7E80: [usize; 3] = [31, 33, 34];
+const PHYS_WANT: usize = 147;
+const PHYS_FACES: [usize; 3] = [32, 32, 34];
+const ROUND_WANT: usize = 145;
 const ROUND_FACES: [usize; 3] = [31, 32, 34];
 const SMOOTH_WANT: usize = 153;
-const SMOOTH_FACES: [usize; 3] = [31, 33, 34];
+const SMOOTH_FACES: [usize; 3] = [31, 30, 34];
 fn fault_salt_across_chunk_edges(cfg: E2eConfig, want: usize, faces: [usize; 3]) {
     let m = mask_cubes(&cfg);
     let removed = assert_mask_removes_overlap("seed 4 output labels", &m.masked, &m.through, &m.salt);
