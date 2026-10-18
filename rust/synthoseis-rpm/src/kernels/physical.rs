@@ -230,7 +230,15 @@ fn note_vp(vp: f32) {
     }
 }
 
-/// [`VP_MIN_OBSERVED`] in m/s, if any layer voxel was evaluated.
+/// Forget the recorded minimum. Every pipeline run entry calls this first,
+/// so a process that runs several models (tests, library users) reports
+/// each run's own minimum, not the lowest of all runs so far.
+pub fn reset_observed_vp_min() {
+    VP_MIN_OBSERVED.store(u32::MAX, Ordering::Relaxed);
+}
+
+/// [`VP_MIN_OBSERVED`] in m/s, if any layer voxel was evaluated since the
+/// last [`reset_observed_vp_min`].
 pub fn observed_vp_min() -> Option<f32> {
     let b = VP_MIN_OBSERVED.load(Ordering::Relaxed);
     (b != u32::MAX).then(|| f32::from_bits(b))

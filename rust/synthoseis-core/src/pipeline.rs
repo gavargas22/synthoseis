@@ -819,6 +819,7 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
 
 /// Run the full e2e path: generate → (optional MDIO write) → second-pass parity.
 pub fn run_e2e(cfg: &E2eConfig) -> Result<E2eReport, String> {
+    synthoseis_rpm::reset_observed_vp_min();
     cfg.validate_time()?;
     crate::pipeline_stream::SeismicFilters::from_config(cfg)?;
     let volumes = generate_tiny_cube(cfg);

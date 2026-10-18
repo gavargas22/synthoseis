@@ -110,6 +110,7 @@ pub fn run_e2e_geometry_once_seismic_many(
     cfg: &E2eConfig,
     angles: &[f64],
 ) -> Result<(GeometryOnceReport, WorkingSetStats), String> {
+    synthoseis_rpm::reset_observed_vp_min();
     if angles.is_empty() {
         return Err("angles list must be non-empty".into());
     }
