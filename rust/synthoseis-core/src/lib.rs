@@ -144,6 +144,7 @@ impl SingleWorkerRunner {
 }
 
 pub mod closure_segments;
+pub mod folds;
 pub mod lithology;
 pub mod parity;
 pub mod partial_model;
@@ -201,6 +202,7 @@ pub use time_mode::{
     generate_salt_labels_output, time_column_summary, OutputLabels, TimeColumnSummary,
 };
 pub use toy_geometry::ToyGeometry;
+pub use folds::{FoldConfig, FoldStyle};
 
 #[cfg(test)]
 mod tests {

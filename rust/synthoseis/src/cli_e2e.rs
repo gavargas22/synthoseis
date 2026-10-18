@@ -323,10 +323,16 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
     let nh = match g {
         synthoseis_core::ToyGeometry::Planar => 3,
         synthoseis_core::ToyGeometry::Layered => {
-            synthoseis_core::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape()).1
+            synthoseis_core::toy_geometry::layered_horizon_maps_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config()).1
         }
     };
     println!("toy geometry: {} ({nh} horizons)", g.as_str());
+    if g == synthoseis_core::ToyGeometry::Layered {
+        match cfg.rock_physics.fold_config() {
+            Some(f) => println!("{}", synthoseis_core::toy_geometry::layered_fold_set(cfg.seed, cfg.shape(), f).summary()),
+            None => println!("folds: off (--legacy-fold-geometry)"),
+        }
+    }
     if let Some(b) = synthoseis_core::salt::salt_body(cfg) {
         let nk = cfg.samples;
         println!(

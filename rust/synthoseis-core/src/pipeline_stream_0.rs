@@ -114,7 +114,7 @@ pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
             crate::toy_geometry::planar_horizon_maps(cfg.seed, cfg.shape())
         }
         crate::toy_geometry::ToyGeometry::Layered => {
-            let (maps, nh) = crate::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape());
+            let (maps, nh) = crate::toy_geometry::layered_horizon_maps_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config());
             match crate::salt::salt_body_from_maps(cfg, &maps, nh) {
                 None => (maps, nh),
                 Some(body) => {
@@ -149,9 +149,9 @@ pub fn toy_horizon_maps_continuous(cfg: &E2eConfig) -> Option<(Vec<f64>, usize)>
     match cfg.effective_geometry() {
         crate::toy_geometry::ToyGeometry::Planar => None,
         crate::toy_geometry::ToyGeometry::Layered => {
-            let (maps, nh) = crate::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape());
+            let (maps, nh) = crate::toy_geometry::layered_horizon_maps_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config());
             match crate::salt::salt_body_from_maps(cfg, &maps, nh) {
-                None => Some(crate::toy_geometry::layered_horizon_maps_continuous(cfg.seed, cfg.shape())),
+                None => Some(crate::toy_geometry::layered_horizon_maps_continuous_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config())),
                 Some(body) => {
                     let [ni, nj, _] = cfg.shape();
                     let smooth_all = cfg.rock_physics.salt_smooth_all_horizons;
@@ -161,7 +161,7 @@ pub fn toy_horizon_maps_continuous(cfg: &E2eConfig) -> Option<(Vec<f64>, usize)>
                         return Some((dragged, nh));
                     }
                     let d = crate::salt::drag_offsets(&maps, [ni, nj, nh], &body, smooth_all);
-                    let (mut z, nh0) = crate::toy_geometry::layered_horizon_maps_continuous(cfg.seed, cfg.shape());
+                    let (mut z, nh0) = crate::toy_geometry::layered_horizon_maps_continuous_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config());
                     debug_assert_eq!(nh0, nh);
                     for (v, dv) in z.iter_mut().zip(&d) {
                         *v += *dv;

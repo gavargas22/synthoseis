@@ -674,7 +674,7 @@ pub fn salt_body(cfg: &E2eConfig) -> Option<SaltBody> {
     if !cfg.effective_salt() {
         return None;
     }
-    let (maps, nh) = crate::toy_geometry::layered_horizon_maps(cfg.seed, cfg.shape());
+    let (maps, nh) = crate::toy_geometry::layered_horizon_maps_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config());
     salt_body_from_maps(cfg, &maps, nh)
 }
 
