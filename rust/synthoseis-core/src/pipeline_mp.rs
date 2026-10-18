@@ -151,6 +151,7 @@ pub fn run_worker_partition(
     worker_id: usize,
     store_path: &Path,
 ) -> Result<WorkingSetStats, String> {
+    synthoseis_rpm::reset_run_records();
     let part = plan
         .for_worker(worker_id)
         .ok_or_else(|| {
@@ -304,6 +305,7 @@ pub fn run_e2e_multiprocess(
     cfg: &E2eConfig,
     workers: usize,
 ) -> Result<(E2eReport, WorkingSetStats), String> {
+    synthoseis_rpm::reset_run_records();
     let (store_path, plan, _prep) = prepare_multiprocess_store(cfg, workers, cfg.chunk_shape)?;
     for wid in 0..plan.worker_count {
         run_worker_partition(cfg, &plan, wid, &store_path)?;
