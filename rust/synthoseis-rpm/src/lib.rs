@@ -29,6 +29,6 @@ pub use kernels::{
     tagilsk_brine_sand_vs, tagilsk_gas_sand_vp, tagilsk_gas_sand_vs, tagilsk_shale_rho,
     tagilsk_shale_vp, tagilsk_shale_vs, voigt_mix, voxel_properties, wood, CompactionForm,
     DryFrame, Elastic32, Fluid, LayerShifts, Lithology, MixingMethod, PhysParams, PoreFluid,
-    RockModel, RpmExampleTrends, TagilskTrends, VoxelKind, CLAY, GUARDED_VOXELS, VP_MIN_OBSERVED, observed_vp_min, reset_observed_vp_min, QUARTZ, SALT,
+    RockModel, RpmExampleTrends, TagilskTrends, VoxelKind, CLAY, GUARDED_VOXELS, VP_MIN_OBSERVED, observed_vp_min, reset_observed_vp_min, reset_guarded_voxels, reset_run_records, QUARTZ, SALT,
     SALT_RHO, SALT_VP, SALT_VS, SALT_VS_LEGACY, SHALE_CLAY_FRACTION, SHALE_COORDINATION, WATER,
 };

@@ -24,5 +24,5 @@ pub use physical::{
     elastic_from_moduli, end_member, end_member_f64, gassmann, gassmann_inverse, hertz_mindlin,
     physical_column_properties, physical_sand, physical_shale, physical_voxel_properties,
     soft_sand_dry, wood, CompactionForm, DryFrame, Lithology, PhysParams, PoreFluid, RockModel,
-    CLAY, GUARDED_VOXELS, VP_MIN_OBSERVED, observed_vp_min, reset_observed_vp_min, QUARTZ, SHALE_CLAY_FRACTION, SHALE_COORDINATION,
+    CLAY, GUARDED_VOXELS, VP_MIN_OBSERVED, observed_vp_min, reset_observed_vp_min, reset_guarded_voxels, reset_run_records, QUARTZ, SHALE_CLAY_FRACTION, SHALE_COORDINATION,
 };

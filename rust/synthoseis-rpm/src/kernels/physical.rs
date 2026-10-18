@@ -237,6 +237,19 @@ pub fn reset_observed_vp_min() {
     VP_MIN_OBSERVED.store(u32::MAX, Ordering::Relaxed);
 }
 
+/// Zero [`GUARDED_VOXELS`] (the NaN-guard count of the run-end line).
+pub fn reset_guarded_voxels() {
+    GUARDED_VOXELS.store(0, Ordering::Relaxed);
+}
+
+/// Reset every per-run record of this process ([`VP_MIN_OBSERVED`] and
+/// [`GUARDED_VOXELS`]). Every pipeline run entry calls this first, so a
+/// process that runs several models reports each run on its own.
+pub fn reset_run_records() {
+    reset_observed_vp_min();
+    reset_guarded_voxels();
+}
+
 /// [`VP_MIN_OBSERVED`] in m/s, if any layer voxel was evaluated since the
 /// last [`reset_observed_vp_min`].
 pub fn observed_vp_min() -> Option<f32> {

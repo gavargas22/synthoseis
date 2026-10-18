@@ -1,7 +1,8 @@
-//! The lowest sediment Vp recorded for the end-of-run depth-staircase
-//! warning (#54) is per run: every run entry resets it, so a process that
-//! runs several models reports each run's own minimum. This file holds a
-//! single test because the record is process-global.
+//! The per-run records of #54 (the lowest sediment Vp of the end-of-run
+//! depth-staircase warning and the NaN-guard count) are reset at every run
+//! entry, so a process that runs several models reports each run on its
+//! own. This file holds a single test because the records are
+//! process-global.
 
 use synthoseis_core::pipeline::E2eConfig;
 use synthoseis_core::{run_e2e_chunked, RockPhysicsConfig};
@@ -30,7 +31,7 @@ fn run_min(c: &E2eConfig) -> f32 {
 }
 
 #[test]
-fn second_run_minimum_is_independent_of_the_first() {
+fn second_run_records_are_independent_of_the_first() {
     let fast = cfg(false);
     let slow = cfg(true);
     let fast_alone = run_min(&fast);
@@ -46,4 +47,13 @@ fn second_run_minimum_is_independent_of_the_first() {
     run_e2e_chunked(&b2).expect("run");
     let w = b2.time_warning_after_run().expect("dz 4 m at dt 2 ms warns");
     assert!(w.contains(&format!("Vp_min {} m/s", (fast_alone as f64).floor())), "{w}");
+
+    // NaN-guard count: the default model never guards, so after a run the
+    // count is 0 even if an earlier run in this process left guards behind
+    // (simulated by bumping the counter as a guarded run would).
+    assert_eq!(synthoseis_core::guarded_voxels(), 0);
+    synthoseis_rpm::GUARDED_VOXELS.fetch_add(5, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(synthoseis_core::guarded_voxels(), 5);
+    run_e2e_chunked(&fast).expect("run");
+    assert_eq!(synthoseis_core::guarded_voxels(), 0, "guarded count carried over from an earlier run");
 }
