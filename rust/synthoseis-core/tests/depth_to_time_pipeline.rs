@@ -265,6 +265,7 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
 fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_legacy_rock_physics() {
     let mut cfg = rich(4, [24, 24, 128], None, 3);
     cfg.rock_physics.legacy_rock_physics = true;
+    cfg.rock_physics.legacy_fold_geometry = true;
     fault_salt_across_chunk_edges(cfg, 146, [33, 29, 35]);
 }
 
@@ -278,6 +279,7 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_rounded_pv_map
     cfg.rock_physics.salt_legacy_pv_maps = true;
     fault_salt_across_chunk_edges(cfg.clone(), ROUND_WANT, ROUND_FACES);
     cfg.rock_physics.legacy_rock_physics = true;
+    cfg.rock_physics.legacy_fold_geometry = true;
     fault_salt_across_chunk_edges(cfg, 147, [32, 29, 36]);
 }
 
@@ -293,6 +295,7 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_smooth_all() {
     cfg.rock_physics.salt_smooth_all_horizons = true;
     fault_salt_across_chunk_edges(cfg.clone(), SMOOTH_WANT, SMOOTH_FACES);
     cfg.rock_physics.legacy_rock_physics = true;
+    cfg.rock_physics.legacy_fold_geometry = true;
     fault_salt_across_chunk_edges(cfg, 149, [31, 29, 36]);
 }
 
@@ -387,20 +390,27 @@ fn time_mode_fault_salt_mask_removed_count_every_path() {
 }
 
 /// Physical rock physics seed-7 counts (whole voxels, partial voxels).
-const PHYS_WHOLE_7: usize = 71;
-const PHYS_PARTIAL_7: usize = 70;
+/// Folded default (folds spec §7); 71 / 70 at 7e80f2af, kept under
+/// `--legacy-fold-geometry`.
+const PHYS_WHOLE_7: usize = 999_991;
+const PHYS_PARTIAL_7: usize = 999_990;
+const PHYS_WHOLE_7_7E80: usize = 71;
+const PHYS_PARTIAL_7_7E80: usize = 70;
 
-/// `(seed, removed, whole voxels, legacy minimum, legacy rock physics)`.
+/// `(seed, removed, whole voxels, legacy minimum, legacy rock physics,
+/// legacy fold geometry)`.
 /// Time labels follow Vp, so the physical rock physics (gassmann spec §7)
 /// moves the seed-7 counts; `--legacy-rock-physics` keeps 66 / 73.
-const MASK_CASES: &[(u64, usize, bool, bool, bool)] = &[
-    (30, 0, true, false, false),
-    (7, PHYS_WHOLE_7, true, false, false),
-    (7, PHYS_PARTIAL_7, false, false, false),
-    (7, 66, true, false, true),
+const MASK_CASES: &[(u64, usize, bool, bool, bool, bool)] = &[
+    (30, 0, true, false, false, false),
+    (7, PHYS_WHOLE_7, true, false, false, false),
+    (7, PHYS_PARTIAL_7, false, false, false, false),
+    (7, PHYS_WHOLE_7_7E80, true, false, false, true),
+    (7, PHYS_PARTIAL_7_7E80, false, false, false, true),
+    (7, 66, true, false, true, true),
     // Partial voxels: 66 until the continuous salt partial-voxel maps
     // (time labels follow the partial-voxel Vp; salt pv-maps spec §7).
-    (7, 73, false, false, true),
+    (7, 73, false, false, true, true),
     // Master bad1daa8 pin: LEGACY minimum + smooth-all + legacy Vs 2250 +
     // rounded partial-voxel maps (= ccce5cc9 salt-on). Without
     // `salt_legacy_pv_maps` this row reads 81.
@@ -408,10 +418,11 @@ const MASK_CASES: &[(u64, usize, bool, bool, bool)] = &[
 
 /// The in-memory mask count of each case, then the store of the tiled
 /// streaming writer (`every_path`: every writer path).
-fn mask_removed_count(cases: &[(u64, usize, bool, bool, bool)], every_path: bool) {
-    for &(seed, want, whole_voxels, legacy_minimum, legacy_rp) in cases {
+fn mask_removed_count(cases: &[(u64, usize, bool, bool, bool, bool)], every_path: bool) {
+    for &(seed, want, whole_voxels, legacy_minimum, legacy_rp, legacy_fold) in cases {
         let mut cfg = rich(seed, [24, 24, 128], None, 3);
         cfg.rock_physics.legacy_rock_physics = legacy_rp;
+        cfg.rock_physics.legacy_fold_geometry = legacy_fold;
         if legacy_minimum {
             cfg.rock_physics.closure_minimum = synthoseis_core::ClosureMinimum::LEGACY;
             cfg.rock_physics.salt_smooth_all_horizons = true;
@@ -485,6 +496,7 @@ fn dt_2ms_invariance_and_staircase_warning() {
     // Legacy rock physics warns before the run against 1580 m/s.
     let mut legacy = coarse.clone();
     legacy.rock_physics.legacy_rock_physics = true;
+    legacy.rock_physics.legacy_fold_geometry = true;
     let w = legacy.time_warning().expect("dz = 4 m at dt = 2 ms must warn");
     assert!(w.contains("depth step 4 m") && w.contains("2.63"), "{w}");
     // Physical rock physics warns after the run against the model minimum
@@ -784,6 +796,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
     demo.rock_physics.salt_smooth_all_horizons = true;
     demo.rock_physics.salt_legacy_vs = true;
     demo.rock_physics.legacy_rock_physics = true;
+    demo.rock_physics.legacy_fold_geometry = true;
     let mut f = FilterConfig::legacy(4.0, 30.0, 3);
     f.noise = NoiseConfig { snr_db: Some(12.5), ..NoiseConfig::default() };
     let bp = E2eConfig { filters: f, ..demo.clone() };

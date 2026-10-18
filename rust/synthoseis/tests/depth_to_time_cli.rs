@@ -161,7 +161,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
                     "--legacy-depth-as-time",
                     "--salt-smooth-all-horizons",
                     "--salt-legacy-vs",
-                    "--legacy-rock-physics",
+                    "--legacy-rock-physics", "--legacy-fold-geometry",
                 ],
             ),
             &legacy,
@@ -200,7 +200,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
             "{name}: time mode must differ from the legacy axis"
         );
         let rp = dir.path().join(format!("{name}-time-7713.mdio"));
-        let out = run(&with(base, &["--legacy-rock-physics"]), &rp);
+        let out = run(&with(base, &["--legacy-rock-physics", "--legacy-fold-geometry"]), &rp);
         assert!(out.status.success(), "{name}: {out:?}");
         assert_eq!(
             store_hash(&rp),
@@ -213,7 +213,7 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
         );
         let edges = dir.path().join(format!("{name}-time-1c22.mdio"));
         let out = run(
-            &with(base, &["--legacy-filter-edges", "--legacy-rock-physics"]),
+            &with(base, &["--legacy-filter-edges", "--legacy-rock-physics", "--legacy-fold-geometry"]),
             &edges,
         );
         assert!(out.status.success(), "{name}: {out:?}");
@@ -495,7 +495,7 @@ fn fault_label_salt_mask_in_time_mode() {
         stdout(&out)
     );
     let out = run(
-        &with(FAULTED7, &["--legacy-rock-physics"]),
+        &with(FAULTED7, &["--legacy-rock-physics", "--legacy-fold-geometry"]),
         &dir.path().join("legacy-rp.mdio"),
     );
     assert!(out.status.success(), "{out:?}");
@@ -543,7 +543,7 @@ fn fault_label_salt_mask_in_time_mode() {
 #[test]
 fn staircase_warning_and_gpu_fallback_log() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let out = run(&with(PLAIN, &["--dt-ms", "2", "--legacy-rock-physics"]), &dir.path().join("w.mdio"));
+    let out = run(&with(PLAIN, &["--dt-ms", "2", "--legacy-rock-physics", "--legacy-fold-geometry"]), &dir.path().join("w.mdio"));
     assert!(out.status.success(), "{out:?}");
     assert!(
         stderr(&out).contains("warning: depth step 4 m > Vp_min 1580 m/s x dt / 1.2 = 2.63 m"),

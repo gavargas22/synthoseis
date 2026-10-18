@@ -61,6 +61,10 @@ fn legacy_closures<'a>(args: &[&'a str]) -> Vec<&'a str> {
     if !has("--legacy-toy-depth") && !has("--legacy-rock-physics") {
         v.push("--legacy-rock-physics");
     }
+    // ... and the analytic folds (folds spec §7): layered geometry only.
+    if !salt_free_geometry && !has("--legacy-fold-geometry") {
+        v.push("--legacy-fold-geometry");
+    }
     v
 }
 
@@ -238,7 +242,7 @@ fn legacy_zoeppritz_flag_reproduces_master_33a3a93_stores() {
                     "--legacy-zoeppritz",
                     "--toy-geometry",
                     "planar",
-                    "--legacy-rock-physics",
+                    "--legacy-rock-physics", "--legacy-fold-geometry",
                 ],
             ),
             &legacy,
@@ -972,7 +976,7 @@ fn salt_smooth_all_horizons_reproduces_ccce5cc9_demo() {
                 "--salt-smooth-all-horizons",
                 "--salt-legacy-vs",
                 "--legacy-filter-edges",
-                "--legacy-rock-physics",
+                "--legacy-rock-physics", "--legacy-fold-geometry",
             ],
         ),
         &smooth,
@@ -1013,7 +1017,7 @@ fn salt_legacy_vs_reproduces_f15b87ac_demo() {
             &[
                 "--salt-legacy-vs",
                 "--legacy-filter-edges",
-                "--legacy-rock-physics",
+                "--legacy-rock-physics", "--legacy-fold-geometry",
             ],
         ),
         &legacy,

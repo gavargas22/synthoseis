@@ -77,6 +77,7 @@ fn legacy_z() -> RockPhysicsConfig {
         legacy_zoeppritz: true,
         // Master 33a3a93 predates the physical rock physics.
         legacy_rock_physics: true,
+        legacy_fold_geometry: true,
         ..RockPhysicsConfig::default()
     }
 }
@@ -166,6 +167,7 @@ fn fix_size_on_demo_cube() {
     // Both on the legacy trends: this measures the Zoeppritz fix only.
     let fixed = demo(RockPhysicsConfig {
         legacy_rock_physics: true,
+        legacy_fold_geometry: true,
         ..RockPhysicsConfig::default()
     });
     let old = demo(legacy_z());

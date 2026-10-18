@@ -178,6 +178,7 @@ fn default_demo_cube_goldens() {
     // is pinned at the end.
     let mut c = phys.clone();
     c.rock_physics.legacy_rock_physics = true;
+    c.rock_physics.legacy_fold_geometry = true;
     let m = rpm(&c);
     let shifted = m.layers.iter().filter(|l| l.shifts.layer != 0).count();
     let hc = m

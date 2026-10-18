@@ -156,7 +156,7 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
             _ => (DEFAULT_MP_7713, Some(WHOLE_MP_7713)),
         };
         let r = dir.path().join(format!("{name}-legacy-rp.mdio"));
-        let out = run(&with(&base, &["--legacy-rock-physics"]), &r);
+        let out = run(&with(&base, &["--legacy-rock-physics", "--legacy-fold-geometry"]), &r);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(
             stdout(&out).contains("rock physics: legacy trends (--legacy-rock-physics)\n"),
@@ -171,7 +171,7 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
         if let Some(w) = w7713 {
             let r = dir.path().join(format!("{name}-legacy-rp-whole.mdio"));
             assert!(run(
-                &with(&base, &["--legacy-rock-physics", "--legacy-whole-voxels"]),
+                &with(&base, &["--legacy-rock-physics", "--legacy-fold-geometry", "--legacy-whole-voxels"]),
                 &r
             )
             .status
@@ -191,7 +191,7 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
         };
         let r = dir.path().join(format!("{name}-rounded-maps.mdio"));
         let out = run(
-            &with(&base, &["--legacy-salt-pv-maps", "--legacy-rock-physics"]),
+            &with(&base, &["--legacy-salt-pv-maps", "--legacy-rock-physics", "--legacy-fold-geometry"]),
             &r,
         );
         assert!(out.status.success(), "{name}: {out:?}");
@@ -249,7 +249,7 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
                 let args = with(
                     &with(
                         &with(&base, extra),
-                        &["--legacy-filter-edges", "--legacy-rock-physics"],
+                        &["--legacy-filter-edges", "--legacy-rock-physics", "--legacy-fold-geometry"],
                     ),
                     pv,
                 );

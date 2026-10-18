@@ -110,7 +110,7 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
                 "--salt-legacy-vs",
                 "--legacy-filter-edges",
                 "--legacy-salt-pv-maps",
-                "--legacy-rock-physics",
+                "--legacy-rock-physics", "--legacy-fold-geometry",
             ],
         ]
         .concat(),
@@ -151,7 +151,7 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
         store_dir_hash(&new)
     );
     let rp = dir.path().join("legacy-rp.mdio");
-    assert!(run(&[DEMO, &["--legacy-rock-physics"]].concat(), &rp)
+    assert!(run(&[DEMO, &["--legacy-rock-physics", "--legacy-fold-geometry"]].concat(), &rp)
         .status
         .success());
     assert_eq!(

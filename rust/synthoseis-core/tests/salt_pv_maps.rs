@@ -138,6 +138,7 @@ fn far_field_and_output_change_gates_32() {
 fn far_field_gate_demo_64() {
     let mut c = demo(7, [64, 64, 256], 4);
     c.rock_physics.legacy_rock_physics = true;
+    c.rock_physics.legacy_fold_geometry = true;
     gates(&c, 0.005, 0, false);
 }
 

@@ -61,6 +61,10 @@ fn run(salt: bool, legacy_rp: bool) -> Run {
     cfg = whole(&cfg);
     cfg.rock_physics.salt = salt;
     cfg.rock_physics.legacy_rock_physics = legacy_rp;
+    // The pull-up gate measures salt velocity effects on the 7e80f2af
+    // (unfolded) geometry: folds add lateral relief that the flat-horizon
+    // picker of this test does not model (folds spec §7).
+    cfg.rock_physics.legacy_fold_geometry = true;
     assert!(cfg.time_enabled());
     let (labels, shape) = synthoseis_core::pipeline_stream::generate_labels(&cfg);
     let model = synthoseis_core::rock_physics::elastic_model(&cfg, &labels, shape);

@@ -392,7 +392,7 @@ fn legacy_filter_edges_reproduce_1c22b653_on_every_path() {
         &[
             "--legacy-filter-edges",
             "--legacy-salt-pv-maps",
-            "--legacy-rock-physics",
+            "--legacy-rock-physics", "--legacy-fold-geometry",
         ],
         SUMMARY_LEGACY,
         None,
@@ -413,7 +413,7 @@ fn legacy_salt_pv_maps_reproduces_a60ec34a_on_every_path() {
     let dir = tempfile::tempdir().unwrap();
     let got = run_cases(
         dir.path(),
-        &["--legacy-salt-pv-maps", "--legacy-rock-physics"],
+        &["--legacy-salt-pv-maps", "--legacy-rock-physics", "--legacy-fold-geometry"],
         SUMMARY_PHYSICAL,
         Some("physical"),
     );
@@ -452,7 +452,7 @@ fn legacy_rock_physics_reproduces_77131867_on_every_path() {
     let dir = tempfile::tempdir().unwrap();
     let got = run_cases(
         dir.path(),
-        &["--legacy-rock-physics"],
+        &["--legacy-rock-physics", "--legacy-fold-geometry"],
         SUMMARY_PHYSICAL,
         Some("physical"),
     );

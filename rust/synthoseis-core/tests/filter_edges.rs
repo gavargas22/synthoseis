@@ -46,6 +46,7 @@ fn demo(seed: u64, faults: usize) -> E2eConfig {
 /// predicted on the legacy depth-trend velocities (gassmann spec §7).
 fn legacy_rp(mut c: E2eConfig) -> E2eConfig {
     c.rock_physics.legacy_rock_physics = true;
+    c.rock_physics.legacy_fold_geometry = true;
     c
 }
 
