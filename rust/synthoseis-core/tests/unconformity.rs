@@ -85,6 +85,7 @@ fn t1_truncation_analytic() {
     assert_eq!(rec.relief, 0.0);
     let l = rec.level;
     // The binding of the cap needs G_0 >= 40 (errata): here G_0 = 60.
+    assert!(TT * U as f64 >= 40.0, "base spacing G_0 = {} < 40 samples", TT * U as f64);
     assert!(
         KAPPA_FREE(&pre, l),
         "the kappa cap must not bind in this stack"
@@ -139,6 +140,44 @@ fn KAPPA_FREE(pre: &[Vec<f64>], l: f64) -> bool {
         let p = pre[U][c];
         (l.max(p) - p) <= 0.8 * (pre[0][c] - p) + 1e-12
     })
+}
+
+/// The cap binds: with a base spacing G_0 = 10 samples (< 40) the cut is
+/// limited to `E <= P + 0.8 G_0` (the literal 0.8, not the crate constant),
+/// the base horizon is untouched and keeps a positive thickness under it.
+#[test]
+fn t1_kappa_cap_limits_the_cut_to_80_percent_of_the_base_depth() {
+    let tt = 1.0;
+    let mut post: Vec<Vec<f64>> = (0..NH)
+        .map(|k| {
+            let g = tt * (U as f64 - k as f64);
+            (0..NI * NJ).map(|c| pcol(c) + g).collect()
+        })
+        .collect();
+    let pre = post.clone();
+    let rec = apply_planar(&mut post);
+    assert!(rec.applied);
+    let l = rec.level;
+    let g0 = tt * U as f64;
+    let (mut capped, mut free) = (0usize, 0usize);
+    for c in 0..NI * NJ {
+        let p = pcol(c);
+        let want = l.max(p).min(p + 0.8 * g0);
+        assert!((post[U][c] - want).abs() <= 1e-12, "col {c}: E {} want {want}", post[U][c]);
+        assert!(post[U][c] - p <= 0.8 * g0 + 1e-12);
+        if l.max(p) > p + 0.8 * g0 {
+            capped += 1;
+        } else {
+            free += 1;
+        }
+        // The base is never reached by the cut.
+        assert_eq!(post[0][c], pre[0][c], "col {c}: base horizon moved");
+        assert!(post[0][c] - post[U][c] >= 0.2 * g0 - 1e-12, "col {c}: base thickness under the surface");
+        assert_eq!(rec.eroded[c] as f64 > 0.0, post[U][c] > p);
+    }
+    assert!(capped > 0 && free > 0, "capped {capped}, free {free}");
+    let max_e = rec.eroded.iter().copied().fold(0.0f32, f32::max);
+    assert!((max_e as f64 - 0.8 * g0).abs() < 1e-5, "max eroded {max_e}");
 }
 
 /// Onlap: younger horizons `z_k = P - s_k`, `s_k = (k - u) t`. On the side
@@ -198,6 +237,44 @@ fn t2_onlap_analytic() {
             assert!(post[k][c] >= pre[k][c] - 0.0 && post[k][c] <= post[U][c]);
         }
     }
+    // The eroded side (P < L, E = L > P): younger horizon k is
+    // `min(P - s_k + w_k (L + F - P), L)`, so it sits on E for the columns
+    // with `(1 - w_k)(L - P) >= w_k F - s_k`, i.e. from
+    // `i_c = i_L - (w_k F - s_k) / ((1 - w_k) d)` up to the crossing `i_L`,
+    // and is lifted off it before that.
+    let eroded: Vec<usize> = (0..NI).filter(|&i| pcol(i * NJ) < l).collect();
+    assert!(eroded.len() > NI / 4);
+    let mut with_contact = 0;
+    for k in U + 1..NH - 1 {
+        let s_k = (k - U) as f64 * TT;
+        let w = (1.0 - s_k / big_s).clamp(0.0, 1.0);
+        let on_e = |i: usize| post[k][i * NJ] == post[U][i * NJ];
+        let contact: Vec<usize> = eroded.iter().copied().filter(|&i| on_e(i)).collect();
+        for &i in &eroded {
+            assert!(post[k][i * NJ] <= post[U][i * NJ], "k {k} i {i}: below E");
+            assert_eq!(post[U][i * NJ], l, "E is the level on the eroded side");
+        }
+        let margin = w * f - s_k;
+        if w < 1.0 && margin > 2.0 * D {
+            let i_c = i_l - margin / ((1.0 - w) * D);
+            let lo = *contact.first().expect("contact on the eroded side") as f64;
+            let hi = *contact.last().unwrap() as f64;
+            assert_eq!(contact.len() as f64, hi - lo + 1.0, "k {k}: eroded-side contact not contiguous");
+            assert!(hi >= *eroded.last().unwrap() as f64 - 1.0, "k {k}: contact stops short of the crossing");
+            if i_c > 0.0 {
+                assert!((lo - i_c).abs() <= 1.0 + 1e-9, "k {k}: contact starts at {lo}, formula {i_c}");
+            } else {
+                assert_eq!(lo, 0.0);
+            }
+            for &i in eroded.iter().filter(|&&i| (i as f64) < i_c - 1.0) {
+                assert!(post[k][i * NJ] < l, "k {k} i {i}: not lifted off on the eroded side");
+            }
+            with_contact += 1;
+        } else if margin < -2.0 * D {
+            assert!(contact.is_empty(), "k {k}: unexpected eroded-side contact");
+        }
+    }
+    assert!(with_contact >= 3, "the eroded-side formula was exercised {with_contact} times");
     // The seabed is untouched.
     assert!(post[NH - 1].iter().zip(&pre[NH - 1]).all(|(a, b)| a.to_bits() == b.to_bits()));
 }
@@ -424,6 +501,8 @@ struct SlopeRow {
     seed: u64,
     before: f64,
     after: f64,
+    /// Largest per-horizon increase of the steepest slope (0 if none).
+    excess: f64,
 }
 
 fn slope_rows(seeds: &[u64], shape: [usize; 3], fold: &FoldConfig, count: usize, threads: usize) -> Vec<SlopeRow> {
@@ -431,7 +510,12 @@ fn slope_rows(seeds: &[u64], shape: [usize; 3], fold: &FoldConfig, count: usize,
     let work = |seed: u64| {
         let pre = layered_stack(seed, shape, Some(fold), None);
         let post = layered_stack(seed, shape, Some(fold), Some(&ucfg));
-        SlopeRow { seed, before: steepest(&pre, shape[0], shape[1]), after: steepest(&post, shape[0], shape[1]) }
+        let excess = pre
+            .iter()
+            .zip(&post)
+            .map(|(a, b)| slope_max(b, shape[0], shape[1]) - slope_max(a, shape[0], shape[1]))
+            .fold(0.0, f64::max);
+        SlopeRow { seed, before: steepest(&pre, shape[0], shape[1]), after: steepest(&post, shape[0], shape[1]), excess }
     };
     let mut out: Vec<SlopeRow> = Vec::new();
     std::thread::scope(|s| {
@@ -444,16 +528,29 @@ fn slope_rows(seeds: &[u64], shape: [usize; 3], fold: &FoldConfig, count: usize,
     out
 }
 
-/// Largest slope of every final horizon <= max(steepest horizon before,
-/// s_max), on folded stacks (default folds, dip-limited folds), N = 1 and 2.
+/// The steepest slope over all horizons does not grow: it is <= max(steepest
+/// horizon before, s_max), on folded stacks (default folds, dip-limited
+/// folds), N = 1 and 2. This is a statement about the global maximum only:
+/// an individual younger horizon can be steeper than it was (the fill
+/// clamps it to the erosion surface), and the number of such seeds and the
+/// largest increase are printed.
 #[test]
 fn t5_no_horizon_steeper_than_before_on_folded_stacks() {
-    let shape = [64usize, 48, 128];
+    slope_check([64, 48, 128]);
+}
+
+#[test]
+#[ignore = "nightly: the same check on the 64x64x256 cube"]
+fn t5_no_horizon_steeper_than_before_on_folded_stacks_64x64x256() {
+    slope_check([64, 64, 256]);
+}
+
+fn slope_check(shape: [usize; 3]) {
     let seeds: Vec<u64> = (1..=200).collect();
     let limited = FoldConfig { max_dip: 0.5, ..FoldConfig::default() };
     let configs: [(&str, FoldConfig, usize); 3] = [
         ("default folds N=1", FoldConfig::default(), 1),
-        ("dip-limited folds N=1", limited.clone(), 1),
+        ("dip-limited folds N=1", limited, 1),
         ("default folds N=2", FoldConfig::default(), 2),
     ];
     let s_max = UnconformityConfig::default().max_dip;
@@ -471,7 +568,9 @@ fn t5_no_horizon_steeper_than_before_on_folded_stacks() {
         }
         let max_before = rows.iter().map(|r| r.before).fold(0.0, f64::max);
         let max_after = rows.iter().map(|r| r.after).fold(0.0, f64::max);
-        eprintln!("{name}: max slope before {max_before:.4} after {max_after:.4}; worst margin {worst:.4}; seeds over: {over}");
+        let steeper = rows.iter().filter(|r| r.excess > 1e-9).count();
+        let max_excess = rows.iter().map(|r| r.excess).fold(0.0, f64::max);
+        eprintln!("{name}: max slope before {max_before:.4} after {max_after:.4}; worst margin {worst:.4}; seeds over: {over}; seeds with a steeper horizon {steeper} of {}, by up to {max_excess:.4}", rows.len());
         assert_eq!(over, 0, "{name}: {over} of 200 seeds have a horizon steeper than before");
         // Independent of the thread count.
         let again = slope_rows(&seeds[..40], shape, &fold, count, 1);
@@ -622,14 +721,15 @@ fn t8_labels_are_one_voxel_per_column_at_the_layer_boundary() {
     assert!(applied_cols > 0);
 }
 
-/// Faults: the label is carried through the fault lookup like the layer
-/// labels, so it stays within 1 voxel of a layer boundary of the faulted
-/// labels; salt clears it.
+/// Faults: the label is placed by the crossing rule, so a column carries
+/// exactly one voxel of each applied unconformity wherever the old surface is
+/// in the cube, at the first sample of the faulted labels at or below it
+/// (derived here from the unfaulted labels of the same column, not from the
+/// fault lookup). Salt clears it.
 #[test]
 fn t8_labels_follow_faults_and_are_cleared_in_salt() {
-    let (mut near, mut total, mut dup, mut gone) = (0usize, 0usize, 0usize, 0usize);
+    let (mut checked, mut moved) = (0usize, 0usize);
     for seed in [4u64, 7, 12, 3] {
-        let before = (dup, gone);
         let mut c = cfg(seed, [40, 36, 128]);
         c.faults = FaultConfig::with_count(4);
         c.rock_physics.salt = false;
@@ -637,37 +737,41 @@ fn t8_labels_follow_faults_and_are_cleared_in_salt() {
         let faults = generate_fault_labels_for(&c);
         assert!(faults.iter().any(|&v| v == 1), "no fault voxels");
         let mask = generate_unconformity_labels(&c).expect("applied");
-        let base = {
-            let mut b = c.clone();
-            b.faults = FaultConfig::with_count(0);
-            generate_unconformity_labels(&b).unwrap()
-        };
+        let mut b = c.clone();
+        b.faults = FaultConfig::with_count(0);
+        let (plain, _) = generate_labels(&b);
+        let base = generate_unconformity_labels(&b).unwrap();
+        let recs = unconformity_records(&c);
         for col in 0..ni * nj {
             let m = &mask[col * nk..(col + 1) * nk];
-            let b = &base[col * nk..(col + 1) * nk];
-            let (cm, cb) = (m.iter().filter(|&&v| v > 0).count(), b.iter().filter(|&&v| v > 0).count());
-            dup += usize::from(cm > cb);
-            gone += usize::from(cm < cb);
-            for k in 0..nk {
-                if m[k] == 0 {
+            let lab = &labels[col * nk..(col + 1) * nk];
+            let pl = &plain[col * nk..(col + 1) * nk];
+            let bm = &base[col * nk..(col + 1) * nk];
+            for r in recs.iter().filter(|r| r.applied) {
+                let Some(kmark) = bm.iter().position(|&v| v == r.number) else {
+                    assert!(m.iter().all(|&v| v != r.number), "seed {seed} col {col}: label without a surface");
                     continue;
-                }
-                total += 1;
-                let lab = &labels[col * nk..(col + 1) * nk];
-                let boundary = |q: usize| q > 0 && lab[q] != lab[q - 1];
-                if (k.saturating_sub(1)..=(k + 1).min(nk - 1)).any(boundary) {
-                    near += 1;
+                };
+                // Layer labels are contiguous runs in the unfaulted column;
+                // a faulted sample is at or below the surface iff its label
+                // first appears at or below it there.
+                let first = |l: u8| pl.iter().position(|&v| v == l);
+                let want = lab.iter().position(|&l| l != 255 && first(l).is_some_and(|f| f >= kmark));
+                let got: Vec<usize> = (0..nk).filter(|&k| m[k] == r.number).collect();
+                assert_eq!(got.len(), usize::from(want.is_some()), "seed {seed} col {col}: label {} at {got:?}, want {want:?}", r.number);
+                assert_eq!(got.first().copied(), want, "seed {seed} col {col}: label {}", r.number);
+                checked += 1;
+                moved += usize::from(want != Some(kmark));
+                if let Some(k) = want {
+                    // The sample is a layer boundary of the faulted labels
+                    // (or the first sample of the column).
+                    assert!(k == 0 || lab[k] != lab[k - 1], "seed {seed} col {col}: not a boundary");
                 }
             }
         }
-        eprintln!("seed {seed}: columns with duplicated {} / vanished {} (of {})", dup - before.0, gone - before.1, ni * nj);
     }
-    eprintln!("faulted label voxels {total}, within 1 voxel of a layer boundary {near}; columns with duplicated {dup} / vanished {gone}");
-    assert!(total > 0);
-    assert_eq!(near, total, "every unconformity label voxel is within 1 voxel of a faulted layer boundary");
-    // A fault can duplicate or hide the one voxel of a column (errata), but
-    // only in a minority of columns.
-    assert!((dup + gone) * 4 < 4 * 40 * 36, "{dup} + {gone} columns changed by faults");
+    eprintln!("faulted columns checked {checked}, label moved by the faults {moved}");
+    assert!(checked > 0 && moved > 0, "the fault lookup must move some labels or the test is vacuous");
 
     // Salt clears the label.
     let mut c = cfg(7, [40, 36, 128]);
@@ -689,90 +793,214 @@ fn generate_fault_labels_for(c: &E2eConfig) -> Vec<u8> {
 }
 
 /// Time mode: the legacy axis equals the depth labels; the Vp-TWT axis
-/// carries one (resampled) voxel in nearly every applied column.
+/// carries exactly one voxel per mark, at the first output sample whose
+/// point-sampled layer label is at or below the surface (derived here from
+/// the output layer labels and the depth labels).
 #[test]
 fn t8_time_mode_labels() {
-    let mut c = cfg(4, [32, 28, 128]);
-    c.rock_physics.salt = false;
-    let depth = generate_unconformity_labels(&c).expect("applied");
-    let mut legacy = c.clone();
-    legacy.time = synthoseis_core::TimeConfig::legacy();
-    assert_eq!(generate_unconformity_labels_output(&legacy).unwrap(), depth);
-    let out = generate_unconformity_labels_output(&c).expect("time-mode labels");
-    let nt = out.len() / (32 * 28);
-    assert!(nt > 0 && out.len() == 32 * 28 * nt);
-    let mut per = [0usize; 4];
-    for col in 0..32 * 28 {
-        let n = out[col * nt..(col + 1) * nt].iter().filter(|&&v| v > 0).count();
-        per[n.min(3)] += 1;
+    for faulted in [false, true] {
+        let mut c = cfg(4, [32, 28, 128]);
+        c.rock_physics.salt = false;
+        if faulted {
+            c.faults = FaultConfig::with_count(4);
+        }
+        let depth = generate_unconformity_labels(&c).expect("applied");
+        let mut legacy = c.clone();
+        legacy.time = synthoseis_core::TimeConfig::legacy();
+        assert_eq!(generate_unconformity_labels_output(&legacy).unwrap(), depth);
+        let out = generate_unconformity_labels_output(&c).expect("time-mode labels");
+        let nt = out.len() / (32 * 28);
+        assert!(nt > 0 && out.len() == 32 * 28 * nt);
+        let (dl, _) = generate_labels(&c);
+        let tl = synthoseis_core::generate_labels_output(&c);
+        assert_eq!(tl.len(), out.len());
+        let recs = unconformity_records(&c);
+        let (mut marks, mut dropped) = (0usize, 0usize);
+        for col in 0..32 * 28 {
+            let o = &out[col * nt..(col + 1) * nt];
+            let d = &depth[col * 128..(col + 1) * 128];
+            for r in recs.iter().filter(|r| r.applied) {
+                let n_out = o.iter().filter(|&&v| v == r.number).count();
+                let Some(kd) = d.iter().position(|&v| v == r.number) else {
+                    assert_eq!(n_out, 0);
+                    continue;
+                };
+                marks += 1;
+                assert!(n_out <= 1, "faulted {faulted} col {col}: label {} {n_out} times", r.number);
+                dropped += usize::from(n_out == 0);
+                if faulted {
+                    continue;
+                }
+                let lab = &dl[col * 128..(col + 1) * 128];
+                let first = |l: u8| lab.iter().position(|&v| v == l);
+                let want = tl[col * nt..(col + 1) * nt]
+                    .iter()
+                    .position(|&l| l != 255 && first(l).is_some_and(|f| f >= kd));
+                let got = o.iter().position(|&v| v == r.number);
+                assert_eq!(got, want, "col {col}: label {}", r.number);
+            }
+        }
+        eprintln!("time mode faulted {faulted}: marks {marks}, below the window {dropped}");
+        assert!(marks > 0);
+        assert!(dropped * 20 <= marks, "time mode: {dropped} of {marks} marks fell below the window");
     }
-    eprintln!("time mode: columns with 0/1/2/3+ label voxels: {per:?}");
-    assert!(per[1] * 10 >= (32 * 28) * 8, "time mode: too few columns carry the label: {per:?}");
-    assert_eq!(per[3], 0);
 }
 
 // --------------------------------------------------------------------
 // Test 9: exhumation and facies.
 // --------------------------------------------------------------------
 
-/// Burial of the intervals >= s is the old burial + e dz; nothing changes
-/// in the shallower intervals or where e = 0, and `--no-exhumation-burial`
-/// leaves the model untouched.
-#[test]
-fn t9_exhumation_adds_the_eroded_thickness_to_the_burial() {
+/// Exhumation adds `e dz` of burial to every voxel of the intervals >= s
+/// at the voxel's own label interface: the properties are untouched where
+/// `e = 0` (shallower intervals, columns without erosion), the step is
+/// exactly on the label interface whatever the legacy layer and property
+/// shifts are, and `--no-exhumation-burial` leaves the model untouched.
+/// Returns (columns, aligned, reversed, steps in m/s of the aligned ones).
+fn velocity_step_stats(c: &E2eConfig, strict: bool) -> (usize, usize, usize, Vec<f32>, usize) {
     use synthoseis_core::elastic_model;
     use synthoseis_core::ElasticModel;
-    let mut c = cfg(4, [32, 28, 160]);
-    c.rock_physics.salt = false;
-    let (labels, shape) = generate_labels(&c);
+    let (labels, shape) = generate_labels(c);
     let [ni, nj, nk] = shape;
-    let recs = unconformity_records(&c);
+    let recs = unconformity_records(c);
     assert!(recs.iter().any(|r| r.applied));
-    let ElasticModel::Rpm(m) = elastic_model(&c, &labels, shape) else { panic!("rpm") };
+    let mask = generate_unconformity_labels(c).expect("applied");
+    let ElasticModel::Rpm(m) = elastic_model(c, &labels, shape) else { panic!("rpm") };
     assert!(!m.exhumation.is_empty());
-    let mut plain = (*m).clone();
-    plain.exhumation = Default::default();
-    // --no-exhumation-burial builds exactly that model.
     let mut off = c.clone();
     off.rock_physics.exhumation_burial = false;
     let ElasticModel::Rpm(m_off) = elastic_model(&off, &labels, shape) else { panic!("rpm") };
     assert!(m_off.exhumation.is_empty());
     assert_eq!(m_off.unconformities.len(), recs.len());
-    let step = m.step;
-    let (mut a, mut b, mut o) = (vec![0f32; nk], vec![0f32; nk], vec![0f32; nk]);
-    let (mut shifted, mut same_deep, mut shallow) = (0usize, 0usize, 0usize);
+    let mut sc = synthoseis_core::rock_physics::ColumnScratch::default();
+    let mut so = synthoseis_core::rock_physics::ColumnScratch::default();
+    let z = || vec![0f32; nk];
+    let (mut rho, mut vp, mut vs) = (z(), z(), z());
+    let (mut rho_o, mut vp_o, mut vs_o) = (z(), z(), z());
+    let (mut cols, mut aligned, mut reversed, mut jittered) = (0usize, 0usize, 0usize, 0usize);
+    let mut steps = Vec::new();
     for i in 0..ni {
         for j in 0..nj {
             let col = i * nj + j;
             let lab = &labels[col * nk..(col + 1) * nk];
-            m.depth_trace(i, j, lab, &mut a);
-            plain.depth_trace(i, j, lab, &mut b);
-            m_off.depth_trace(i, j, lab, &mut o);
-            assert_eq!(b, o, "col {col}: --no-exhumation-burial changes the burial");
+            m.column(i, j, lab, &mut sc, &mut rho, &mut vp, &mut vs);
+            m_off.column(i, j, lab, &mut so, &mut rho_o, &mut vp_o, &mut vs_o);
+            // Untouched wherever the voxel's interval has no exhumation.
             for k in 0..nk {
                 if lab[k] == 255 {
-                    assert_eq!(a[k], b[k]);
                     continue;
                 }
                 let h = m.intervals[lab[k] as usize];
-                let e: f32 = recs.iter().filter(|r| r.applied && h >= r.s).map(|r| r.eroded[col]).sum();
-                assert_eq!(e, exhumation_at(&recs, col, h));
-                let d = a[k] - b[k];
-                let want = e * step;
-                // Same run, same float expression: the shift is e dz to f32 rounding.
-                assert!((d - want).abs() <= 1e-3 * (1.0 + want.abs()), "col {col} k {k} h {h}: {d} vs {want}");
-                if e > 0.0 {
-                    shifted += 1;
-                } else if recs.iter().any(|r| r.applied && h < r.s) {
-                    shallow += 1;
-                    assert_eq!(d, 0.0);
+                let e = exhumation_at(&recs, col, h);
+                if e == 0.0 {
+                    assert_eq!(
+                        (vp[k], vs[k], rho[k]),
+                        (vp_o[k], vs_o[k], rho_o[k]),
+                        "col {col} k {k} h {h}: changed without exhumation"
+                    );
                 } else {
-                    same_deep += 1;
+                    assert!(vp[k] >= vp_o[k] - 1e-3, "col {col} k {k}: Vp fell with more burial");
                 }
+            }
+            // The step of the first unconformity sits on its label voxel:
+            // nothing above it changes, the voxel itself does.
+            let Some(r) = recs.iter().find(|r| r.applied && r.number == 1) else { continue };
+            let Some(km) = mask[col * nk..(col + 1) * nk].iter().position(|&v| v == 1) else { continue };
+            if km == 0 || r.eroded[col] <= 0.0 {
+                continue;
+            }
+            cols += 1;
+            // Interface layers with a legacy layer shift (the jitter).
+            jittered += usize::from(m.shifts[lab[km] as usize].layer != 0 || m.shifts[lab[km - 1] as usize].layer != 0);
+            let d_above = vp[km - 1] - vp_o[km - 1];
+            let d_below = vp[km] - vp_o[km];
+            if d_below > d_above && d_above == 0.0 {
+                aligned += 1;
+                steps.push(d_below);
+            } else if d_below < d_above {
+                reversed += 1;
+            }
+            if strict {
+                assert_eq!(d_above, 0.0, "col {col}: Vp above the surface changed");
+                assert!(d_below > 0.0, "col {col}: no step at the surface voxel ({d_below})");
             }
         }
     }
-    assert!(shifted > 0 && shallow > 0, "shifted {shifted} shallow {shallow} deep-unchanged {same_deep}");
+    (cols, aligned, reversed, steps, jittered)
+}
+
+#[test]
+fn t9_velocity_step_sits_on_the_label_interface() {
+    let mut jitter_off = 0usize;
+    let mut total_jittered = 0usize;
+    for seed in [4u64, 7, 12] {
+        for shifts in [None, Some(0u32)] {
+            let mut c = cfg(seed, [32, 28, 160]);
+            c.rock_physics.salt = false;
+            // Shift every layer, so the interface layers are jittered too.
+            c.rock_physics.first_random_layer = 0;
+            c.rock_physics.layer_shift_samples = shifts;
+            c.rock_physics.property_shift_samples = shifts;
+            let (cols, aligned, reversed, steps, jittered) = velocity_step_stats(&c, true);
+            eprintln!("seed {seed} shifts {shifts:?}: interface layers with a layer shift: {jittered} of {cols}");
+            assert_eq!(jittered > 0, shifts.is_none() && jittered > 0);
+            total_jittered += jittered;
+            eprintln!("seed {seed} shifts {shifts:?}: {cols} eroded columns, {aligned} aligned, {reversed} reversed, steps {:?}", {
+                let mut v = steps.clone();
+                v.sort_by(|a, b| a.total_cmp(b));
+                if v.is_empty() { vec![] } else { vec![v[v.len() / 10], v[v.len() / 2], v[v.len() * 9 / 10]] }
+            });
+            assert!(cols > 0, "seed {seed}: no eroded column");
+            assert_eq!(aligned, cols, "seed {seed} shifts {shifts:?}");
+            assert_eq!(reversed, 0);
+            jitter_off += usize::from(shifts == Some(0));
+        }
+    }
+    assert_eq!(jitter_off, 3);
+    assert!(total_jittered > 0, "no interface layer was jittered: the shift case is vacuous");
+}
+
+/// The two-unconformity case: every voxel of an interval without exhumation
+/// keeps its properties, the one at the deeper surface steps up.
+#[test]
+fn t9_velocity_step_two_unconformities() {
+    let mut c = cfg(7, [32, 28, 160]);
+    c.rock_physics.salt = false;
+    c.rock_physics.unconformity.count = 2;
+    let (cols, aligned, reversed, _, _) = velocity_step_stats(&c, true);
+    assert!(cols > 0);
+    assert_eq!((aligned, reversed), (cols, 0));
+}
+
+/// Nightly sweep for the report: share of columns whose velocity step is on
+/// the label voxel, over seeds 1..=20 on a 48x48x256 cube.
+#[test]
+#[ignore = "nightly: velocity-step alignment over 20 seeds"]
+fn t9_velocity_step_alignment_sweep() {
+    let (mut cols, mut aligned, mut reversed) = (0usize, 0usize, 0usize);
+    let mut steps = Vec::new();
+    for seed in 1..=20u64 {
+        let mut c = cfg(seed, [48, 48, 256]);
+        c.rock_physics.salt = false;
+        if unconformity_records(&c).iter().all(|r| !r.applied) {
+            continue;
+        }
+        let (a, b, d, st, _) = velocity_step_stats(&c, false);
+        cols += a;
+        aligned += b;
+        reversed += d;
+        steps.extend(st);
+    }
+    steps.sort_by(|a, b| a.total_cmp(b));
+    let q = |p: usize| steps[(steps.len() - 1) * p / 100];
+    eprintln!(
+        "velocity step: {cols} columns, aligned {:.1}%, reversed {:.1}%, dVp p10/p50/p90 = {:.1}/{:.1}/{:.1} m/s",
+        100.0 * aligned as f64 / cols as f64,
+        100.0 * reversed as f64 / cols as f64,
+        q(10),
+        q(50),
+        q(90)
+    );
+    assert_eq!(aligned, cols);
 }
 
 #[test]
@@ -908,12 +1136,14 @@ fn t11_salt_far_field_identity_with_unconformity() {
 }
 
 /// Faults with an unconformity: the mask and the layer labels go through
-/// the same fault lookup, so the faulted label at every mask voxel is the
-/// unfaulted label that starts layer `s`, and fault voxels coexist with it.
+/// the same fault lookup, so the faulted label at every mask voxel is that
+/// of layer `s` (or of a deeper layer where a throw skips layer `s`), and
+/// fault voxels coexist with it.
 #[test]
 fn t11_faults_displace_the_mask_and_the_layers_together() {
     let mut checked = 0usize;
     let mut moved = 0usize;
+    let mut same_layer = 0usize;
     for seed in [7u64, 4, 12] {
         let mut c = cfg(seed, [40, 36, 128]);
         c.faults = FaultConfig::with_count(4);
@@ -933,14 +1163,21 @@ fn t11_faults_displace_the_mask_and_the_layers_together() {
                     continue;
                 }
                 let k0 = k0.expect("a faulted label has an unfaulted source");
-                assert_eq!(faulted[col * nk + k], plain[col * nk + k0], "seed {seed} col {col}: label differs from layer s");
+                // The crossing rule puts the voxel at the first output
+                // sample whose source is at or below the surface: that
+                // sample is in layer s, or deeper where a throw skips
+                // the whole layer.
+                let (f, p) = (faulted[col * nk + k], plain[col * nk + k0]);
+                assert!(f >= p, "seed {seed} col {col}: label {f} above layer s ({p})");
+                same_layer += usize::from(f == p);
                 checked += 1;
                 moved += usize::from(k != k0);
             }
         }
     }
-    eprintln!("faulted mask voxels {checked}, displaced {moved}");
+    eprintln!("faulted mask voxels {checked}, displaced {moved}, in layer s {same_layer}");
     assert!(checked > 0 && moved > 0, "faults must displace the mask");
+    assert!(same_layer * 100 >= checked * 80, "the mask is in layer s at least 80% of the time (89% measured)");
 }
 
 /// Mutation test of the multi-process verifier (spec test 8): a store with
@@ -1028,5 +1265,47 @@ fn t3_tiling_worker_and_process_invariance_with_the_unconformity_active_64_colum
             None => want = Some(got),
             Some(w) => assert!(*w == got, "{name}: store content differs from classic"),
         }
+    }
+}
+
+// --------------------------------------------------------------------
+// Hidden intervals at the wedge tips (spec §3.6, errata): measured.
+// --------------------------------------------------------------------
+
+/// Columns holding at least one hidden interval (positive thickness, no
+/// whole voxel) at the tips of truncation and onlap wedges, 64 x 64 x 256,
+/// no salt, no faults, subcell partial voxels, 200 seeds. Expected from the
+/// review: N = 1 about 10% of columns, N = 2 about 19%; #56 has none.
+#[test]
+#[ignore = "nightly: hidden-interval rates over 200 seeds"]
+fn t10_hidden_interval_column_rates() {
+    use synthoseis_core::partial_model::partial_voxel_summary;
+    use synthoseis_core::partial_voxels::{PartialVoxelConfig, PvReflectivity};
+    let columns = 64.0 * 64.0;
+    for count in [1usize, 2] {
+        let (mut sum, mut max, mut isum) = (0.0f64, 0.0f64, 0u64);
+        let mut n = 0usize;
+        for seed in 1..=200u64 {
+            let mut c = cfg(seed, [64, 64, 256]);
+            c.rock_physics.salt = false;
+            c.rock_physics.partial_voxels = PartialVoxelConfig::with(PvReflectivity::Subcell);
+            c.rock_physics.unconformity.count = count;
+            if !unconformity_applied(&c) {
+                continue;
+            }
+            let s = partial_voxel_summary(&c).unwrap();
+            let r = 100.0 * s.stats.hidden_columns as f64 / columns;
+            sum += r;
+            max = max.max(r);
+            isum += s.stats.hidden_intervals;
+            n += 1;
+        }
+        eprintln!(
+            "N={count}: {n} seeds with the unconformity applied; columns with a hidden interval mean {:.1}% max {:.1}%; hidden intervals {isum} ({:.1}% of columns)",
+            sum / n as f64,
+            max,
+            100.0 * isum as f64 / (n as f64 * columns)
+        );
+        assert!(n > 100);
     }
 }

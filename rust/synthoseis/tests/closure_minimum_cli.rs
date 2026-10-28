@@ -109,7 +109,7 @@ const SCALED_DEFAULT_DEMO_7E80: u64 = 0x39c8_c368_beaa_b05a;
 /// labels, closures and stacks against 7e80f2af.
 const SCALED_DEFAULT_DEMO: u64 = 0xaa6e_6db9_448b_ee99;
 /// Default (folds and the unconformity): new in the unconformity PR.
-const SCALED_DEFAULT_DEMO_UNCONF: u64 = 0x8396_031d_7c99_fcd5;
+const SCALED_DEFAULT_DEMO_UNCONF: u64 = 0xbee7_163e_9285_a975;
 const SCALED_DEFAULT_DEMO_7713: u64 = 0x2296_0b5b_2e8b_c16c;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte

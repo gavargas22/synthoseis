@@ -133,8 +133,8 @@ const TIME_MP: u64 = 0x111e_77b5_144d_b4fd;
 // The time-mode default with the unconformity (unconformity spec §6.3,
 // moved: the bevel and the ponded fill change horizons, labels, burial and
 // shale seal).
-const TIME_PLAIN_UNCONF: u64 = 0x31c4_7b5a_cacb_1d7f;
-const TIME_RICH_UNCONF: u64 = 0xdd8d_9ebe_a236_7357;
+const TIME_PLAIN_UNCONF: u64 = 0x8fd7_04ba_c1bf_d490;
+const TIME_RICH_UNCONF: u64 = 0xe766_5127_0b82_6da7;
 // MP is unchanged: its 8-sample cube has fewer than 10 horizons, so the
 // unconformity is skipped (spec D10).
 const TIME_MP_UNCONF: u64 = 0x111e_77b5_144d_b4fd;

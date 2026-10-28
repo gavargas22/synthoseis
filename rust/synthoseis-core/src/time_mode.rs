@@ -521,6 +521,40 @@ pub fn tile_twt_stats(
     t
 }
 
+/// Move the one-voxel surface marks of `(cols, nz)` depth columns onto the
+/// time axis by the crossing rule: a mark at depth voxel `kd` goes to the
+/// first output sample `n` with `k(n) >= kd` (`k(n)` as in
+/// [`resample_columns`]), i.e. the first sample at or below the surface.
+/// Exactly one output sample per mark, deterministic, per column (so
+/// tiling-invariant); point sampling would repeat a mark that a slow voxel
+/// spans and skip one that a fast stretch jumps over. A mark below the last
+/// output sample is dropped.
+pub fn resample_marks(depth: &[u8], nz: usize, t: &[f64], nt: usize, dt_ms: f64) -> Vec<u8> {
+    let cols = depth.len() / nz;
+    assert_eq!(t.len(), cols * (nz + 1));
+    let mut out = vec![0u8; cols * nt];
+    for c in 0..cols {
+        let tc = &t[c * (nz + 1)..(c + 1) * (nz + 1)];
+        for (kd, &v) in depth[c * nz..(c + 1) * nz].iter().enumerate() {
+            if v == 0 {
+                continue;
+            }
+            // First n with T_kd <= n dt (T is non-decreasing).
+            let mut n = (tc[kd] / dt_ms).max(0.0).ceil() as usize;
+            while n > 0 && tc[kd] <= (n - 1) as f64 * dt_ms {
+                n -= 1;
+            }
+            while (n as f64) * dt_ms < tc[kd] {
+                n += 1;
+            }
+            if n < nt {
+                out[c * nt + n] = v;
+            }
+        }
+    }
+    out
+}
+
 /// Point-sample `(cols, nz)` depth columns onto `(cols, nt)` time columns
 /// with the per-column times `t` (`nz + 1` per column), spec §3.4:
 /// `L_t[n] = L_z[k(n)]`, `k(n) = max{k : T_k ≤ t_n}`, short columns
@@ -618,7 +652,7 @@ pub fn output_label_tile(
                 labels: rs(&depth_labels),
                 faults: depth_faults.as_deref().map(rs),
                 salt: depth_salt.as_deref().map(rs),
-                unconf: depth_unconf.as_deref().map(rs),
+                unconf: depth_unconf.as_deref().map(|d| resample_marks(d, nz, &t, axis.nt, axis.dt_ms)),
                 nk: axis.nt,
             }
         }

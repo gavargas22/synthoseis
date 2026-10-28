@@ -362,9 +362,9 @@ pub fn applied(records: &[UnconformityRecord]) -> impl Iterator<Item = &Unconfor
 
 /// Depth-domain `unconformity_labels` of the tile `[i0, i1) x [j0, j1)`
 /// (`(ti, tj, nk)`, samples fastest): the first voxel of the layer under
-/// each surface, i.e. the production map `maps[c, s]`, carried through the
-/// fault displacement of `fault_tile` like the layer labels and cleared in
-/// `salt`.
+/// each surface, i.e. the production map `maps[c, s]`. With faults it is the
+/// first output voxel at or below the surface in the faulted labels (the
+/// crossing, exactly one per column), and it is cleared in `salt`.
 #[allow(clippy::too_many_arguments)]
 pub fn label_tile(
     records: &[UnconformityRecord],
@@ -394,12 +394,19 @@ pub fn label_tile(
                 match fault_tile {
                     None => col[kmark] = r.number,
                     Some(t) => {
+                        // Crossing rule: the first output sample whose
+                        // nearest source sample (the one the layer labels
+                        // take) is at or below the surface voxel. Exactly
+                        // one per column, wherever a fault gap or overlap
+                        // moves the surface voxel (a nearest-voxel match
+                        // can miss it or hit it twice).
                         let look = &t.lookup[t.col_offset(i, j)..][..nk];
-                        for (k, &x) in look.iter().enumerate() {
+                        let at_or_below = |&x: &f32| {
                             let src = ((x as f64) + 0.5).floor().clamp(0.0, (nk - 1) as f64) as usize;
-                            if src == kmark {
-                                col[k] = r.number;
-                            }
+                            src >= kmark
+                        };
+                        if let Some(k) = look.iter().position(at_or_below) {
+                            col[k] = r.number;
                         }
                     }
                 }

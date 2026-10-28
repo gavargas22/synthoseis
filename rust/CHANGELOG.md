@@ -13,10 +13,11 @@ Output-changing defaults are listed here with their opt-out flag.
   onlapping in the hollows. Exhumed intervals get the eroded thickness as
   extra burial and the layer at the surface is forced to shale. Horizons,
   labels, closures and stacks change. New output `data/unconformity_labels`
-  (u8, one voxel per column), written only when an unconformity was applied.
-  Known limit: after faults a column can hold two label voxels or none, and
-  in time mode one or two (seed 4, 40x36x128, 4 faults: 91 duplicated and
-  294 vanished of 1440 columns); see `docs/unconformity.md`.
+  (u8, exactly one voxel per column outside salt, at the first sample at or
+  below the surface, in depth and in time mode, faulted or not), written
+  only when an unconformity was applied. The exhumation term is a depth
+  shift of the compaction trend, a proxy rather than a model of the removed
+  section. See `docs/unconformity.md`.
   The default 8x8x32 and 32^3 cubes are below the size limit and do not
   change. See `docs/unconformity.md`.
   - Opt-outs: **`--legacy-unconformity`** or **`--unconformities 0`**

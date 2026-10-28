@@ -21,11 +21,17 @@ horizon, `s = nh - 1 - u` its index from the seabed, `P = z_u`.
   for the horizons above `u`. The seabed never moves, layers only get
   thicker upward, and they onlap `E` where `z_k + w_k D` reaches it.
 * **Dip limit**: `a <- min(a, s_max / max|grad r|)`. The default `s_max` is
-  1 sample per column, so the bevel is never steeper than that. Folds can
-  still make a steeper horizon; the bevel does not add to it
-  (`tests/unconformity.rs::t5_no_horizon_steeper_than_before_on_folded_stacks`).
+  1 sample per column, so the erosion surface is never steeper than that.
+  The steepest horizon of the stack does not get steeper (global maximum
+  only, see "Slopes" below).
 * **Exhumation**: the burial of every interval at or below `s` grows by the
-  eroded thickness (`--no-exhumation-burial` to turn it off).
+  eroded thickness `e` in metres (`--no-exhumation-burial` to turn it off).
+  The term is added to the depth of every voxel kind, the layer voxels of
+  both rock-physics kernels and the hidden-interval parts of the partial
+  voxels. It is a proxy for the missing overburden (a pure depth shift of
+  the compaction trend), not a model of the removed section: the velocity
+  step across the surface is small, `dVp` p10 / p50 / p90 = 2.8 / 15.4 /
+  35.9 m/s.
 * **Shale seal**: `--unconformity-shale below|above|both|none` (default
   `below`) forces the layer at the surface to shale.
 
@@ -38,47 +44,67 @@ processes.
 `data/unconformity_labels` (u8, one voxel per column): the number of the
 unconformity (1 = shallowest) at the layer boundary of the surface in each
 column, carried through the fault lookup and cleared in salt. It is written
-only when an unconformity was applied (time mode too, point sampled through
-the column's own time map). The multi-process verifier compares it with the
-single-pass reference.
+only when an unconformity was applied (time mode too). The multi-process
+verifier compares it with the single-pass reference.
 
-### Known limit: the one voxel per column is not always one
+Every column has exactly one crossing of the surface, so every column has
+exactly one label voxel outside salt (none inside salt):
 
-The label is a single voxel per column only before faults and before the
-time conversion. After either, it is the faulted or resampled copy of that
-voxel and can be duplicated or lost:
-
-* **Faults.** The label is carried through the same lookup as the layer
-  labels, so every labelled voxel stays within one voxel of a layer boundary
-  of the faulted labels (5103 of 5103 in the test below), but a fault
-  throw can map two source samples of a column onto the label voxel
-  (duplicated: two voxels) or skip it (vanished: no voxel). Measured by
-  `t8_labels_follow_faults_and_are_cleared_in_salt`: 40 x 36 x 128, 4 faults,
-  no salt, columns with a duplicated / vanished label voxel against the
-  fault-free run:
-
-  | Seed | Duplicated | Vanished | Columns |
-  |---|---|---|---|
-  | 4 | 91 | 294 | 1440 |
-  | 7 | 6 | 328 | 1440 |
-  | 12 | 0 | 0 | 1440 |
-  | 3 | 0 | 132 | 1440 |
-  | all four | 97 | 754 | 5760 |
-
-  So 97 duplicated and 754 vanished is the total over the four seeds
-  (15% of columns); on seed 4 alone it is 91 and 294 (27%).
-* **Time mode (Vp-TWT axis).** The depth label is point sampled through the
-  column's own time map, so a column can end up with two voxels. Seed 4,
-  32 x 28 x 128, no salt: 802 columns carry one voxel, 94 carry two, none
-  carry zero (of 896). Never three. The legacy axis
+* **Depth, no faults**: the first sample at or below the surface (the layer
+  boundary, as before).
+* **Depth, faults**: the first output sample whose source position, read
+  through the column's fault lookup, is at or below the surface. A throw
+  can neither duplicate nor skip it. The voxel is in layer `s`, or in a
+  deeper layer where a throw skips layer `s` altogether (89% in layer `s`
+  in `t11_faults_displace_the_mask_and_the_layers_together`).
+* **Time mode (Vp-TWT axis)**: the surface depth is converted through the
+  column's own time map (`time_mode::resample_marks`) and the label is the
+  first time sample at or below it. The legacy axis
   (`--legacy-depth-as-time`) equals the depth labels exactly.
 
-Consumers should treat `data/unconformity_labels` as a thin marker of the
-surface (a column may hold 0, 1 or 2 voxels after faults, 1 or 2 in time
-mode), not as a count of columns. The array is identical across every
-writer, tiling, worker and process count
+Measured: 4 faults, 40 x 36 x 128, seeds 4, 7, 12, 3 (5760 columns): 0
+columns with two voxels and 0 with none (the earlier nearest-sample rule
+gave 97 duplicated and 754 vanished over the four seeds, 91 and 294 of 1440
+columns on seed 4 alone); time mode, seed 4, 32 x 28 x 128, 896 of 896
+columns carry one voxel, faulted and not
+(`t8_labels_are_one_voxel_per_column_at_the_layer_boundary`,
+`t8_time_mode_labels`). The array is identical across every writer, tiling,
+worker and process count
 (`t6_every_writer_produces_the_same_store_content` and
 `t3_tiling_worker_and_process_invariance_with_the_unconformity_active_64_columns`).
+
+## Slopes
+
+The dip limit applies to the erosion surface. The folded stack can still
+have steep horizons, and the pass does not make the steepest one steeper:
+the largest slope over all horizons after the pass is at most
+`max(largest before, s_max)` in every seed tested
+(`t5_no_horizon_steeper_than_before_on_folded_stacks`). That is a statement
+about the global maximum only. An individual younger horizon can be steeper
+than it was, because it is clamped to the erosion surface. Over 200 seeds
+(default folds, no faults):
+
+| Cube | N | Seeds with a steeper horizon | Largest increase | Largest slope before = after |
+|---|---|---|---|---|
+| 64 x 64 x 256 | 1 | 106 of 200 | +0.393 | 3.4993 |
+| 64 x 64 x 256 | 2 | 143 of 200 | +0.357 | 3.4993 |
+| 64 x 48 x 128 | 1 | 82 of 200 | +0.189 | 2.5256 |
+| 64 x 48 x 128 | 2 | 103 of 200 | +0.252 | 2.5256 |
+
+With dip-limited folds (`max_dip` 0.5) and N = 1: 105 of 200, up to +0.413,
+largest slope 2.3742 (64 x 64 x 256); 75 of 200, up to +0.258, largest
+slope 1.7883 (64 x 48 x 128). The slopes are in samples per column.
+
+## Hidden intervals
+
+Truncation and onlap taper layers to zero thickness, so an interval with a
+positive thickness but no whole voxel (a sub-voxel wedge tip) is expected
+and legitimate. With partial voxels on (default), no salt, no faults,
+64 x 64 x 256, 200 seeds, columns with at least one hidden interval,
+mean / max: N = 1 10.0% / 24.7%, N = 2 18.9% / 37.5% (#56 and the legacy
+switches: none). The exhumation term reaches these parts too
+(`partial_model::tests`). Measured by
+`t10_hidden_interval_column_rates` (ignored, nightly).
 
 ## Flags
 

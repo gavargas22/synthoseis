@@ -501,6 +501,8 @@ pub struct PartialVoxelStats {
     /// Column-intervals with positive fraction but no labelled cell in the
     /// column (spec §3.4 "hidden intervals"; counted by the run summary).
     pub hidden_intervals: u64,
+    /// Columns with at least one hidden interval.
+    pub hidden_columns: u64,
     /// Mixed cells kept whole because a part lies below the deepest horizon
     /// (whole-voxel `Unfilled`, spec §3.4).
     pub below: u64,
@@ -518,6 +520,7 @@ impl PartialVoxelStats {
         self.label_guard += o.label_guard;
         self.sediment += o.sediment;
         self.hidden_intervals += o.hidden_intervals;
+        self.hidden_columns += o.hidden_columns;
         self.below += o.below;
         self.water_below += o.water_below;
     }

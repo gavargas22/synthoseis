@@ -296,8 +296,8 @@ fn default_demo_cube_goldens() {
 
 /// Unconformity default of the 64×64×128 seed-7 demo (unconformity spec §6).
 const LAYERED_LABELS_UNCONF: u64 = 0x7fa5_4e1a_0372_9f91;
-const LAYERED_STACK15_UNCONF: u64 = 0x3dd9_b242_0173_95dd;
-const LAYERED_STACK15_PV_UNCONF: u64 = 0x28df_e85b_8c3a_6ae3;
+const LAYERED_STACK15_UNCONF: u64 = 0xc59a_62f0_42f7_5cab;
+const LAYERED_STACK15_PV_UNCONF: u64 = 0xf808_2874_5a60_6411;
 
 /// Folded default of the 64×64×128 seed-7 demo (folds spec §7).
 const LAYERED_LABELS_FOLDED: u64 = 0xc9ce_0ab5_426d_9de0;

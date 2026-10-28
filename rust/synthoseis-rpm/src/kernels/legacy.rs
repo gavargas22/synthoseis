@@ -258,8 +258,16 @@ pub enum VoxelKind {
     /// Never written by the layer loop: left at 0, then forward-filled.
     Unfilled,
     /// Sediment of `layer` (index into the shift table) with net-to-gross
-    /// `ng` (sand fraction; `ng > 0` mixes in `fluid` sand).
-    Layer { layer: usize, ng: f32, fluid: Fluid },
+    /// `ng` (sand fraction; `ng > 0` mixes in `fluid` sand). `extra_m` is
+    /// burial (metres) added to the shifted depth lookup of this voxel, so a
+    /// step in it sits exactly on the label interface (exhumation of an
+    /// unconformity; 0 otherwise, which leaves every value bit-identical).
+    Layer {
+        layer: usize,
+        ng: f32,
+        fluid: Fluid,
+        extra_m: f32,
+    },
     /// Legacy `lith == 2` (salt body): constant salt properties from
     /// [`salt_elastic`], set before the base forward-fill (legacy
     /// `Seismic.py`, after the layer loop).
@@ -307,10 +315,10 @@ pub fn voxel_properties(
         VoxelKind::Water => WATER,
         VoxelKind::Salt => salt,
         VoxelKind::Unfilled => Elastic32::default(),
-        VoxelKind::Layer { layer, ng, fluid } => {
+        VoxelKind::Layer { layer, ng, fluid, extra_m } => {
             let nk = depth.len();
             let s = shifts[layer];
-            let z = |dz: i64| depth[shifted_index(k, s.layer + dz, nk)];
+            let z = |dz: i64| depth[shifted_index(k, s.layer + dz, nk)] + extra_m;
             let d = s.row(None);
             let shale = shale_f32(z(d[0]), z(d[1]), z(d[2]));
             if ng > 0.0 {

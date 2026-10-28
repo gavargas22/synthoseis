@@ -603,10 +603,10 @@ pub fn physical_voxel_properties(
         VoxelKind::Water => WATER,
         VoxelKind::Salt => salt,
         VoxelKind::Unfilled => Elastic32::default(),
-        VoxelKind::Layer { layer, ng, fluid } => {
+        VoxelKind::Layer { layer, ng, fluid, extra_m } => {
             let nk = depth.len();
             let s = shifts[layer];
-            let z = depth[shifted_index(k, s.layer + s.props[0][0], nk)];
+            let z = depth[shifted_index(k, s.layer + s.props[0][0], nk)] + extra_m;
             let shale = physical_shale(z, w, p);
             let e = if ng > 0.0 {
                 mix_f32(shale, physical_sand(fluid, z, w, p), ng, mixing)

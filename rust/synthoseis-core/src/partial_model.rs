@@ -334,9 +334,11 @@ impl RpmModel {
         // sample. The last condition leaves out intervals that the cube
         // bottom truncates inside the last cell.
         let z = &ps.horizons;
-        ps.stats.hidden_intervals += (0..nh.saturating_sub(1))
+        let hidden = (0..nh.saturating_sub(1))
             .filter(|&h| ps.seen[h] && !ps.labelled[h] && z[h].round() == z[h + 1].round())
             .count() as u64;
+        ps.stats.hidden_intervals += hidden;
+        ps.stats.hidden_columns += u64::from(hidden > 0);
     }
 
     /// End-member properties of one part of cell k (spec §3.4): water and
@@ -377,6 +379,7 @@ impl RpmModel {
             layer: l,
             ng,
             fluid,
+            extra_m: self.exhumation_m(c, h),
         };
         let nk = kinds.len();
         let is_l = |kk: usize| matches!(kinds[kk], VoxelKind::Layer { layer, .. } if layer == l);
@@ -408,6 +411,8 @@ impl RpmModel {
             Some(kk) => props(depth, kk),
             None => {
                 let z = &self.maps[c * self.nh..(c + 1) * self.nh];
+                // `vk.extra_m` carries the exhumation term like every other
+                // voxel of interval h.
                 let tv = (z[h + 1] as f32 - z[0] as f32) * self.step;
                 props(&[tv], 0)
             }
@@ -525,4 +530,73 @@ pub fn write_partial_voxel_attrs(
             ("partial_voxel_reflectivity", serde_json::json!(r.as_str())),
         ])
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::unconformity::exhumation_at;
+
+    /// A part of an interval that no neighbouring voxel carries (a hidden
+    /// interval of a pinched-out layer) is evaluated at its map depth and
+    /// gets the exhumation of its interval like every labelled voxel: the
+    /// properties are untouched where the exhumation is 0 and Vp rises
+    /// where it is not.
+    #[test]
+    fn hidden_interval_parts_get_the_exhumation_burial() {
+        let mut cfg = E2eConfig {
+            seed: 4,
+            inline_count: 32,
+            crossline_count: 28,
+            samples: 160,
+            ..E2eConfig::default()
+        };
+        cfg.rock_physics.salt = false;
+        let (labels, shape) = crate::generate_labels(&cfg);
+        let [ni, nj, nk] = shape;
+        let recs = crate::unconformity_records(&cfg);
+        assert!(recs.iter().any(|r| r.applied));
+        let ElasticModel::Rpm(on) = crate::rock_physics::elastic_model(&cfg, &labels, shape) else {
+            panic!("rpm")
+        };
+        let mut off_cfg = cfg.clone();
+        off_cfg.rock_physics.exhumation_burial = false;
+        let ElasticModel::Rpm(off) = crate::rock_physics::elastic_model(&off_cfg, &labels, shape) else {
+            panic!("rpm")
+        };
+        let pm = on.partial.as_deref().expect("partial voxels are on by default");
+        let (mut sc, mut so) = (ColumnScratch::default(), ColumnScratch::default());
+        let z = || vec![0f32; nk];
+        let (mut r, mut p, mut s) = (z(), z(), z());
+        let (mut ro, mut po, mut so_) = (z(), z(), z());
+        let (mut raised, mut same) = (0usize, 0usize);
+        for i in 0..ni {
+            for j in 0..nj {
+                let c = i * nj + j;
+                let col = &labels[c * nk..(c + 1) * nk];
+                on.column(i, j, col, &mut sc, &mut r, &mut p, &mut s);
+                off.column(i, j, col, &mut so, &mut ro, &mut po, &mut so_);
+                let k = nk / 2;
+                for h in 0..on.nh - 1 {
+                    let l = pm.interval_layer[h];
+                    let near = (k - 1..=k + 1)
+                        .any(|kk| matches!(sc.kinds[kk], VoxelKind::Layer { layer, .. } if layer == l));
+                    if near {
+                        continue;
+                    }
+                    let kind = PartKind::Interval { h, hc: false };
+                    let a = on.part_properties(pm, kind, k, c, &sc.depth, &sc.kinds);
+                    let b = off.part_properties(pm, kind, k, c, &so.depth, &so.kinds);
+                    if exhumation_at(&recs, c, h) > 0.0 {
+                        assert!(a.vp >= b.vp, "col {c} h {h}: Vp fell with more burial");
+                        raised += usize::from(a.vp > b.vp);
+                    } else {
+                        assert_eq!((a.vp, a.vs, a.rho), (b.vp, b.vs, b.rho), "col {c} h {h}");
+                        same += 1;
+                    }
+                }
+            }
+        }
+        assert!(raised > 100 && same > 100, "raised {raised}, unchanged {same}");
+    }
 }

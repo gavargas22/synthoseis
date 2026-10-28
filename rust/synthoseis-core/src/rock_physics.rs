@@ -591,21 +591,6 @@ pub fn layer_depth_trace(
     step: f32,
     depth: &mut [f32],
 ) -> usize {
-    layer_depth_trace_exhumed(col, maps_col, intervals, step, depth, 0, &[])
-}
-
-/// [`layer_depth_trace`] with exhumation burial (spec §3.6): the interval
-/// `h` gets `e` extra samples of burial for every unconformity of `exhumed`
-/// with `s <= h` (`e` = eroded thickness of column `c`).
-pub fn layer_depth_trace_exhumed(
-    col: &[u8],
-    maps_col: &[f64],
-    intervals: &[usize],
-    step: f32,
-    depth: &mut [f32],
-    c: usize,
-    exhumed: &[crate::unconformity::UnconformityRecord],
-) -> usize {
     let nk = col.len();
     assert_eq!(depth.len(), nk);
     let seabed = col.iter().position(|&v| v != 255).unwrap_or(nk);
@@ -631,9 +616,6 @@ pub fn layer_depth_trace_exhumed(
                 let mut tv = zb as f32 - z0 as f32;
                 if dk != dk0 {
                     tv += (dk - dk0) as f32;
-                }
-                if !exhumed.is_empty() {
-                    tv += crate::unconformity::exhumation_at(exhumed, c, h);
                 }
                 depth[k..e].fill(tv * step);
             }
@@ -1204,6 +1186,20 @@ impl RpmModel {
         }
     }
 
+    /// Extra burial (metres) of interval `h` in column `c` from the
+    /// exhumation of the unconformities at or above it (spec §3.6; 0 without
+    /// any). Added to the shifted depth lookup of each voxel of the interval,
+    /// not to the depth trace, so the velocity step stays on the label
+    /// interface whatever the legacy layer and property shifts are.
+    #[inline]
+    pub fn exhumation_m(&self, c: usize, h: usize) -> f32 {
+        if self.exhumation.is_empty() {
+            0.0
+        } else {
+            crate::unconformity::exhumation_at(&self.exhumation, c, h) * self.step
+        }
+    }
+
     /// Water depth (m) of column `c`: seabed sample times the step (§3.1).
     #[inline]
     pub fn water_depth(&self, c: usize) -> f32 {
@@ -1214,15 +1210,7 @@ impl RpmModel {
     pub fn depth_trace(&self, i: usize, j: usize, col: &[u8], depth: &mut [f32]) -> usize {
         let nj = self.shape[1];
         let c = i * nj + j;
-        layer_depth_trace_exhumed(
-            col,
-            &self.maps[c * self.nh..(c + 1) * self.nh],
-            &self.intervals,
-            self.step,
-            depth,
-            c,
-            &self.exhumation,
-        )
+        layer_depth_trace(col, &self.maps[c * self.nh..(c + 1) * self.nh], &self.intervals, self.step, depth)
     }
 
     /// Elastic properties of column `(i, j)` from its labels `col`.
@@ -1264,6 +1252,7 @@ impl RpmModel {
                     layer: lab as usize,
                     ng,
                     fluid,
+                    extra_m: self.exhumation_m(c, l.interval),
                 }
             } else {
                 VoxelKind::Unfilled
