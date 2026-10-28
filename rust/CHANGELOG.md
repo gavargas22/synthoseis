@@ -6,6 +6,28 @@ Output-changing defaults are listed here with their opt-out flag.
 
 ### Changed
 
+- **Angular unconformity: bevel and ponded fill** (spec "erosion and
+  onlap"). Every layered cube with at least 10 horizons gets one erosion
+  surface, cut at the 0.35-0.65 quantile of a folded horizon, with the
+  older layers truncated against it and the younger layers ponding and
+  onlapping in the hollows. Exhumed intervals get the eroded thickness as
+  extra burial and the layer at the surface is forced to shale. Horizons,
+  labels, closures and stacks change. New output `data/unconformity_labels`
+  (u8, one voxel per column), written only when an unconformity was applied.
+  The default 8x8x32 and 32^3 cubes are below the size limit and do not
+  change. See `docs/unconformity.md`.
+  - Opt-outs: **`--legacy-unconformity`** or **`--unconformities 0`**
+    reproduce #56 byte for byte; `--legacy-fold-geometry` and
+    `--legacy-toy-depth` imply no unconformity.
+  - New flags: `--unconformities`, `--unconformity-position`,
+    `--unconformity-level`, `--unconformity-relief-m`,
+    `--unconformity-max-dip`, `--unconformity-fill-ratio`,
+    `--unconformity-shale`, `--no-exhumation-burial`.
+  - The whole-run MDIO writers now build the output-domain `fault_labels`,
+    `salt_labels` and `unconformity_labels` in one pass
+    (`time_mode::generate_output_masks`) instead of one model rebuild per
+    mask. Store content is unchanged.
+
 - **Salt partial-voxel maps keep sub-sample positions** (spec "salt
   partial-voxel far-field maps"). With salt on, the partial-voxel horizon
   maps were built from the *rounded* maps plus the drag, so far from salt

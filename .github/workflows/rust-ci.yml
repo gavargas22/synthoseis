@@ -119,9 +119,13 @@ jobs:
           # through salt; 3888/69, 3957
           # through salt at 7e80f2af); --legacy-fold-geometry keeps those.
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --store /tmp/fmt.mdio | tee /tmp/fmt.txt
-          grep -q "fault_voxels=3903, masked_in_salt=68 " /tmp/fmt.txt
+          grep -q "fault_voxels=3905, masked_in_salt=68 " /tmp/fmt.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --legacy-unconformity --store /tmp/fmt-lu.mdio | tee /tmp/fmt-lu.txt
+          grep -q "fault_voxels=3903, masked_in_salt=68 " /tmp/fmt-lu.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --fault-labels-through-salt --store /tmp/fmt-through.mdio | tee /tmp/fmt-through.txt
-          grep -q "fault_voxels=3971 (--fault-labels-through-salt)" /tmp/fmt-through.txt
+          grep -q "fault_voxels=3973 (--fault-labels-through-salt)" /tmp/fmt-through.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --legacy-unconformity --fault-labels-through-salt --store /tmp/fmt-lu-through.mdio | tee /tmp/fmt-lu-through.txt
+          grep -q "fault_voxels=3971 (--fault-labels-through-salt)" /tmp/fmt-lu-through.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmt-gpu.mdio | tee /tmp/fmt-gpu.txt
           grep -q "masked_in_salt=68 " /tmp/fmt-gpu.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-whole-voxels --legacy-fold-geometry --store /tmp/fmt-lfg.mdio | tee /tmp/fmt-lfg.txt
@@ -135,10 +139,17 @@ jobs:
           # salt, before them; --legacy-salt-pv-maps keeps those). The physical
           # rock physics moved them to 3894/69 (3963 through salt; rounded
           # maps 3896/67); --legacy-rock-physics keeps 3818/67, 3885, 3800/70.
+          # Unconformity (erosion-onlap spec §7): 3912/69, 3981 through salt, whole
+          # voxels 3905/68 and 3973, rounded maps 3909/71; --legacy-unconformity
+          # keeps the folds values below. The depth-axis counts do not move.
           # Folds (folds spec §7): 3908/69, 3977 through salt, rounded maps
           # 3916/71; --legacy-fold-geometry keeps 3894/69, 3963, 3896/67.
           cargo run --profile test -p synthoseis -- run $FM --store /tmp/fmp.mdio | tee /tmp/fmp.txt
-          grep -q "fault_voxels=3908, masked_in_salt=69 " /tmp/fmp.txt
+          grep -q "fault_voxels=3912, masked_in_salt=69 " /tmp/fmp.txt
+          grep -q "^unconformity 1: " /tmp/fmp.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-unconformity --store /tmp/fmp-lu.mdio | tee /tmp/fmp-lu.txt
+          grep -q "fault_voxels=3908, masked_in_salt=69 " /tmp/fmp-lu.txt
+          test ! -e /tmp/fmp-lu.mdio/data/unconformity_labels
           grep -q "^folds: 1 cylindrical + 1 dome/basin, style similar" /tmp/fmp.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-fold-geometry --store /tmp/fmp-lfg.mdio | tee /tmp/fmp-lfg.txt
           grep -q "fault_voxels=3894, masked_in_salt=69 " /tmp/fmp-lfg.txt
@@ -149,11 +160,15 @@ jobs:
           grep -q "^partial voxels: .*mode=subcell" /tmp/fmp.txt
           grep -q "^salt partial-voxel maps: continuous (clamped to the label cell)" /tmp/fmp.txt
           cargo run --profile test -p synthoseis -- run $FM --fault-labels-through-salt --store /tmp/fmp-through.mdio | tee /tmp/fmp-through.txt
-          grep -q "fault_voxels=3977 (--fault-labels-through-salt)" /tmp/fmp-through.txt
+          grep -q "fault_voxels=3981 (--fault-labels-through-salt)" /tmp/fmp-through.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-unconformity --fault-labels-through-salt --store /tmp/fmp-lu-through.mdio | tee /tmp/fmp-lu-through.txt
+          grep -q "fault_voxels=3977 (--fault-labels-through-salt)" /tmp/fmp-lu-through.txt
           cargo run --profile test -p synthoseis -- run $FM --gpu --chunk-i 5 --chunk-j 7 --store /tmp/fmp-gpu.mdio | tee /tmp/fmp-gpu.txt
-          grep -q "fault_voxels=3908, masked_in_salt=69 " /tmp/fmp-gpu.txt
+          grep -q "fault_voxels=3912, masked_in_salt=69 " /tmp/fmp-gpu.txt
           cargo run --profile test -p synthoseis -- run $FM --legacy-salt-pv-maps --store /tmp/fmp-rounded.mdio | tee /tmp/fmp-rounded.txt
-          grep -q "fault_voxels=3916, masked_in_salt=71 " /tmp/fmp-rounded.txt
+          grep -q "fault_voxels=3909, masked_in_salt=71 " /tmp/fmp-rounded.txt
+          cargo run --profile test -p synthoseis -- run $FM --legacy-salt-pv-maps --legacy-unconformity --store /tmp/fmp-lu-rounded.mdio | tee /tmp/fmp-lu-rounded.txt
+          grep -q "fault_voxels=3916, masked_in_salt=71 " /tmp/fmp-lu-rounded.txt
           grep -q "^salt partial-voxel maps: rounded (--legacy-salt-pv-maps)" /tmp/fmp-rounded.txt
           # --legacy-rock-physics --legacy-fold-geometry (master 77131867) keeps every time-domain count.
           cargo run --profile test -p synthoseis -- run $FM --legacy-rock-physics --legacy-fold-geometry --store /tmp/fmp-lrp.mdio | tee /tmp/fmp-lrp.txt
@@ -179,6 +194,23 @@ jobs:
           cargo run --profile test -p synthoseis -- run --e2e --chunked --legacy-fold-geometry --fold-style parallel --store /tmp/fo-bad1.mdio; test $? -eq 2 || exit 1
           cargo run --profile test -p synthoseis -- run --e2e --chunked --toy-geometry planar --legacy-fold-geometry --store /tmp/fo-bad2.mdio; test $? -eq 2 || exit 1
           cargo run --profile test -p synthoseis -- run --e2e --chunked --folds-domes 7 --store /tmp/fo-bad3.mdio; test $? -eq 2 || exit 1
+      - name: angular unconformity smoke (default, labels, legacy switches, multiprocess, exit 2)
+        run: |
+          set -euo pipefail
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,128 --store /tmp/un.mdio | tee /tmp/un.txt
+          grep -q "^unconformity 1: " /tmp/un.txt
+          test -d /tmp/un.mdio/data/unconformity_labels
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,128 --unconformities 2 --unconformity-shale both --store /tmp/un2.mdio | tee /tmp/un2.txt
+          grep -q "^unconformity 2: " /tmp/un2.txt
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,128 --legacy-unconformity --store /tmp/un-leg.mdio
+          test ! -e /tmp/un-leg.mdio/data/unconformity_labels
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --faults 3 --shape 32,32,128 --unconformities 0 --store /tmp/un-zero.mdio
+          test ! -e /tmp/un-zero.mdio/data/unconformity_labels
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --multiprocess --workers 3 --chunk-i 4 --chunk-j 4 --unconformities 1 --store /tmp/un-mp.mdio
+          set +e
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --legacy-unconformity --unconformity-level 0.5 --store /tmp/un-bad1.mdio; test $? -eq 2 || exit 1
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --legacy-fold-geometry --unconformities 1 --store /tmp/un-bad2.mdio; test $? -eq 2 || exit 1
+          cargo run --profile test -p synthoseis -- run --e2e --chunked --unconformities 3 --store /tmp/un-bad3.mdio; test $? -eq 2 || exit 1
       - name: filter edges smoke (physical default + attr, --legacy-filter-edges, multiprocess, exit 2 on the legacy axis)
         run: |
           set -euo pipefail

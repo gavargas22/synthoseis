@@ -257,6 +257,8 @@ fn assert_mask_removes_overlap(what: &str, masked: &[u8], through: &[u8], salt: 
 #[ignore = "nightly: fault/salt mask across chunk edges, every writer path"]
 fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges() {
     let mut cfg = rich(4, [24, 24, 128], None, 3);
+    fault_salt_across_chunk_edges(cfg.clone(), PHYS_WANT_UNCONF, PHYS_FACES_UNCONF);
+    cfg.rock_physics.legacy_unconformity = true;
     fault_salt_across_chunk_edges(cfg.clone(), PHYS_WANT, PHYS_FACES);
     cfg.rock_physics.legacy_fold_geometry = true;
     fault_salt_across_chunk_edges(cfg, PHYS_WANT_7E80, PHYS_FACES_7E80);
@@ -280,7 +282,10 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_legacy_rock_ph
 fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_rounded_pv_maps() {
     let mut cfg = rich(4, [24, 24, 128], None, 3);
     cfg.rock_physics.salt_legacy_pv_maps = true;
-    fault_salt_across_chunk_edges(cfg.clone(), ROUND_WANT, ROUND_FACES);
+    fault_salt_across_chunk_edges(cfg.clone(), ROUND_WANT_UNCONF, ROUND_FACES_UNCONF);
+    let mut lu = cfg.clone();
+    lu.rock_physics.legacy_unconformity = true;
+    fault_salt_across_chunk_edges(lu, ROUND_WANT, ROUND_FACES);
     let mut lf = cfg.clone();
     lf.rock_physics.legacy_fold_geometry = true;
     fault_salt_across_chunk_edges(lf, ROUND_WANT_7E80, ROUND_FACES_7E80);
@@ -299,7 +304,10 @@ fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_rounded_pv_map
 fn time_mode_tiling_invariance_faults_and_salt_across_chunk_edges_smooth_all() {
     let mut cfg = rich(4, [24, 24, 128], None, 3);
     cfg.rock_physics.salt_smooth_all_horizons = true;
-    fault_salt_across_chunk_edges(cfg.clone(), SMOOTH_WANT, SMOOTH_FACES);
+    fault_salt_across_chunk_edges(cfg.clone(), SMOOTH_WANT_UNCONF, SMOOTH_FACES_UNCONF);
+    let mut lu = cfg.clone();
+    lu.rock_physics.legacy_unconformity = true;
+    fault_salt_across_chunk_edges(lu, SMOOTH_WANT, SMOOTH_FACES);
     let mut lf = cfg.clone();
     lf.rock_physics.legacy_fold_geometry = true;
     fault_salt_across_chunk_edges(lf, SMOOTH_WANT_7E80, SMOOTH_FACES_7E80);
@@ -325,10 +333,20 @@ const ROUND_WANT_7E80: usize = 144;
 const ROUND_FACES_7E80: [usize; 3] = [31, 32, 34];
 const SMOOTH_WANT_7E80: usize = 153;
 const SMOOTH_FACES_7E80: [usize; 3] = [31, 33, 34];
+/// The default unconformity (bevel and ponded fill) moves the seed-4 counts
+/// again: 145 → 147 (faces 32 / 31 / 36), rounded pv maps 144 → 145
+/// (32 / 31 / 36), smooth-all 155 → 151 (31 / 30 / 36). The previous
+/// (#56) values hold under `--legacy-unconformity`.
+const PHYS_WANT_UNCONF: usize = 147;
+const PHYS_FACES_UNCONF: [usize; 3] = [32, 31, 36];
 const PHYS_WANT: usize = 145;
 const PHYS_FACES: [usize; 3] = [31, 32, 35];
+const ROUND_WANT_UNCONF: usize = 145;
+const ROUND_FACES_UNCONF: [usize; 3] = [32, 31, 36];
 const ROUND_WANT: usize = 144;
 const ROUND_FACES: [usize; 3] = [31, 31, 35];
+const SMOOTH_WANT_UNCONF: usize = 151;
+const SMOOTH_FACES_UNCONF: [usize; 3] = [31, 30, 36];
 const SMOOTH_WANT: usize = 155;
 const SMOOTH_FACES: [usize; 3] = [31, 32, 36];
 fn fault_salt_across_chunk_edges(cfg: E2eConfig, want: usize, faces: [usize; 3]) {

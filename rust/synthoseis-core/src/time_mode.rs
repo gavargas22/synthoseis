@@ -735,6 +735,35 @@ pub fn generate_salt_labels_output(cfg: &E2eConfig) -> Option<Vec<u8>> {
     generate_output_labels(cfg, &labels, &model).salt
 }
 
+/// The `fault_labels`, `salt_labels` and `unconformity_labels` masks in the
+/// output domain, each equal to its own `generate_*_labels_output`, but the
+/// time-mode model and the tile pass are built once for all three.
+pub fn generate_output_masks(cfg: &E2eConfig) -> [Option<Vec<u8>>; 3] {
+    if !cfg.time_enabled() {
+        return [
+            generate_fault_labels_output(cfg),
+            generate_salt_labels_output(cfg),
+            generate_unconformity_labels_output(cfg),
+        ];
+    }
+    let want = [
+        cfg.faults.enabled(),
+        cfg.effective_salt(),
+        crate::pipeline_stream::unconformity_applied(cfg),
+    ];
+    if !want.iter().any(|&w| w) {
+        return [None, None, None];
+    }
+    let (labels, shape) = crate::pipeline_stream::generate_labels(cfg);
+    let model = elastic_model(cfg, &labels, shape);
+    let o = generate_output_labels(cfg, &labels, &model);
+    [
+        o.faults.filter(|_| want[0]),
+        o.salt.filter(|_| want[1]),
+        o.unconf.filter(|_| want[2]),
+    ]
+}
+
 /// `unconformity_labels` in the output domain (`None` without an applied
 /// unconformity; equals [`crate::pipeline_stream::generate_unconformity_labels`]
 /// on the legacy axis).
@@ -742,7 +771,7 @@ pub fn generate_unconformity_labels_output(cfg: &E2eConfig) -> Option<Vec<u8>> {
     if !cfg.time_enabled() {
         return crate::pipeline_stream::generate_unconformity_labels(cfg);
     }
-    crate::pipeline_stream::generate_unconformity_labels(cfg).as_ref()?;
+    crate::pipeline_stream::unconformity_applied(cfg).then_some(())?;
     let (labels, shape) = crate::pipeline_stream::generate_labels(cfg);
     let model = elastic_model(cfg, &labels, shape);
     generate_output_labels(cfg, &labels, &model).unconf
