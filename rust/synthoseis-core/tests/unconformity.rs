@@ -629,6 +629,7 @@ fn t8_labels_are_one_voxel_per_column_at_the_layer_boundary() {
 fn t8_labels_follow_faults_and_are_cleared_in_salt() {
     let (mut near, mut total, mut dup, mut gone) = (0usize, 0usize, 0usize, 0usize);
     for seed in [4u64, 7, 12, 3] {
+        let before = (dup, gone);
         let mut c = cfg(seed, [40, 36, 128]);
         c.faults = FaultConfig::with_count(4);
         c.rock_physics.salt = false;
@@ -659,6 +660,7 @@ fn t8_labels_follow_faults_and_are_cleared_in_salt() {
                 }
             }
         }
+        eprintln!("seed {seed}: columns with duplicated {} / vanished {} (of {})", dup - before.0, gone - before.1, ni * nj);
     }
     eprintln!("faulted label voxels {total}, within 1 voxel of a layer boundary {near}; columns with duplicated {dup} / vanished {gone}");
     assert!(total > 0);
@@ -981,4 +983,50 @@ fn t8_mp_verifier_rejects_mutated_stores() {
     verify_unconformity_labels(&ls, &lc).expect("legacy store passes");
     let err = verify_unconformity_labels(&ls, &c).unwrap_err();
     assert!(err.contains("missing"), "{err}");
+}
+
+/// Spec test 3 with the unconformity active on a default-configuration
+/// cube of 64 x 64 columns (no faults, no salt flags, the default time
+/// axis): the 32^3 cube and the 8 x 8 x 32 default cube sit below the D10
+/// size limit (fewer than 10 horizons), so they never exercise it. The
+/// classic, streaming (four tilings), strip-stitched, overlapped and
+/// multi-process (1, 2 and 3 workers) stores are identical, volumes and
+/// every label array, and the labels equal the library's. The CLI cannot
+/// run `--multiprocess` with `--shape`, so the process path is the
+/// in-process prepare / worker / finalize of `run_e2e_multiprocess`
+/// (`synthoseis/src/main.rs` tests the flag forwarding to the children).
+#[test]
+fn t3_tiling_worker_and_process_invariance_with_the_unconformity_active_64_columns() {
+    use synthoseis_core::{run_e2e_multiprocess, run_e2e_streaming, run_e2e_streaming_overlapped, run_e2e_strip_stitched};
+    const NK: usize = 128;
+    let base = cfg(4, [64, 64, NK]);
+    assert!(unconformity_applied(&base), "the 64 x 64 x {NK} default cube must carry an unconformity");
+    let want_u = generate_unconformity_labels_output(&base).expect("labels");
+    assert_eq!(want_u.len(), 64 * 64 * NK);
+    assert!(want_u.iter().any(|&v| v == 1), "labelled voxels");
+    let dir = tempfile::tempdir().unwrap();
+    type Run = Box<dyn Fn(&E2eConfig)>;
+    let runs: Vec<(&str, Option<[usize; 3]>, Run)> = vec![
+        ("classic", None, Box::new(|c| { synthoseis_core::pipeline::run_e2e(c).unwrap(); })),
+        ("stream 16x16x32", Some([16, 16, 32]), Box::new(|c| { run_e2e_streaming(c).unwrap(); })),
+        ("stream 5x7xnk", Some([5, 7, NK]), Box::new(|c| { run_e2e_streaming(c).unwrap(); })),
+        ("stream 33x31x17", Some([33, 31, 17]), Box::new(|c| { run_e2e_streaming(c).unwrap(); })),
+        ("stream whole", Some([64, 64, NK]), Box::new(|c| { run_e2e_streaming(c).unwrap(); })),
+        ("strip 3", Some([16, 16, 32]), Box::new(|c| { run_e2e_strip_stitched(c, 3).unwrap(); })),
+        ("overlap", Some([16, 16, 32]), Box::new(|c| { run_e2e_streaming_overlapped(c).unwrap(); })),
+        ("mp 1", Some([16, 16, 32]), Box::new(|c| { run_e2e_multiprocess(c, 1).unwrap(); })),
+        ("mp 2", Some([16, 16, 32]), Box::new(|c| { run_e2e_multiprocess(c, 2).unwrap(); })),
+        ("mp 3", Some([21, 13, 64]), Box::new(|c| { run_e2e_multiprocess(c, 3).unwrap(); })),
+    ];
+    let mut want = None;
+    for (name, chunks, run) in runs {
+        let p = dir.path().join(format!("{}.mdio", name.replace(' ', "_")));
+        run(&E2eConfig { store_path: Some(p.clone()), chunk_shape: chunks, ..base.clone() });
+        let got = read_store(&p);
+        assert_eq!(got.4.as_ref(), Some(&want_u), "{name}: unconformity labels");
+        match &want {
+            None => want = Some(got),
+            Some(w) => assert!(*w == got, "{name}: store content differs from classic"),
+        }
+    }
 }

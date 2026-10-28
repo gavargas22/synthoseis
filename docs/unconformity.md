@@ -39,9 +39,46 @@ processes.
 unconformity (1 = shallowest) at the layer boundary of the surface in each
 column, carried through the fault lookup and cleared in salt. It is written
 only when an unconformity was applied (time mode too, point sampled through
-the column's own time map). A fault can duplicate or drop that single voxel
-in a column. The multi-process verifier compares it with the single-pass
-reference.
+the column's own time map). The multi-process verifier compares it with the
+single-pass reference.
+
+### Known limit: the one voxel per column is not always one
+
+The label is a single voxel per column only before faults and before the
+time conversion. After either, it is the faulted or resampled copy of that
+voxel and can be duplicated or lost:
+
+* **Faults.** The label is carried through the same lookup as the layer
+  labels, so every labelled voxel stays within one voxel of a layer boundary
+  of the faulted labels (5103 of 5103 in the test below), but a fault
+  throw can map two source samples of a column onto the label voxel
+  (duplicated: two voxels) or skip it (vanished: no voxel). Measured by
+  `t8_labels_follow_faults_and_are_cleared_in_salt`: 40 x 36 x 128, 4 faults,
+  no salt, columns with a duplicated / vanished label voxel against the
+  fault-free run:
+
+  | Seed | Duplicated | Vanished | Columns |
+  |---|---|---|---|
+  | 4 | 91 | 294 | 1440 |
+  | 7 | 6 | 328 | 1440 |
+  | 12 | 0 | 0 | 1440 |
+  | 3 | 0 | 132 | 1440 |
+  | all four | 97 | 754 | 5760 |
+
+  So 97 duplicated and 754 vanished is the total over the four seeds
+  (15% of columns); on seed 4 alone it is 91 and 294 (27%).
+* **Time mode (Vp-TWT axis).** The depth label is point sampled through the
+  column's own time map, so a column can end up with two voxels. Seed 4,
+  32 x 28 x 128, no salt: 802 columns carry one voxel, 94 carry two, none
+  carry zero (of 896). Never three. The legacy axis
+  (`--legacy-depth-as-time`) equals the depth labels exactly.
+
+Consumers should treat `data/unconformity_labels` as a thin marker of the
+surface (a column may hold 0, 1 or 2 voxels after faults, 1 or 2 in time
+mode), not as a count of columns. The array is identical across every
+writer, tiling, worker and process count
+(`t6_every_writer_produces_the_same_store_content` and
+`t3_tiling_worker_and_process_invariance_with_the_unconformity_active_64_columns`).
 
 ## Flags
 

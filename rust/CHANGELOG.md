@@ -14,6 +14,9 @@ Output-changing defaults are listed here with their opt-out flag.
   extra burial and the layer at the surface is forced to shale. Horizons,
   labels, closures and stacks change. New output `data/unconformity_labels`
   (u8, one voxel per column), written only when an unconformity was applied.
+  Known limit: after faults a column can hold two label voxels or none, and
+  in time mode one or two (seed 4, 40x36x128, 4 faults: 91 duplicated and
+  294 vanished of 1440 columns); see `docs/unconformity.md`.
   The default 8x8x32 and 32^3 cubes are below the size limit and do not
   change. See `docs/unconformity.md`.
   - Opt-outs: **`--legacy-unconformity`** or **`--unconformities 0`**
