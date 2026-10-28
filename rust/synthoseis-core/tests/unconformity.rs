@@ -940,3 +940,45 @@ fn t11_faults_displace_the_mask_and_the_layers_together() {
     eprintln!("faulted mask voxels {checked}, displaced {moved}");
     assert!(checked > 0 && moved > 0, "faults must displace the mask");
 }
+
+/// Mutation test of the multi-process verifier (spec test 8): a store with
+/// one flipped label, a missing array, or an array that should not exist
+/// must be rejected; the untouched store passes.
+#[test]
+fn t8_mp_verifier_rejects_mutated_stores() {
+    use synthoseis_core::pipeline_mp::verify_unconformity_labels;
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = cfg(7, [24, 20, 128]);
+    c.faults = FaultConfig::with_count(2);
+    c.chunk_shape = Some([8, 5, 16]);
+    c.store_path = Some(dir.path().join("good.mdio"));
+    assert!(unconformity_applied(&c));
+    synthoseis_core::pipeline::run_e2e(&c).unwrap();
+    let store = synthoseis_io::MdioStore::open(c.store_path.as_ref().unwrap()).unwrap();
+    verify_unconformity_labels(&store, &c).expect("untouched store passes");
+
+    // One mask voxel moved by one sample.
+    let mut bad = store.read_unconformity_labels_u8().unwrap();
+    let at = bad.iter().position(|&v| v == 1).unwrap();
+    bad[at] = 0;
+    bad[at + 1] = 1;
+    store.write_unconformity_labels_u8(&bad).unwrap();
+    let err = verify_unconformity_labels(&store, &c).unwrap_err();
+    assert!(err.contains("diverged"), "{err}");
+
+    // The legacy configuration applies nothing, yet the store has the array.
+    let mut legacy = c.clone();
+    legacy.rock_physics.legacy_unconformity = true;
+    let err = verify_unconformity_labels(&store, &legacy).unwrap_err();
+    assert!(err.contains("none was applied"), "{err}");
+
+    // A legacy store has no array, the default config requires it.
+    let mut lc = legacy.clone();
+    lc.store_path = Some(dir.path().join("legacy.mdio"));
+    synthoseis_core::pipeline::run_e2e(&lc).unwrap();
+    let ls = synthoseis_io::MdioStore::open(lc.store_path.as_ref().unwrap()).unwrap();
+    assert!(!ls.has_unconformity_labels());
+    verify_unconformity_labels(&ls, &lc).expect("legacy store passes");
+    let err = verify_unconformity_labels(&ls, &c).unwrap_err();
+    assert!(err.contains("missing"), "{err}");
+}
