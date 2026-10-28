@@ -175,6 +175,7 @@ pub fn worker_args(
         a.push("--legacy-whole-voxels".into());
     }
     a.extend(crate::cli_fold::fold_args(rock, geometry));
+    a.extend(crate::cli_unconformity::unconformity_args(rock, geometry));
     a.push("--toy-geometry".into());
     a.push(geometry.as_str().into());
     a

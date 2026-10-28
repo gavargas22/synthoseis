@@ -52,7 +52,11 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
     if trends.salt().is_some() {
         store.ensure_salt_labels_array().map_err(|e| e.to_string())?;
     }
+    if trends.has_unconformity() {
+        store.ensure_unconformity_labels_array().map_err(|e| e.to_string())?;
+    }
     let mut chunk_salt = Vec::new();
+    let mut chunk_unconf = Vec::new();
     let wavelet = cfg.ricker();
     stats.observe(wavelet.len() * 8 + trends.model_bytes());
 
@@ -144,6 +148,12 @@ pub fn run_e2e_streaming(cfg: &E2eConfig) -> Result<(E2eReport, WorkingSetStats)
                     out_labels.chunk(t, k0, k1, &mut chunk_salt);
                     store
                         .write_salt_labels_chunk([i_chunk, j_chunk, k_chunk], &chunk_salt)
+                        .map_err(|e| e.to_string())?;
+                }
+                if let Some(t) = &out_labels.unconf {
+                    out_labels.chunk(t, k0, k1, &mut chunk_unconf);
+                    store
+                        .write_unconformity_labels_chunk([i_chunk, j_chunk, k_chunk], &chunk_unconf)
                         .map_err(|e| e.to_string())?;
                 }
                 stats_samples.extend_from_slice(&chunk_angles);

@@ -830,6 +830,11 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
     if let Some(mask) = crate::time_mode::generate_salt_labels_output(cfg) {
         store.write_salt_labels_u8(&mask).map_err(|e| e.to_string())?;
     }
+    if let Some(mask) = crate::time_mode::generate_unconformity_labels_output(cfg) {
+        store
+            .write_unconformity_labels_u8(&mask)
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

@@ -26,6 +26,7 @@ pub const FAULT_LABELS_VARIABLE: &str = "fault_labels";
 
 /// Binary salt-body deliverable variable under `data/` (uint8, 0/1).
 pub const SALT_LABELS_VARIABLE: &str = "salt_labels";
+pub const UNCONFORMITY_LABELS_VARIABLE: &str = "unconformity_labels";
 
 /// Declared API version attribute (synthoseis Rust MDIO writer).
 pub const API_VERSION: &str = "0.1.0-synthoseis-rust";

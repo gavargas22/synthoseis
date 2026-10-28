@@ -325,7 +325,7 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
     let nh = match g {
         synthoseis_core::ToyGeometry::Planar => 3,
         synthoseis_core::ToyGeometry::Layered => {
-            synthoseis_core::pipeline_stream::toy_horizon_maps_continuous(cfg).map_or_else(|| synthoseis_core::toy_geometry::layered_horizon_maps_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config()).1, |m| m.1)
+            synthoseis_core::pipeline_stream::toy_horizon_maps_continuous(cfg).map_or_else(|| synthoseis_core::toy_geometry::layered_horizon_maps_with(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config(), cfg.rock_physics.unconformity_config()).1, |m| m.1)
         }
     };
     println!("toy geometry: {} ({nh} horizons)", g.as_str());
@@ -333,6 +333,27 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         match cfg.rock_physics.fold_config() {
             Some(f) => println!("{}", synthoseis_core::toy_geometry::layered_fold_set(cfg.seed, cfg.shape(), f).summary()),
             None => println!("folds: off (--legacy-fold-geometry)"),
+        }
+        match cfg.rock_physics.unconformity_config() {
+            Some(u) => {
+                let recs = synthoseis_core::pipeline_stream::unconformity_records(cfg);
+                if recs.is_empty() {
+                    println!("unconformities: none (cube of {nh} horizons has no room for {})", u.count);
+                }
+                for r in recs.iter() {
+                    println!("{}", r.summary());
+                }
+                println!(
+                    "unconformities: max dip {} samples/column, fill ratio {}, shale seal {}, exhumation burial {}",
+                    u.max_dip,
+                    u.fill_ratio,
+                    cfg.rock_physics.unconformity_shale.as_str(),
+                    if cfg.rock_physics.exhumation_burial { "on" } else { "off" },
+                );
+            }
+            None if cfg.rock_physics.legacy_fold_geometry => {}
+            None if cfg.rock_physics.legacy_unconformity => println!("unconformities: off (--legacy-unconformity)"),
+            None => println!("unconformities: off (--unconformities 0)"),
         }
     }
     if let Some(b) = synthoseis_core::salt::salt_body(cfg) {
@@ -380,13 +401,7 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
     }
     let rp = &cfg.rock_physics;
     let lith = cfg.effective_lithology();
-    let sand = synthoseis_core::lithology::interval_sand(
-        lith,
-        cfg.seed,
-        nh.saturating_sub(1),
-        rp.sand_layer_fraction,
-        rp.sand_layer_thickness,
-    );
+    let sand = synthoseis_core::pipeline_stream::sealed_interval_sand(cfg, nh.saturating_sub(1));
     let n_sand = sand.iter().filter(|&&s| s).count();
     match lith {
         synthoseis_core::ToyLithology::Alternating => {
@@ -407,13 +422,7 @@ pub fn print_geometry_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         } else {
             // `closure_units` takes all `nh` entries (the last is below the
             // deepest horizon).
-            let full = synthoseis_core::lithology::interval_sand(
-                lith,
-                cfg.seed,
-                nh,
-                rp.sand_layer_fraction,
-                rp.sand_layer_thickness,
-            );
+            let full = synthoseis_core::pipeline_stream::sealed_interval_sand(cfg, nh);
             let units = synthoseis_core::lithology::closure_units(&full);
             let multi = units.iter().filter(|(a, b)| b - a > 1).count();
             println!(

@@ -19,7 +19,14 @@ use crate::rock_physics::elastic_model;
 /// `faults` is `Some` in time mode with faulting on (output-domain
 /// `fault_labels`); the legacy axis writes no `fault_labels` here, exactly
 /// as master f3720fb2.
-type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
+type WriteChunk = (
+    [usize; 3],
+    Vec<f32>,
+    Vec<u8>,
+    Option<Vec<u8>>,
+    Option<Vec<u8>>,
+    Option<Vec<u8>>,
+);
 
 /// Fuse tile N+1 on the caller while a dedicated std thread flushes tile N.
 ///
@@ -72,6 +79,9 @@ pub fn run_e2e_streaming_overlapped(
         if cfg.time_enabled() && cfg.faults.enabled() {
             store.ensure_fault_labels_array().map_err(|e| e.to_string())?;
         }
+        if crate::pipeline_stream::unconformity_applied(cfg) {
+            store.ensure_unconformity_labels_array().map_err(|e| e.to_string())?;
+        }
     }
     // Salt labels are rebuilt per chunk by the writer from the salt body.
     let salt = crate::salt::salt_body(cfg);
@@ -79,6 +89,10 @@ pub fn run_e2e_streaming_overlapped(
     let time_mode = cfg.time_enabled();
     // Time mode: fault model for output-domain fault_labels (see WriteChunk).
     let faults = if time_mode { fault_model(cfg) } else { None };
+    // `unconformity_labels` (depth mode: displaced by the same fault model
+    // as the layer labels, which is not an output-domain model here).
+    let has_unconf = crate::pipeline_stream::unconformity_applied(cfg);
+    let depth_unconf_faults = if has_unconf && !time_mode { fault_model(cfg) } else { None };
 
     let (tx, rx) = sync_channel::<WriteChunk>(1);
     let (ack_tx, ack_rx) = sync_channel::<()>(0);
@@ -86,7 +100,7 @@ pub fn run_e2e_streaming_overlapped(
     let writer = thread::spawn(move || -> Result<(), String> {
         let store = MdioStore::open(&writer_path).map_err(|e| e.to_string())?;
         let mut chunk_salt = Vec::new();
-        for (key, angles, chunk_labels, out_salt, out_faults) in rx {
+        for (key, angles, chunk_labels, out_salt, out_faults, out_unconf) in rx {
             store.write_chunk(key, &angles).map_err(|e| e.to_string())?;
             store
                 .write_labels_chunk(key, &chunk_labels)
@@ -94,6 +108,11 @@ pub fn run_e2e_streaming_overlapped(
             if let Some(f) = out_faults {
                 store
                     .write_fault_labels_chunk(key, &f)
+                    .map_err(|e| e.to_string())?;
+            }
+            if let Some(u) = out_unconf {
+                store
+                    .write_unconformity_labels_chunk(key, &u)
                     .map_err(|e| e.to_string())?;
             }
             if let Some(t) = out_salt {
@@ -127,8 +146,8 @@ pub fn run_e2e_streaming_overlapped(
         + wavelet.len() * 8
         + props_tile_bytes(&trends, ci * cj * nk);
     let tile_bytes = tile_angles.capacity() * 4;
-    let in_flight_bytes = ci * cj * ck * (4 + 1 + has_salt as usize + faults.is_some() as usize);
-    stats.peak_temp_bytes = fixed_bytes + tile_bytes + in_flight_bytes;
+    let in_flight_bytes = ci * cj * ck * (4 + 1 + has_salt as usize + faults.is_some() as usize + has_unconf as usize);
+    stats.peak_temp_bytes = fixed_bytes + tile_bytes + in_flight_bytes + if has_unconf { ci * cj * nk } else { 0 };
 
     let mut pending_write = false;
     let mut producer_error = None;
@@ -163,6 +182,22 @@ pub fn run_e2e_streaming_overlapped(
             if let Some(t) = &fault_tile {
                 stats.observe(t.lookup.capacity() * 4 + t.mask.capacity() * 2);
             }
+            let depth_unconf = (has_unconf && !time_mode).then(|| {
+                let ft = depth_unconf_faults.as_ref().map(|m| m.compute_tile(i0, i1, j0, j1));
+                let (maps, nh) = trends.horizon_maps().expect("layered model has horizon maps");
+                crate::unconformity::label_tile(
+                    trends.unconformities(),
+                    maps,
+                    nh,
+                    shape,
+                    i0,
+                    i1,
+                    j0,
+                    j1,
+                    ft.as_ref(),
+                    trends.salt(),
+                )
+            });
             let out_labels = time_mode.then(|| {
                 crate::time_mode::output_label_tile(
                     &trends,
@@ -196,6 +231,16 @@ pub fn run_e2e_streaming_overlapped(
                 let mut chunk_labels = Vec::with_capacity(n);
                 let mut chunk_salt = None;
                 let mut chunk_faults = None;
+                let mut chunk_unconf = None;
+                if let Some(du) = &depth_unconf {
+                    let mut v = Vec::with_capacity(n);
+                    for di in 0..ti {
+                        for dj in 0..tj {
+                            v.extend_from_slice(&du[(di * tj + dj) * nk + k0..][..tk]);
+                        }
+                    }
+                    chunk_unconf = Some(v);
+                }
                 if let Some(t) = &out_labels {
                     for di in 0..ti {
                         for dj in 0..tj {
@@ -215,6 +260,11 @@ pub fn run_e2e_streaming_overlapped(
                         t.chunk(fc, k0, k1, &mut v);
                         chunk_faults = Some(v);
                     }
+                    if let Some(uc) = &t.unconf {
+                        let mut v = Vec::with_capacity(n);
+                        t.chunk(uc, k0, k1, &mut v);
+                        chunk_unconf = Some(v);
+                    }
                 } else {
                     for di in 0..ti {
                         for dj in 0..tj {
@@ -226,7 +276,7 @@ pub fn run_e2e_streaming_overlapped(
                     }
                 }
                 if tx
-                    .send(([i_chunk, j_chunk, k_chunk], chunk_angles, chunk_labels, chunk_salt, chunk_faults))
+                    .send(([i_chunk, j_chunk, k_chunk], chunk_angles, chunk_labels, chunk_salt, chunk_faults, chunk_unconf))
                     .is_err()
                 {
                     producer_error = Some("overlap writer stopped while sending chunk".to_string());

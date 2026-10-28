@@ -547,6 +547,8 @@ pub struct OutputLabelTile {
     pub labels: Vec<u8>,
     pub faults: Option<Vec<u8>>,
     pub salt: Option<Vec<u8>>,
+    /// `unconformity_labels` (`None` without an applied unconformity).
+    pub unconf: Option<Vec<u8>>,
     /// Samples per column (`nt` in time mode, else `nz`).
     pub nk: usize,
 }
@@ -595,11 +597,18 @@ pub fn output_label_tile(
         crate::salt::salt_chunk(s, i0, i1, j0, j1, 0, nz, &mut out);
         out
     });
+    let depth_unconf = match model.horizon_maps() {
+        Some((maps, nh)) if crate::unconformity::applied(model.unconformities()).next().is_some() => Some(
+            crate::unconformity::label_tile(model.unconformities(), maps, nh, shape, i0, i1, j0, j1, fault_tile, salt),
+        ),
+        _ => None,
+    };
     match model.time() {
         None => OutputLabelTile {
             labels: depth_labels,
             faults: depth_faults,
             salt: depth_salt,
+            unconf: depth_unconf,
             nk: nz,
         },
         Some(axis) => {
@@ -609,6 +618,7 @@ pub fn output_label_tile(
                 labels: rs(&depth_labels),
                 faults: depth_faults.as_deref().map(rs),
                 salt: depth_salt.as_deref().map(rs),
+                unconf: depth_unconf.as_deref().map(rs),
                 nk: axis.nt,
             }
         }
@@ -621,6 +631,7 @@ pub struct OutputLabels {
     pub labels: Vec<u8>,
     pub faults: Option<Vec<u8>>,
     pub salt: Option<Vec<u8>>,
+    pub unconf: Option<Vec<u8>>,
     /// Output shape `(ni, nj, nk_out)`.
     pub shape: [usize; 3],
 }
@@ -638,6 +649,7 @@ pub fn generate_output_labels(cfg: &E2eConfig, labels: &[u8], model: &ElasticMod
             labels: labels.to_vec(),
             faults: crate::pipeline_stream::generate_fault_labels(cfg),
             salt: crate::salt::generate_salt_labels(cfg),
+            unconf: crate::pipeline_stream::generate_unconformity_labels(cfg),
             shape: oshape,
         };
     }
@@ -650,6 +662,9 @@ pub fn generate_output_labels(cfg: &E2eConfig, labels: &[u8], model: &ElasticMod
         labels: vec![0u8; ni * nj * nt],
         faults: faults.as_ref().map(|_| vec![0u8; ni * nj * nt]),
         salt: model.salt().map(|_| vec![0u8; ni * nj * nt]),
+        unconf: crate::unconformity::applied(model.unconformities())
+            .next()
+            .map(|_| vec![0u8; ni * nj * nt]),
         shape: oshape,
     };
     for i0 in (0..ni).step_by(ci) {
@@ -674,6 +689,9 @@ pub fn generate_output_labels(cfg: &E2eConfig, labels: &[u8], model: &ElasticMod
                         o[dst..dst + nt].copy_from_slice(&t[src..src + nt]);
                     }
                     if let (Some(o), Some(t)) = (out.salt.as_mut(), tile.salt.as_ref()) {
+                        o[dst..dst + nt].copy_from_slice(&t[src..src + nt]);
+                    }
+                    if let (Some(o), Some(t)) = (out.unconf.as_mut(), tile.unconf.as_ref()) {
                         o[dst..dst + nt].copy_from_slice(&t[src..src + nt]);
                     }
                 }
@@ -715,6 +733,19 @@ pub fn generate_salt_labels_output(cfg: &E2eConfig) -> Option<Vec<u8>> {
     let (labels, shape) = crate::pipeline_stream::generate_labels(cfg);
     let model = elastic_model(cfg, &labels, shape);
     generate_output_labels(cfg, &labels, &model).salt
+}
+
+/// `unconformity_labels` in the output domain (`None` without an applied
+/// unconformity; equals [`crate::pipeline_stream::generate_unconformity_labels`]
+/// on the legacy axis).
+pub fn generate_unconformity_labels_output(cfg: &E2eConfig) -> Option<Vec<u8>> {
+    if !cfg.time_enabled() {
+        return crate::pipeline_stream::generate_unconformity_labels(cfg);
+    }
+    crate::pipeline_stream::generate_unconformity_labels(cfg).as_ref()?;
+    let (labels, shape) = crate::pipeline_stream::generate_labels(cfg);
+    let model = elastic_model(cfg, &labels, shape);
+    generate_output_labels(cfg, &labels, &model).unconf
 }
 
 /// Root MDIO attributes of a time-mode store (spec §2): `time_conversion`

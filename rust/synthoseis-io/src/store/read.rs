@@ -3,6 +3,7 @@ use super::MdioStore;
 use crate::zarr::*;
 use crate::{
     err, Result, FAULT_LABELS_VARIABLE, LABELS_VARIABLE, PRIMARY_VARIABLE, SALT_LABELS_VARIABLE,
+    UNCONFORMITY_LABELS_VARIABLE,
 };
 use std::fs;
 
@@ -95,6 +96,23 @@ impl MdioStore {
     /// never written reads as the fill value 0. Memory: one chunk.
     pub fn read_salt_labels_chunk(&self, chunk_indices: [usize; 3]) -> Result<Vec<u8>> {
         self.read_u8_variable_chunk(SALT_LABELS_VARIABLE, 0, chunk_indices)
+    }
+
+    /// Read the unconformity-surface volume from `data/unconformity_labels`.
+    pub fn read_unconformity_labels_u8(&self) -> Result<Vec<u8>> {
+        self.read_u8_variable(UNCONFORMITY_LABELS_VARIABLE, 0)
+    }
+
+    /// Read one `data/unconformity_labels` chunk (same indexing as
+    /// [`Self::write_unconformity_labels_chunk`], samples fastest); a chunk
+    /// that was never written reads as the fill value 0.
+    pub fn read_unconformity_labels_chunk(&self, chunk_indices: [usize; 3]) -> Result<Vec<u8>> {
+        self.read_u8_variable_chunk(UNCONFORMITY_LABELS_VARIABLE, 0, chunk_indices)
+    }
+
+    /// Whether `data/unconformity_labels` exists in the store.
+    pub fn has_unconformity_labels(&self) -> bool {
+        self.root.join("data").join(UNCONFORMITY_LABELS_VARIABLE).join(".zarray").is_file()
     }
 
     fn read_u8_variable_chunk(&self, name: &str, fill: u8, idx: [usize; 3]) -> Result<Vec<u8>> {

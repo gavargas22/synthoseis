@@ -326,10 +326,10 @@ fn folded_maps_ordered_and_consistent() {
         };
         for seed in 1..=20u64 {
             let shape = [32, 28, 128];
-            let (p, nh) = layered_horizon_maps_with(seed, shape, Some(&cfg));
-            let (c, nh2) = layered_horizon_maps_continuous_with(seed, shape, Some(&cfg));
+            let (p, nh) = layered_horizon_maps_with(seed, shape, Some(&cfg), None);
+            let (c, nh2) = layered_horizon_maps_continuous_with(seed, shape, Some(&cfg), None);
             assert_eq!(nh, nh2);
-            let (_, nh0) = layered_horizon_maps_with(seed, shape, None);
+            let (_, nh0) = layered_horizon_maps_with(seed, shape, None, None);
             assert_eq!(nh, nh0, "layer count unchanged");
             for col in 0..shape[0] * shape[1] {
                 for h in 0..nh {
@@ -342,11 +342,11 @@ fn folded_maps_ordered_and_consistent() {
                 assert!(p[col * nh + nh - 1] >= shape[2] as f64 + 1.0);
             }
             // seabed unchanged
-            let (l, _) = layered_horizon_maps_continuous_with(seed, shape, None);
+            let (l, _) = layered_horizon_maps_continuous_with(seed, shape, None, None);
             for col in 0..shape[0] * shape[1] {
                 assert_eq!(c[col * nh], l[col * nh]);
             }
-            assert_ne!(p, layered_horizon_maps_with(seed, shape, None).0);
+            assert_ne!(p, layered_horizon_maps_with(seed, shape, None, None).0);
         }
     }
 }
