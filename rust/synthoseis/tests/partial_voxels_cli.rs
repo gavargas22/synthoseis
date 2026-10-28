@@ -147,7 +147,8 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
         ),
     ] {
         let d = dir.path().join(format!("{name}-default.mdio"));
-        let out = run(&base, &d);
+        // Folded geometry of #56 (unconformity spec §6.3): isolated, no re-pin.
+        let out = run(&with(&base, &["--legacy-unconformity"]), &d);
         assert!(out.status.success(), "{name}: {out:?}");
         let so = stdout(&out);
         assert!(
@@ -226,7 +227,7 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
         assert_ne!(store_hash(&r), store_hash(&d), "{name}: the default moves");
         let e = dir.path().join(format!("{name}-explicit.mdio"));
         assert!(run(
-            &with(&base, &["--partial-voxel-reflectivity", explicit]),
+            &with(&base, &["--legacy-unconformity", "--partial-voxel-reflectivity", explicit]),
             &e
         )
         .status
@@ -237,7 +238,7 @@ fn default_is_partial_and_legacy_whole_voxels_opts_out() {
             "{name}: default = explicit {explicit}"
         );
         let l = dir.path().join(format!("{name}-whole.mdio"));
-        let out = run(&with(&base, &["--legacy-whole-voxels"]), &l);
+        let out = run(&with(&base, &["--legacy-unconformity", "--legacy-whole-voxels"]), &l);
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(
             !stdout(&out).contains("partial voxels:") && !stdout(&out).contains("salt partial-voxel maps"),

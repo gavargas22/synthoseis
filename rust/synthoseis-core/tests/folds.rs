@@ -394,21 +394,30 @@ fn seed4_demo_sanity() {
 fn closures_seeds_1_to_20() {
     use synthoseis_core::pipeline::{E2eConfig, FaultConfig};
     use synthoseis_core::{closure_census, generate_labels};
-    let mut total = 0;
-    for seed in 1..=20u64 {
-        let c = E2eConfig {
-            seed,
-            inline_count: 64,
-            crossline_count: 64,
-            samples: 256,
-            faults: FaultConfig::with_count(4),
-            ..E2eConfig::default()
-        };
-        let (labels, sh) = generate_labels(&c);
-        total += closure_census(&c, &labels, sh).unwrap().kept();
-    }
-    assert!(total >= 76, "kept closures over seeds 1-20: {total}");
-    assert_eq!(total, 83);
+    let kept = |legacy_unconformity: bool| {
+        let mut total = 0;
+        for seed in 1..=20u64 {
+            let mut c = E2eConfig {
+                seed,
+                inline_count: 64,
+                crossline_count: 64,
+                samples: 256,
+                faults: FaultConfig::with_count(4),
+                ..E2eConfig::default()
+            };
+            c.rock_physics.legacy_unconformity = legacy_unconformity;
+            let (labels, sh) = generate_labels(&c);
+            total += closure_census(&c, &labels, sh).unwrap().kept();
+        }
+        total
+    };
+    // #56 head (`--legacy-unconformity`): 83. With the bevel: 78.
+    let legacy = kept(true);
+    assert!(legacy >= 76, "kept closures over seeds 1-20: {legacy}");
+    assert_eq!(legacy, 83);
+    let default = kept(false);
+    assert!(default >= 76, "kept closures over seeds 1-20 with unconformity: {default}");
+    assert_eq!(default, 78);
 }
 
 /// Build-once horizon maps: a run with the cached geometry is bit-identical

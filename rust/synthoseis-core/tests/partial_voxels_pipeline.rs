@@ -447,7 +447,10 @@ fn label_parity_on_vs_off() {
 #[test]
 fn faulted_label_guard() {
     let shape = [32, 32, 128];
-    for seed in [7u64, 1, 2, 3, 30] {
+    for (seed, legacy_unconf) in [7u64, 1, 2, 3, 30]
+        .into_iter()
+        .flat_map(|s| [(s, true), (s, false)])
+    {
         for salt in [false, true] {
             for faults in [0usize, 4] {
                 let mut cfg = with_pv(
@@ -463,21 +466,33 @@ fn faulted_label_guard() {
                 );
                 cfg.rock_physics = RockPhysicsConfig {
                     salt,
+                    legacy_unconformity: legacy_unconf,
                     ..cfg.rock_physics
                 };
                 let s = partial_voxel_summary(&cfg).unwrap();
                 let pct = 100.0 * s.stats.label_guard as f64 / s.stats.sediment as f64;
-                println!("PV B1 guard seed {seed} salt {salt} faults {faults}: {pct:.4}% | {s}");
+                println!("PV B1 guard seed {seed} legacy_unconf {legacy_unconf} salt {salt} faults {faults}: {pct:.4}% | {s}");
                 assert!(s.stats.sediment > 0);
                 if faults == 0 {
                     assert_eq!(s.stats.label_guard, 0, "seed {seed}: unfaulted guard");
                 } else {
                     assert!(pct <= 1.0, "seed {seed}: guard {pct}%");
                 }
-                if !salt && faults == 0 {
+                if !salt && faults == 0 && legacy_unconf {
                     assert_eq!(
                         s.stats.hidden_intervals, 0,
                         "seed {seed}: hidden intervals without salt"
+                    );
+                }
+                if !salt && faults == 0 && !legacy_unconf {
+                    // Onlap and truncation taper layers to zero thickness:
+                    // a sub-sample pinchout can hold a fraction without a
+                    // labelled cell (unconformity spec errata). Bounded.
+                    let columns = (shape[0] * shape[1]) as u64;
+                    assert!(
+                        s.stats.hidden_intervals * 5 <= columns,
+                        "seed {seed}: hidden intervals {} of {columns} columns",
+                        s.stats.hidden_intervals
                     );
                 }
             }

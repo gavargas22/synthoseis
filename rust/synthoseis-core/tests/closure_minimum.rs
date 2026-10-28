@@ -167,24 +167,27 @@ fn scaled_minimum_survival() {
             closure_census(&c, &labels, sh).unwrap().kept() > 0
         })
         .count();
-    let trap_500 = |legacy_fold: bool| {
+    let trap_500 = |legacy_fold: bool, legacy_unconf: bool| {
         (1..=12u64)
             .filter(|&s| {
                 let mut c = with_minimum(&cfg([32, 32, 128], 0, s), ClosureMinimum::LEGACY);
                 c.rock_physics.legacy_fold_geometry = legacy_fold;
+                c.rock_physics.legacy_unconformity = legacy_unconf;
                 let (labels, sh) = generate_labels(&c);
                 closure_census(&c, &labels, sh).unwrap().kept() > 0
             })
             .count()
     };
-    let with_trap_500 = trap_500(false);
-    // 8 at 7e80f2af (`--legacy-fold-geometry`); the folds move it.
-    assert_eq!(trap_500(true), 8);
+    let with_trap_500 = trap_500(false, false);
+    // 8 at 7e80f2af (`--legacy-fold-geometry`); the folds move it to 6
+    // (#56 head, `--legacy-unconformity`) and the unconformity to 5.
+    assert_eq!(trap_500(true, false), 8);
+    assert_eq!(trap_500(false, true), 6);
     eprintln!(
         "32x32x128 f0: seeds with a kept trap: {with_trap_500}/12 at 500, {with_trap}/12 scaled"
     );
     assert!(with_trap >= 8, "{with_trap}/12");
-    assert_eq!(with_trap_500, 6);
+    assert_eq!(with_trap_500, 5);
     assert_kept_volume(&[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)]);
 }
 
@@ -224,15 +227,18 @@ fn assert_kept_volume(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
 /// (`--legacy-fold-geometry`) and on the folded default (folds spec §7).
 #[test]
 fn salt_case_keeps_walled_closures_on_the_default() {
-    // 7e80f2af (`--legacy-fold-geometry`) and the folded default.
-    for (legacy_fold, want, kept, kept_500) in [
-        (true, &[1070, 632, 364, 351, 138, 6, 2, 1, 1, 1, 1, 1][..], 5, 2),
-        (false, &[618, 336, 245, 206, 171, 3, 2, 2, 2, 1, 1, 1, 1][..], 5, 1),
+    // 7e80f2af (`--legacy-fold-geometry`), the folded geometry of #56
+    // (`--legacy-unconformity`) and the default with the unconformity.
+    for (legacy_fold, legacy_unconf, want, kept, kept_500) in [
+        (true, false, &[1070, 632, 364, 351, 138, 6, 2, 1, 1, 1, 1, 1][..], 5, 2),
+        (false, true, &[618, 336, 245, 206, 171, 3, 2, 2, 2, 1, 1, 1, 1][..], 5, 1),
+        (false, false, &[618, 336, 206, 56, 3, 1, 1, 1][..], 4, 1),
     ] {
         let mut c = cfg([24, 20, 128], 4, 102);
         c.geometry = ToyGeometry::Layered;
         c.rock_physics.sand_layer_fraction = Some(0.4);
         c.rock_physics.legacy_fold_geometry = legacy_fold;
+        c.rock_physics.legacy_unconformity = legacy_unconf;
         let (labels, sh) = generate_labels(&c);
         let k = closure_census(&c, &labels, sh).unwrap();
         let mut sizes = k.sizes.clone();
@@ -242,7 +248,7 @@ fn salt_case_keeps_walled_closures_on_the_default() {
         assert_eq!((k.minimum, k.kept()), (20, kept));
         let legacy = closure_census(&with_minimum(&c, ClosureMinimum::LEGACY), &labels, sh).unwrap();
         assert_eq!(legacy.kept(), kept_500, "legacy_fold={legacy_fold}");
-        if !legacy_fold {
+        if !legacy_fold && legacy_unconf {
             continue_rest(&c, &labels, sh);
         }
     }

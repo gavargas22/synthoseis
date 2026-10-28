@@ -105,8 +105,11 @@ const MASTER_BAD1DAA8_DEMO: u64 = 0x99e8_6ae5_7a12_b80c;
 /// second temperature correction).
 /// 7e80f2af default, kept under `--legacy-fold-geometry` (folds spec §7).
 const SCALED_DEFAULT_DEMO_7E80: u64 = 0x39c8_c368_beaa_b05a;
-/// Folded default (analytic folds): moves labels, closures and stacks.
+/// Folded, no unconformity (#56 head; `--legacy-unconformity`): moves
+/// labels, closures and stacks against 7e80f2af.
 const SCALED_DEFAULT_DEMO: u64 = 0xaa6e_6db9_448b_ee99;
+/// Default (folds and the unconformity): new in the unconformity PR.
+const SCALED_DEFAULT_DEMO_UNCONF: u64 = 0x8396_031d_7c99_fcd5;
 const SCALED_DEFAULT_DEMO_7713: u64 = 0x2296_0b5b_2e8b_c16c;
 
 /// §6.8: both legacy flags reproduce the bad1daa8 default byte for byte
@@ -165,9 +168,11 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
         "{:#018x}",
         store_dir_hash(&new)
     );
-    // Folded default (folds spec §7): 4 compartments, 1 kept (7e80f2af: 3, 2 kept).
+    // Folded, no unconformity (#56 head 742367c8; unconformity spec §6.3,
+    // isolated with `--legacy-unconformity`): 4 compartments, 1 kept
+    // (7e80f2af: 3, 2 kept).
     let folded = dir.path().join("folded.mdio");
-    let out = run_folded(DEMO, &folded);
+    let out = run_folded(&[DEMO, &["--legacy-unconformity"]].concat(), &folded);
     assert!(out.status.success(), "{out:?}");
     assert!(
         String::from_utf8_lossy(&out.stdout)
@@ -179,6 +184,18 @@ fn legacy_closure_flags_reproduce_master_bad1daa8() {
         SCALED_DEFAULT_DEMO,
         "{:#018x}",
         store_dir_hash(&folded)
+    );
+    // Folded and unconformity default (bevel and ponded fill).
+    let uncf = dir.path().join("unconformity.mdio");
+    let out = run_folded(DEMO, &uncf);
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("unconformity 1: horizon "), "{stdout}");
+    assert_eq!(
+        store_dir_hash(&uncf),
+        SCALED_DEFAULT_DEMO_UNCONF,
+        "{:#018x}",
+        store_dir_hash(&uncf)
     );
     let rp = dir.path().join("legacy-rp.mdio");
     assert!(run(&[DEMO, &["--legacy-rock-physics", "--legacy-fold-geometry"]].concat(), &rp)

@@ -261,9 +261,12 @@ fn default_demo_cube_goldens() {
     assert_eq!(fnv(p.labels.iter().copied()), LAYERED_LABELS);
     assert_eq!(ah(&w.angle_stack), LAYERED_STACK15_PHYSICAL);
     assert_eq!(ah(&p.angle_stack), LAYERED_STACK15_PV_PHYSICAL);
-    // Analytic folds (default, folds spec §7): labels and both stacks move.
-    let (w, _) = generate_chunked(&whole(&phys));
-    let (p, _) = generate_chunked(&phys);
+    // Analytic folds (#56 head, `--legacy-unconformity`): labels and both
+    // stacks move.
+    let mut phys56 = phys.clone();
+    phys56.rock_physics.legacy_unconformity = true;
+    let (w, _) = generate_chunked(&whole(&phys56));
+    let (p, _) = generate_chunked(&phys56);
     eprintln!(
         "folded: labels {:#018x} whole {:#018x} partial {:#018x}",
         fnv(w.labels.iter().copied()),
@@ -274,7 +277,27 @@ fn default_demo_cube_goldens() {
     assert_eq!(fnv(p.labels.iter().copied()), LAYERED_LABELS_FOLDED);
     assert_eq!(ah(&w.angle_stack), LAYERED_STACK15_FOLDED);
     assert_eq!(ah(&p.angle_stack), LAYERED_STACK15_PV_FOLDED);
+    // Bevel and ponded fill (default, unconformity spec §6): labels and both
+    // stacks move again.
+    let (w, _) = generate_chunked(&whole(&phys));
+    let (p, _) = generate_chunked(&phys);
+    eprintln!(
+        "unconformity: labels {:#018x} whole {:#018x} partial {:#018x}",
+        fnv(w.labels.iter().copied()),
+        ah(&w.angle_stack),
+        ah(&p.angle_stack)
+    );
+    assert_ne!(fnv(w.labels.iter().copied()), LAYERED_LABELS_FOLDED);
+    assert_eq!(fnv(w.labels.iter().copied()), LAYERED_LABELS_UNCONF);
+    assert_eq!(fnv(p.labels.iter().copied()), LAYERED_LABELS_UNCONF);
+    assert_eq!(ah(&w.angle_stack), LAYERED_STACK15_UNCONF);
+    assert_eq!(ah(&p.angle_stack), LAYERED_STACK15_PV_UNCONF);
 }
+
+/// Unconformity default of the 64×64×128 seed-7 demo (unconformity spec §6).
+const LAYERED_LABELS_UNCONF: u64 = 0x7fa5_4e1a_0372_9f91;
+const LAYERED_STACK15_UNCONF: u64 = 0x3dd9_b242_0173_95dd;
+const LAYERED_STACK15_PV_UNCONF: u64 = 0x28df_e85b_8c3a_6ae3;
 
 /// Folded default of the 64×64×128 seed-7 demo (folds spec §7).
 const LAYERED_LABELS_FOLDED: u64 = 0xc9ce_0ab5_426d_9de0;

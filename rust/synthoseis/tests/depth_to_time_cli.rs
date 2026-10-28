@@ -126,9 +126,18 @@ const TIME_RICH_7E80: u64 = 0x61d5_eb6b_de70_e4a0;
 const TIME_MP_7E80: u64 = 0x7398_8c15_739a_69f7;
 // The time-mode default with the analytic folds (folds spec §7, moved:
 // labels, time and reflectivity follow the folded horizons).
+// Kept under `--legacy-unconformity` (PR #56 head 742367c8).
 const TIME_PLAIN: u64 = 0x3ccb_02ae_342d_a4b7;
 const TIME_RICH: u64 = 0xa436_e7b4_9e25_9573;
 const TIME_MP: u64 = 0x111e_77b5_144d_b4fd;
+// The time-mode default with the unconformity (unconformity spec §6.3,
+// moved: the bevel and the ponded fill change horizons, labels, burial and
+// shale seal).
+const TIME_PLAIN_UNCONF: u64 = 0x31c4_7b5a_cacb_1d7f;
+const TIME_RICH_UNCONF: u64 = 0xdd8d_9ebe_a236_7357;
+// MP is unchanged: its 8-sample cube has fewer than 10 horizons, so the
+// unconformity is skipped (spec D10).
+const TIME_MP_UNCONF: u64 = 0x111e_77b5_144d_b4fd;
 
 #[test]
 fn legacy_depth_as_time_reproduces_master_f3720fb2() {
@@ -194,14 +203,31 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
             continue;
         };
         let default = dir.path().join(format!("{name}-time.mdio"));
-        let out = run(base, &default);
+        let out = run(&with(base, &["--legacy-unconformity"]), &default);
         assert!(out.status.success(), "{name}: {out:?}");
         assert_eq!(
             store_hash(&default),
             time,
-            "{name}: time-mode default {:#018x}",
+            "{name}: time-mode folded geometry (#56) {:#018x}",
             store_hash(&default)
         );
+        let uncf = dir.path().join(format!("{name}-time-unconformity.mdio"));
+        let out = run(base, &uncf);
+        assert!(out.status.success(), "{name}: {out:?}");
+        let unconf_pin = match name {
+            "plain" => TIME_PLAIN_UNCONF,
+            "rich" => TIME_RICH_UNCONF,
+            _ => TIME_MP_UNCONF,
+        };
+        assert_eq!(
+            store_hash(&uncf),
+            unconf_pin,
+            "{name}: time-mode default with the unconformity {:#018x}",
+            store_hash(&uncf)
+        );
+        if name != "mp" {
+            assert_ne!(unconf_pin, time, "{name}: the unconformity moves the stack");
+        }
         assert_ne!(
             time, master,
             "{name}: time mode must differ from the legacy axis"
@@ -605,7 +631,7 @@ fn staircase_warning_and_gpu_fallback_log() {
     );
     assert_eq!(
         store_hash(&gpu),
-        TIME_PLAIN,
+        TIME_PLAIN_UNCONF,
         "--gpu time mode = CPU time mode"
     );
 }
