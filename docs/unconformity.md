@@ -31,7 +31,12 @@ horizon, `s = nh - 1 - u` its index from the seabed, `P = z_u`.
   voxels. It is a proxy for the missing overburden (a pure depth shift of
   the compaction trend), not a model of the removed section: the velocity
   step across the surface is small, `dVp` p10 / p50 / p90 = 2.8 / 15.4 /
-  35.9 m/s.
+  35.9 m/s. The step is the exhumation term only. The net velocity step
+  across the surface is not sign-consistent: with the default layer shifts
+  it is negative in 52% of columns.
+  What holds in every eroded column is that the exhumation term itself
+  raises Vp on the label voxel and nowhere above it
+  (`t9_velocity_step_sits_on_the_label_interface`, both kernels).
 * **Shale seal**: `--unconformity-shale below|above|both|none` (default
   `below`) forces the layer at the surface to shale.
 
@@ -47,8 +52,10 @@ column, carried through the fault lookup and cleared in salt. It is written
 only when an unconformity was applied (time mode too). The multi-process
 verifier compares it with the single-pass reference.
 
-Every column has exactly one crossing of the surface, so every column has
-exactly one label voxel outside salt (none inside salt):
+With one unconformity (N = 1) every column outside salt has exactly one label
+voxel, and none inside salt. That is the only case where one label voxel per
+column holds. With N = 2 and in time mode some columns carry fewer voxels
+than there are unconformities (see "Known limits" below). By mode:
 
 * **Depth, no faults**: the first sample at or below the surface (the layer
   boundary, as before).
@@ -62,11 +69,21 @@ exactly one label voxel outside salt (none inside salt):
   first time sample at or below it. The legacy axis
   (`--legacy-depth-as-time`) equals the depth labels exactly.
 
-Measured: 4 faults, 40 x 36 x 128, seeds 4, 7, 12, 3 (5760 columns): 0
-columns with two voxels and 0 with none (the earlier nearest-sample rule
-gave 97 duplicated and 754 vanished over the four seeds, 91 and 294 of 1440
-columns on seed 4 alone); time mode, seed 4, 32 x 28 x 128, 896 of 896
-columns carry one voxel, faulted and not
+### Known limits
+
+* **N = 1** (depth): 4 faults, 40 x 36 x 128, seeds 4, 7, 12, 3 (5760
+  columns): 0 columns with two voxels and 0 with none (the earlier
+  nearest-sample rule gave 97 duplicated and 754 vanished over the four
+  seeds, 91 and 294 of 1440 columns on seed 4 alone).
+* **N = 2** (depth): near the cube bottom the second surface can fall
+  below the last sample, so mark 2 is missing in those columns: 30 columns
+  in depth mode with faults.
+* **Time mode** (Vp-TWT axis): the label is the first time sample at or
+  below the converted surface, so a mark below the last time sample is
+  dropped: 75 columns (3.3%) without faults, 359 columns with faults.
+
+The verifier and the tests check the labels against the crossing rule, not
+against a count of one per column
 (`t8_labels_are_one_voxel_per_column_at_the_layer_boundary`,
 `t8_time_mode_labels`). The array is identical across every writer, tiling,
 worker and process count
@@ -135,3 +152,12 @@ cubes have none).
 See the PR body for the closure fractions, timing and the slope table
 (`cargo run --release -p synthoseis-core --example unconformity_demo --
 sweep|slopes|phases|OUT`, figures from `examples/plot_unconformity_demo.py`).
+
+## Timing
+
+Default runs take 7.9-8.0 s and `--legacy-unconformity` runs 7.8 s on the
+same cube: the difference is within run-to-run noise, so the unconformity
+pass has no measurable cost there and the default is not faster or slower
+than the legacy switch. Both are faster than the #56 head, for a reason
+that has not been traced, so the speed-up is not credited to the
+unconformity.

@@ -793,7 +793,8 @@ fn generate_fault_labels_for(c: &E2eConfig) -> Vec<u8> {
 }
 
 /// Time mode: the legacy axis equals the depth labels; the Vp-TWT axis
-/// carries exactly one voxel per mark, at the first output sample whose
+/// carries one voxel per mark inside the window (marks below the last
+/// sample are dropped), at the first output sample whose
 /// point-sampled layer label is at or below the surface (derived here from
 /// the output layer labels and the depth labels).
 #[test]
@@ -957,6 +958,30 @@ fn t9_velocity_step_sits_on_the_label_interface() {
     }
     assert_eq!(jitter_off, 3);
     assert!(total_jittered > 0, "no interface layer was jittered: the shift case is vacuous");
+}
+
+/// The same alignment through the `--legacy-rock-physics` kernel with an
+/// unconformity applied: the burial goes through the legacy depth reads,
+/// the properties are untouched without exhumation, and the step sits on
+/// the label interface with every layer shifted.
+#[test]
+fn t9_legacy_rock_physics_kernel_gets_the_exhumation_burial() {
+    use synthoseis_core::{elastic_model, ElasticModel};
+    for seed in [4u64, 7] {
+        let mut c = cfg(seed, [32, 28, 160]);
+        c.rock_physics.salt = false;
+        c.rock_physics.first_random_layer = 0;
+        c.rock_physics.legacy_rock_physics = true;
+        let (labels, shape) = generate_labels(&c);
+        let ElasticModel::Rpm(m) = elastic_model(&c, &labels, shape) else { panic!("rpm") };
+        assert!(!m.exhumation.is_empty(), "seed {seed}: no exhumation in the legacy kernel");
+        let (cols, aligned, reversed, _, jittered) = velocity_step_stats(&c, true);
+        eprintln!("legacy kernel seed {seed}: {cols} eroded columns, {aligned} aligned, {jittered} jittered");
+        assert!(cols > 20, "seed {seed}: only {cols} eroded columns");
+        assert_eq!(aligned, cols);
+        assert_eq!(reversed, 0);
+        assert!(jittered > 0, "no interface layer was jittered");
+    }
 }
 
 /// The two-unconformity case: every voxel of an interval without exhumation

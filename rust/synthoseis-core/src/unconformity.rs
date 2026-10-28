@@ -364,7 +364,8 @@ pub fn applied(records: &[UnconformityRecord]) -> impl Iterator<Item = &Unconfor
 /// (`(ti, tj, nk)`, samples fastest): the first voxel of the layer under
 /// each surface, i.e. the production map `maps[c, s]`. With faults it is the
 /// first output voxel at or below the surface in the faulted labels (the
-/// crossing, exactly one per column), and it is cleared in `salt`.
+/// crossing: one per column for N = 1, and mark 2 is missing where the
+/// second surface is below the last sample), and it is cleared in `salt`.
 #[allow(clippy::too_many_arguments)]
 pub fn label_tile(
     records: &[UnconformityRecord],

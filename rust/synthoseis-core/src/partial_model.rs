@@ -569,7 +569,7 @@ mod tests {
         let z = || vec![0f32; nk];
         let (mut r, mut p, mut s) = (z(), z(), z());
         let (mut ro, mut po, mut so_) = (z(), z(), z());
-        let (mut raised, mut same) = (0usize, 0usize);
+        let (mut raised, mut same, mut boundary, mut stepped) = (0usize, 0usize, 0usize, 0usize);
         for i in 0..ni {
             for j in 0..nj {
                 let c = i * nj + j;
@@ -587,9 +587,23 @@ mod tests {
                     let kind = PartKind::Interval { h, hc: false };
                     let a = on.part_properties(pm, kind, k, c, &sc.depth, &sc.kinds);
                     let b = off.part_properties(pm, kind, k, c, &so.depth, &so.kinds);
-                    if exhumation_at(&recs, c, h) > 0.0 {
+                    let e = exhumation_at(&recs, c, h);
+                    if e > 0.0 {
                         assert!(a.vp >= b.vp, "col {c} h {h}: Vp fell with more burial");
                         raised += usize::from(a.vp > b.vp);
+                        // The part takes the exhumation of its own interval
+                        // `h`, not of the one above: where `h` is the first
+                        // interval with erosion (or the exhumation steps
+                        // up at `h`) the part is raised, whatever `h - 1`
+                        // carries.
+                        let above = if h == 0 { 0.0 } else { exhumation_at(&recs, c, h - 1) };
+                        if above == 0.0 {
+                            boundary += 1;
+                            assert!(a.vp > b.vp, "col {c} h {h}: first eroded interval not raised");
+                        }
+                        if above != e {
+                            stepped += 1;
+                        }
                     } else {
                         assert_eq!((a.vp, a.vs, a.rho), (b.vp, b.vs, b.rho), "col {c} h {h}");
                         same += 1;
@@ -598,5 +612,6 @@ mod tests {
             }
         }
         assert!(raised > 100 && same > 100, "raised {raised}, unchanged {same}");
+        assert!(boundary > 10 && stepped >= boundary, "boundary parts {boundary}, stepped {stepped}");
     }
 }
