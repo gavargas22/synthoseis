@@ -15,10 +15,14 @@ Output-changing defaults are listed here with their opt-out flag.
   labels, closures and stacks change. New output `data/unconformity_labels`
   (u8, at the first sample at or below the surface; exactly one voxel per
   column outside salt for one unconformity, in depth, faulted or not. With
-  two unconformities mark 2 is missing in the columns whose second surface
-  is below the last sample (30 columns in depth mode with faults), and in
-  time mode a mark below the last time sample is dropped:
-  75 columns, 3.3%, without faults and 359 with faults), written only when
+  two unconformities mark 2 is missing near the cube bottom, and in time
+  mode a mark below the last time sample is dropped. Seed 2, 48x48x256
+  (2304 columns), no salt, N = 2, dt 4 ms: depth 0 missing without faults
+  and 30 (1.3%) with 4 faults; time 75 (3.3%) without faults and 389 with
+  4 faults (359 from the time resampling plus the 30 of depth mode). Seeds
+  1, 3, 4, 5, 6: 0 missing everywhere; over the six seeds: no faults 0
+  (depth) and 0.27% (time), 4 faults 0.11% and 1.41%. N = 1: 0 missing and
+  0 duplicated), written only when
   an unconformity was applied. The exhumation term is a depth
   shift of the compaction trend, a proxy rather than a model of the removed
   section. See `docs/unconformity.md`.

@@ -33,10 +33,13 @@ horizon, `s = nh - 1 - u` its index from the seabed, `P = z_u`.
   step across the surface is small, `dVp` p10 / p50 / p90 = 2.8 / 15.4 /
   35.9 m/s. The step is the exhumation term only. The net velocity step
   across the surface is not sign-consistent: with the default layer shifts
-  it is negative in 52% of columns.
-  What holds in every eroded column is that the exhumation term itself
-  raises Vp on the label voxel and nowhere above it
-  (`t9_velocity_step_sits_on_the_label_interface`, both kernels).
+  it is negative in 52% of eroded columns (12,290 of 23,579, 52.1%; 24.9%
+  with the layer shifts zeroed; 20 seeds, 48 x 48 x 256, no salt, physical
+  kernel). What holds in every eroded column is that the exhumation term
+  itself raises Vp on the label voxel and nowhere above it
+  (`t9_velocity_step_sits_on_the_label_interface` for the physical kernel,
+  `t9_legacy_rock_physics_kernel_gets_the_exhumation_burial` for
+  `--legacy-rock-physics`).
 * **Shale seal**: `--unconformity-shale below|above|both|none` (default
   `below`) forces the layer at the surface to shale.
 
@@ -76,11 +79,25 @@ than there are unconformities (see "Known limits" below). By mode:
   nearest-sample rule gave 97 duplicated and 754 vanished over the four
   seeds, 91 and 294 of 1440 columns on seed 4 alone).
 * **N = 2** (depth): near the cube bottom the second surface can fall
-  below the last sample, so mark 2 is missing in those columns: 30 columns
-  in depth mode with faults.
+  below the last sample, so mark 2 is missing in those columns.
 * **Time mode** (Vp-TWT axis): the label is the first time sample at or
   below the converted surface, so a mark below the last time sample is
-  dropped: 75 columns (3.3%) without faults, 359 columns with faults.
+  dropped.
+
+Counts for N = 2: seed 2, 48 x 48 x 256 (2304 columns), no salt,
+`rock_physics.unconformity.count = 2`, default dt 4 ms.
+
+| Mode | Faults | Columns without mark 2 |
+|---|---|---|
+| Depth | 0 | 0 of 2304 |
+| Depth | 4 | 30 of 2304 (1.3%) |
+| Time | 0 | 75 of 2304 (3.3%); depth has all 2304 |
+| Time | 4 | 389 of 2304: 359 dropped by the time resampling, on top of the 30 already missing in depth mode |
+
+Seeds 1, 3, 4, 5 and 6 have 0 missing columns in every mode and fault
+setting. Over all six seeds (27,648 mark-columns): no faults, 0 missing in
+depth and 0.27% in time; 4 faults, 0.11% in depth and 1.41% in time. N = 1
+gives 0 missing and 0 duplicated columns everywhere.
 
 The verifier and the tests check the labels against the crossing rule, not
 against a count of one per column
@@ -155,9 +172,9 @@ sweep|slopes|phases|OUT`, figures from `examples/plot_unconformity_demo.py`).
 
 ## Timing
 
-Default runs take 7.9-8.0 s and `--legacy-unconformity` runs 7.8 s on the
-same cube: the difference is within run-to-run noise, so the unconformity
-pass has no measurable cost there and the default is not faster or slower
+On 64 x 64 x 256, seed 4, 4 faults, default runs take 7.9-8.0 s and
+`--legacy-unconformity` runs 7.8 s: the difference is within run-to-run
+noise, so the unconformity pass has no measurable cost there and the default is not faster or slower
 than the legacy switch. Both are faster than the #56 head, for a reason
 that has not been traced, so the speed-up is not credited to the
 unconformity.
