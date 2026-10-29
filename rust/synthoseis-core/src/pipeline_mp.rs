@@ -156,6 +156,7 @@ pub fn run_worker_partition(
     worker_id: usize,
     store_path: &Path,
 ) -> Result<WorkingSetStats, String> {
+    synthoseis_rpm::reset_run_records();
     let cached = cfg.with_geometry_cache();
     let cfg = &cached;
     let part = plan
@@ -335,6 +336,7 @@ pub fn run_e2e_multiprocess(
     cfg: &E2eConfig,
     workers: usize,
 ) -> Result<(E2eReport, WorkingSetStats), String> {
+    synthoseis_rpm::reset_run_records();
     let cached = cfg.with_geometry_cache();
     let cfg = &cached;
     let (store_path, plan, _prep) = prepare_multiprocess_store(cfg, workers, cfg.chunk_shape)?;
