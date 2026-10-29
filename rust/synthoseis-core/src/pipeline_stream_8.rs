@@ -316,6 +316,12 @@ pub fn effective_wavelet<'a>(cfg: &E2eConfig, wavelet: &'a [f64]) -> &'a [f64] {
 /// used for parity checks and QC. Memory is the full `(ni, nj, nk)` output.
 ///
 /// In time mode this is the time-domain raw reflectivity `(ni, nj, nt)`.
+///
+/// Does not call [`synthoseis_rpm::reset_run_records`]: it adds to the
+/// process-wide per-run records (minimum Vp, NaN-guard count). Run entries
+/// (`run_e2e*`, [`crate::run_worker_partition`]) reset them first; a direct
+/// caller must call `synthoseis_rpm::reset_run_records()` itself before
+/// each run.
 pub fn generate_reflectivity(cfg: &E2eConfig, angle_deg: f64) -> Vec<f32> {
     let (labels, shape) = generate_labels(cfg);
     let [ni, nj, _] = shape;

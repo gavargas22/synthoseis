@@ -28,6 +28,7 @@ type WriteChunk = ([usize; 3], Vec<f32>, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8
 pub fn run_e2e_streaming_overlapped(
     cfg: &E2eConfig,
 ) -> Result<(E2eReport, WorkingSetStats), String> {
+    synthoseis_rpm::reset_run_records();
     let cached = cfg.with_geometry_cache();
     let cfg = &cached;
     let path = cfg

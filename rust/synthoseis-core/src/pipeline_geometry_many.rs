@@ -110,6 +110,7 @@ pub fn run_e2e_geometry_once_seismic_many(
     cfg: &E2eConfig,
     angles: &[f64],
 ) -> Result<(GeometryOnceReport, WorkingSetStats), String> {
+    synthoseis_rpm::reset_run_records();
     let cached = cfg.with_geometry_cache();
     let cfg = &cached;
     if angles.is_empty() {

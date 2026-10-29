@@ -11,6 +11,7 @@ pub fn run_e2e_strip_stitched(
     cfg: &E2eConfig,
     workers: usize,
 ) -> Result<(E2eReport, WorkingSetStats), String> {
+    synthoseis_rpm::reset_run_records();
     let cached = cfg.with_geometry_cache();
     let cfg = &cached;
     let workers = workers.max(1);
