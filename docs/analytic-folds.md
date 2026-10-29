@@ -49,8 +49,8 @@ Planar geometry, `--legacy-toy-depth` and the GPU path are untouched.
   scaled by 0.465, similar not scaled).
 * Runtime: folded runs are about 4 % slower than `--legacy-fold-geometry`
   (9.14 s vs 8.77 s, seed 4, 64×64×256, 4 faults, mean of 3, #56 review).
-  It is not geometry any more (the stack is built twice per run); more
-  closures to fill (83 vs 76 on seeds 1–20) is a likely cause, not verified.
+  Geometry is no longer the cause (the stack is now built only twice per
+  run); more closures to fill (83 vs 76 on seeds 1–20) is a likely cause, not verified.
 
 ## Flags
 
