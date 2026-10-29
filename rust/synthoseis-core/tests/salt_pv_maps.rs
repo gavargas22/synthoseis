@@ -138,6 +138,7 @@ fn far_field_and_output_change_gates_32() {
 fn far_field_gate_demo_64() {
     let mut c = demo(7, [64, 64, 256], 4);
     c.rock_physics.legacy_rock_physics = true;
+    c.rock_physics.legacy_fold_geometry = true;
     gates(&c, 0.005, 0, false);
 }
 
@@ -145,10 +146,19 @@ fn far_field_gate_demo_64() {
 /// the burial-depth dependent end-members move 3 far time labels vs
 /// `--no-salt` (of 2466 far columns x 256 samples), rel. RMS 0.0002. The
 /// 0-label gate above holds under `--legacy-rock-physics`.
+///
+/// Folded default (folds review, dip limit 2 samples/column): the salt now
+/// walls closure compartments that reach the far columns, so with fluids
+/// on the far field differs from `--no-salt` by rel. RMS 0.0205 and 70
+/// time labels, all of it fluid fill: with `fluids = false` it is rel. RMS
+/// 0.0001 and 0 labels (fluids on at the old limit 1: also 0.0001 and 0).
+/// The pv-maps gate is therefore checked with fluids off.
 #[test]
 #[ignore = "nightly: salt pv-maps far-field gate on the 64x64x256 demo, physical rock physics"]
 fn far_field_gate_demo_64_physical() {
-    gates(&demo(7, [64, 64, 256], 4), 0.005, 3, false);
+    let mut c = demo(7, [64, 64, 256], 4);
+    c.rock_physics.fluids = false;
+    gates(&c, 0.005, 3, false);
 }
 
 /// §8.4 depth-label identity: default vs rounded maps, seeds 7 and 1,
@@ -201,3 +211,4 @@ fn partial_voxel_counters_return_to_no_salt_level() {
     assert!(dg < 1.0, "label guard {dg} %");
     assert!(r < d, "rounded maps {r} >= default {d}");
 }
+

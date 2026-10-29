@@ -54,7 +54,7 @@ fn main() {
     let lateral: usize = arg(&args, 8, 3);
     std::fs::create_dir_all(&out).expect("create out dir");
 
-    let raw_cfg = E2eConfig {
+    let raw_cfg = E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed,

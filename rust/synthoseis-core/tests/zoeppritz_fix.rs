@@ -24,7 +24,7 @@ fn ah(v: &[f32]) -> u64 {
 }
 
 fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: synthoseis_core::TimeConfig::legacy(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed: 7,
@@ -40,7 +40,7 @@ fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
 }
 
 fn rich(rock: RockPhysicsConfig) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: synthoseis_core::TimeConfig::legacy(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed: 10,
@@ -77,6 +77,7 @@ fn legacy_z() -> RockPhysicsConfig {
         legacy_zoeppritz: true,
         // Master 33a3a93 predates the physical rock physics.
         legacy_rock_physics: true,
+        legacy_fold_geometry: true,
         ..RockPhysicsConfig::default()
     }
 }
@@ -166,6 +167,7 @@ fn fix_size_on_demo_cube() {
     // Both on the legacy trends: this measures the Zoeppritz fix only.
     let fixed = demo(RockPhysicsConfig {
         legacy_rock_physics: true,
+        legacy_fold_geometry: true,
         ..RockPhysicsConfig::default()
     });
     let old = demo(legacy_z());

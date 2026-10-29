@@ -111,6 +111,8 @@ pub fn run_e2e_geometry_once_seismic_many(
     angles: &[f64],
 ) -> Result<(GeometryOnceReport, WorkingSetStats), String> {
     synthoseis_rpm::reset_run_records();
+    let cached = cfg.with_geometry_cache();
+    let cfg = &cached;
     if angles.is_empty() {
         return Err("angles list must be non-empty".into());
     }
@@ -294,7 +296,7 @@ mod tests {
 
     #[test]
     fn geometry_once_labels_identical_and_stacks_match_single_angle() {
-        let cfg = E2eConfig {
+        let cfg = E2eConfig { maps_cache: Default::default(),
             time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
@@ -340,7 +342,7 @@ mod tests {
     fn geometry_once_mdio_sibling_stores() {
         let dir = tempdir().unwrap();
         let base = dir.path().join("out.mdio");
-        let cfg = E2eConfig {
+        let cfg = E2eConfig { maps_cache: Default::default(),
             time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
@@ -373,7 +375,7 @@ mod tests {
 
     #[test]
     fn geometry_once_does_not_regenerate_geology_n_times() {
-        let cfg = E2eConfig {
+        let cfg = E2eConfig { maps_cache: Default::default(),
             time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),
@@ -405,7 +407,7 @@ mod tests {
 
     /// Planar 16×16×32 cube of the geometry-once tests.
     fn geometry_once_cfg() -> E2eConfig {
-        E2eConfig {
+        E2eConfig { maps_cache: Default::default(),
             time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),

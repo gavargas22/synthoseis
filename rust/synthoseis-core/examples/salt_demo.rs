@@ -39,7 +39,7 @@ fn f32_bytes(v: &[f32]) -> Vec<u8> {
 }
 
 fn config(seed: u64, faults: usize, shape: [usize; 3], salt: bool) -> E2eConfig {
-    E2eConfig {
+    E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         geometry: ToyGeometry::Layered,
         seed,

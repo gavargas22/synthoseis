@@ -152,6 +152,8 @@ pub fn run_worker_partition(
     store_path: &Path,
 ) -> Result<WorkingSetStats, String> {
     synthoseis_rpm::reset_run_records();
+    let cached = cfg.with_geometry_cache();
+    let cfg = &cached;
     let part = plan
         .for_worker(worker_id)
         .ok_or_else(|| {
@@ -306,6 +308,8 @@ pub fn run_e2e_multiprocess(
     workers: usize,
 ) -> Result<(E2eReport, WorkingSetStats), String> {
     synthoseis_rpm::reset_run_records();
+    let cached = cfg.with_geometry_cache();
+    let cfg = &cached;
     let (store_path, plan, _prep) = prepare_multiprocess_store(cfg, workers, cfg.chunk_shape)?;
     for wid in 0..plan.worker_count {
         run_worker_partition(cfg, &plan, wid, &store_path)?;
@@ -323,7 +327,7 @@ mod tests {
     fn multiprocess_prepare_workers_finalize_parity() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("mp.mdio");
-        let cfg = E2eConfig {
+        let cfg = E2eConfig { maps_cache: Default::default(),
             time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),

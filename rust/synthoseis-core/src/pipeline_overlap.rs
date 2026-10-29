@@ -29,6 +29,8 @@ pub fn run_e2e_streaming_overlapped(
     cfg: &E2eConfig,
 ) -> Result<(E2eReport, WorkingSetStats), String> {
     synthoseis_rpm::reset_run_records();
+    let cached = cfg.with_geometry_cache();
+    let cfg = &cached;
     let path = cfg
         .store_path
         .as_ref()
@@ -317,7 +319,7 @@ mod tests {
 
     fn assert_overlap(shape: [usize; 3], chunks: [usize; 3], seed: u64) {
         let dir = tempdir().unwrap();
-        let cfg = E2eConfig {
+        let cfg = E2eConfig { maps_cache: Default::default(),
             time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),

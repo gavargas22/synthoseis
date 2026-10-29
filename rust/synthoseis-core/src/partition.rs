@@ -360,7 +360,7 @@ impl MultiWorkerRunner {
         ),
         String,
     > {
-        let cfg = crate::pipeline::E2eConfig {
+        let cfg = crate::pipeline::E2eConfig { maps_cache: Default::default(),
             time: time.clone(),
             faults: Default::default(),
             filters: Default::default(),

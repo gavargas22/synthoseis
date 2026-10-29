@@ -147,8 +147,8 @@ pub fn layer_thickness(seed: u64, layer: usize) -> f64 {
     THICKNESS_LOC + g
 }
 
-/// Unrounded horizon stack of [`layered_horizon_maps`], deepest first.
-fn layered_stack(seed: u64, shape: [usize; 3]) -> Vec<Vec<f64>> {
+/// Unrounded, **unfolded** horizon stack (master 7e80f2af), deepest first.
+pub fn layered_stack_unfolded(seed: u64, shape: [usize; 3]) -> Vec<Vec<f64>> {
     let [ni, nj, _nk] = shape;
     let n = ni * nj;
     let p = LayeredParams::new(seed, shape);
@@ -197,15 +197,60 @@ fn layered_stack(seed: u64, shape: [usize; 3]) -> Vec<Vec<f64>> {
     stack
 }
 
-/// Horizon maps `(ni, nj, nh)` in samples, shallow first (horizon 0 = seabed).
+/// Unrounded horizon stack of [`layered_horizon_maps_with`], deepest
+/// first: the 7e80f2af stack, then the analytic folds when `fold` is
+/// `Some` (`None` = `--legacy-fold-geometry`). The layer count and every
+/// existing draw are unchanged (folds use their own stream).
+pub fn layered_stack(seed: u64, shape: [usize; 3], fold: Option<&crate::folds::FoldConfig>) -> Vec<Vec<f64>> {
+    let mut stack = layered_stack_unfolded(seed, shape);
+    if let Some(cfg) = fold {
+        crate::folds::apply_folds(&mut stack, seed, shape, cfg);
+    }
+    stack
+}
+
+/// The fold set [`layered_stack`] draws for `cfg` (for the run summary).
+pub fn layered_fold_set(seed: u64, shape: [usize; 3], cfg: &crate::folds::FoldConfig) -> crate::folds::FoldSet {
+    let stack = layered_stack_unfolded(seed, shape);
+    let tp = crate::folds::taper(&stack, cfg);
+    crate::folds::FoldSet::draw(seed, shape, cfg, &tp)
+}
+
+/// [`layered_horizon_maps_with`] with the default folds.
 pub fn layered_horizon_maps(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
+    layered_horizon_maps_with(seed, shape, Some(&crate::folds::FoldConfig::default()))
+}
+
+/// [`layered_horizon_maps_continuous_with`] with the default folds.
+pub fn layered_horizon_maps_continuous(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
+    layered_horizon_maps_continuous_with(seed, shape, Some(&crate::folds::FoldConfig::default()))
+}
+
+/// Horizon maps `(ni, nj, nh)` in samples, shallow first (horizon 0 = seabed).
+pub fn layered_horizon_maps_with(seed: u64, shape: [usize; 3], fold: Option<&crate::folds::FoldConfig>) -> (Vec<f64>, usize) {
+    layered_production_maps(&layered_stack(seed, shape, fold), shape)
+}
+pub fn layered_horizon_maps_continuous_with(seed: u64, shape: [usize; 3], fold: Option<&crate::folds::FoldConfig>) -> (Vec<f64>, usize) {
+    layered_continuous_maps(&layered_stack(seed, shape, fold), shape)
+}
+
+/// Production and continuous maps from one [`layered_stack`] (build once).
+pub fn layered_horizon_maps_both(
+    seed: u64,
+    shape: [usize; 3],
+    fold: Option<&crate::folds::FoldConfig>,
+) -> ((Vec<f64>, usize), (Vec<f64>, usize)) {
+    let stack = layered_stack(seed, shape, fold);
+    (layered_production_maps(&stack, shape), layered_continuous_maps(&stack, shape))
+}
+
+/// Whole-sample maps of a stack (deepest first).
+fn layered_production_maps(stack: &[Vec<f64>], shape: [usize; 3]) -> (Vec<f64>, usize) {
     let [ni, nj, _nk] = shape;
     let n = ni * nj;
-    let mut stack = layered_stack(seed, shape);
-    stack.reverse();
     let nh = stack.len();
     let mut maps = vec![0.0f64; n * nh];
-    for (h, m) in stack.iter().enumerate() {
+    for (h, m) in stack.iter().rev().enumerate() {
         for c in 0..n {
             // Whole samples: the label fill takes `[ceil(z_h), floor(z_h+1))`,
             // so fractional horizons would leave a one-sample unfilled (255)
@@ -217,20 +262,13 @@ pub fn layered_horizon_maps(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
     (maps, nh)
 }
 
-/// Continuous (unrounded) counterpart of [`layered_horizon_maps`]
-/// (partial-voxels spec §3.1): the same f64 stack before `.round()`, with the
-/// non-negative-thickness push applied as `z_{i-1} = min(z_{i-1}, z_i)` for
-/// `i = nh-1 … 2` (the same cascade as `enforce_nonnegative_thicknesses`
-/// without its `deep − (deep − shallow)` rounding). Rounding is monotone, so
-/// `round(continuous) == layered_horizon_maps` exactly.
-pub fn layered_horizon_maps_continuous(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
+/// Continuous maps of a stack (deepest first).
+fn layered_continuous_maps(stack: &[Vec<f64>], shape: [usize; 3]) -> (Vec<f64>, usize) {
     let [ni, nj, _nk] = shape;
     let n = ni * nj;
-    let mut stack = layered_stack(seed, shape);
-    stack.reverse();
     let nh = stack.len();
     let mut maps = vec![0.0f64; n * nh];
-    for (h, m) in stack.iter().enumerate() {
+    for (h, m) in stack.iter().rev().enumerate() {
         for c in 0..n {
             maps[c * nh + h] = m[c];
         }

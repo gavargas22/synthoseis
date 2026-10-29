@@ -33,6 +33,7 @@ fn master_cfg(c: &E2eConfig) -> E2eConfig {
     c.time.legacy_filter_edges = true;
     // ... and the physical rock physics (gassmann spec §7).
     c.rock_physics.legacy_rock_physics = true;
+    c.rock_physics.legacy_fold_geometry = true;
     c
 }
 

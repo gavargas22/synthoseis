@@ -75,6 +75,9 @@ pub struct E2eConfig {
     /// `rock_physics.legacy_toy_depth` (no physical Vp). See
     /// `docs/depth-to-time.md`.
     pub time: TimeConfig,
+    /// Horizon maps and salt body built once per run
+    /// ([`E2eConfig::with_geometry_cache`]); empty by default.
+    pub maps_cache: crate::geometry_cache::GeometryCache,
 }
 
 /// Post-convolution filters applied to each fused angle-stack tile.
@@ -441,7 +444,20 @@ impl Default for E2eConfig {
             rock_physics: RockPhysicsConfig::default(),
             geometry: ToyGeometry::default(),
             time: TimeConfig::default(),
+            maps_cache: Default::default(),
         }
+    }
+}
+
+impl E2eConfig {
+    /// This configuration with its horizon maps and salt body built once
+    /// (a cheap clone when they already are and still match).
+    pub fn with_geometry_cache(&self) -> E2eConfig {
+        let mut c = self.clone();
+        if crate::geometry_cache::GeometryCache::get(self).is_none() {
+            c.maps_cache = crate::geometry_cache::GeometryCache::build(self);
+        }
+        c
     }
 }
 
@@ -826,6 +842,8 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
 /// Run the full e2e path: generate → (optional MDIO write) → second-pass parity.
 pub fn run_e2e(cfg: &E2eConfig) -> Result<E2eReport, String> {
     synthoseis_rpm::reset_run_records();
+    let cached = cfg.with_geometry_cache();
+    let cfg = &cached;
     cfg.validate_time()?;
     crate::pipeline_stream::SeismicFilters::from_config(cfg)?;
     let volumes = generate_tiny_cube(cfg);

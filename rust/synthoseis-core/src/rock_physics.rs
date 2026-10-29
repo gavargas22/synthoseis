@@ -265,6 +265,11 @@ pub struct RockPhysicsConfig {
     pub legacy_rock_physics: bool,
     /// Parameters of the physical model (ignored when legacy).
     pub phys: PhysParams,
+    /// Legacy switch: no analytic folds (master 7e80f2af layered geometry,
+    /// byte for byte). CLI `--legacy-fold-geometry`. See [`crate::folds`].
+    pub legacy_fold_geometry: bool,
+    /// Analytic folds of the layered geometry (ignored when legacy).
+    pub fold: crate::folds::FoldConfig,
 }
 
 impl Default for RockPhysicsConfig {
@@ -296,6 +301,8 @@ impl Default for RockPhysicsConfig {
             partial_voxels: crate::partial_voxels::PartialVoxelConfig::default(),
             legacy_rock_physics: false,
             phys: PhysParams::default(),
+            legacy_fold_geometry: false,
+            fold: crate::folds::FoldConfig::default(),
         }
     }
 }
@@ -331,7 +338,20 @@ impl RockPhysicsConfig {
         }
     }
 
+    /// Fold configuration of the layered geometry: `None` with
+    /// `--legacy-fold-geometry` or `--legacy-toy-depth`.
+    pub fn fold_config(&self) -> Option<&crate::folds::FoldConfig> {
+        if self.legacy_fold_geometry || self.legacy_toy_depth {
+            None
+        } else {
+            Some(&self.fold)
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(f) = self.fold_config() {
+            f.validate()?;
+        }
         if !self.legacy_rock_physics {
             self.phys.validate()?;
         }

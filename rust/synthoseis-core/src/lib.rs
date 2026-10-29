@@ -126,7 +126,7 @@ impl SingleWorkerRunner {
         time: &pipeline::TimeConfig,
     ) -> Result<pipeline::E2eReport, String> {
         // Tiny-cube floor: bump sub-8³ defaults (CLI smoke uses 8³).
-        let cfg = pipeline::E2eConfig {
+        let cfg = pipeline::E2eConfig { maps_cache: Default::default(),
             time: time.clone(),
             faults: Default::default(),
             filters: Default::default(),
@@ -144,6 +144,8 @@ impl SingleWorkerRunner {
 }
 
 pub mod closure_segments;
+pub mod folds;
+pub mod geometry_cache;
 pub mod lithology;
 pub mod parity;
 pub mod partial_model;
@@ -201,6 +203,7 @@ pub use time_mode::{
     generate_salt_labels_output, time_column_summary, OutputLabels, TimeColumnSummary,
 };
 pub use toy_geometry::ToyGeometry;
+pub use folds::{FoldConfig, FoldStyle};
 
 #[cfg(test)]
 mod tests {
@@ -293,7 +296,7 @@ mod tests {
     fn multiprocess_api_parity_via_exports() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mp-api.mdio");
-        let cfg = pipeline::E2eConfig {
+        let cfg = pipeline::E2eConfig { maps_cache: Default::default(),
             time: Default::default(),
             geometry: crate::ToyGeometry::Planar,
             faults: Default::default(),

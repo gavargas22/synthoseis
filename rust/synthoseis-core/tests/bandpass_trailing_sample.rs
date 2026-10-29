@@ -106,6 +106,7 @@ fn check(c: &E2eConfig, want: u64, what: &str) {
     let mut c = whole(c);
     // These goldens predate the physical rock physics (gassmann spec §7).
     c.rock_physics.legacy_rock_physics = true;
+    c.rock_physics.legacy_fold_geometry = true;
     let c = &c;
     let (v, _) = generate_chunked(c);
     assert_eq!(angle_hash(&v.angle_stack), want, "chunked {what}: {:#018x}", angle_hash(&v.angle_stack));

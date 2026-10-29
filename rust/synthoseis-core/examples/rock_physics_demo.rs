@@ -67,7 +67,7 @@ fn main() {
     let nk: usize = arg(&args, 5, 128);
     std::fs::create_dir_all(&out).expect("create out dir");
 
-    let base = E2eConfig {
+    let base = E2eConfig { maps_cache: Default::default(),
         time: Default::default(),
         geometry: synthoseis_core::ToyGeometry::Planar,
         seed,
