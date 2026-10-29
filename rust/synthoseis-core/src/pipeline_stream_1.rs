@@ -48,11 +48,23 @@ pub const DEFAULT_INCIDENCE_DEG: f64 = 15.0;
 ///
 /// Bit-identical to [`crate::pipeline::generate_tiny_cube`] for the same seed
 /// at [`DEFAULT_INCIDENCE_DEG`].
+///
+/// Does not call [`synthoseis_rpm::reset_run_records`]: it adds to the
+/// process-wide per-run records (minimum Vp, NaN-guard count). Run entries
+/// (`run_e2e*`, [`crate::run_worker_partition`]) reset them first; a direct
+/// caller must call `synthoseis_rpm::reset_run_records()` itself before
+/// each run.
 pub fn generate_chunked(cfg: &E2eConfig) -> (E2eVolumes, WorkingSetStats) {
     generate_chunked_at_angle(cfg, DEFAULT_INCIDENCE_DEG)
 }
 
 /// Like [`generate_chunked`], but with an explicit Zoeppritz incidence angle.
+///
+/// Does not call [`synthoseis_rpm::reset_run_records`]: it adds to the
+/// process-wide per-run records (minimum Vp, NaN-guard count). Run entries
+/// (`run_e2e*`, [`crate::run_worker_partition`]) reset them first; a direct
+/// caller must call `synthoseis_rpm::reset_run_records()` itself before
+/// each run.
 pub fn generate_chunked_at_angle(cfg: &E2eConfig, angle_deg: f64) -> (E2eVolumes, WorkingSetStats) {
     let (labels, shape) = generate_labels(cfg);
     generate_angle_stack_from_labels(cfg, &labels, shape, angle_deg)
@@ -64,6 +76,12 @@ pub fn generate_chunked_at_angle(cfg: &E2eConfig, angle_deg: f64) -> (E2eVolumes
 /// enabled; see [`fuse_tile_filtered`]. `labels` are the depth labels
 /// ([`generate_labels`]); the returned volumes are in the output domain
 /// (`(ni, nj, nt)` angle stack and time-domain labels in time mode).
+///
+/// Does not call [`synthoseis_rpm::reset_run_records`]: it adds to the
+/// process-wide per-run records (minimum Vp, NaN-guard count). Run entries
+/// (`run_e2e*`, [`crate::run_worker_partition`]) reset them first; a direct
+/// caller must call `synthoseis_rpm::reset_run_records()` itself before
+/// each run.
 pub fn generate_angle_stack_from_labels(
     cfg: &E2eConfig,
     labels: &[u8],

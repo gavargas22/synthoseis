@@ -673,6 +673,12 @@ pub struct E2eReport {
 }
 
 /// Generate labels + angle stack for a tiny cube (deterministic for fixed seed).
+///
+/// Does not call [`synthoseis_rpm::reset_run_records`]: it adds to the
+/// process-wide per-run records (minimum Vp, NaN-guard count). Run entries
+/// (`run_e2e*`, [`crate::run_worker_partition`]) reset them first; a direct
+/// caller must call `synthoseis_rpm::reset_run_records()` itself before
+/// each run.
 pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     let [ni, nj, nk] = cfg.shape();
     assert!(nk >= 2, "need at least 2 samples for reflectivity");
@@ -819,6 +825,7 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
 
 /// Run the full e2e path: generate → (optional MDIO write) → second-pass parity.
 pub fn run_e2e(cfg: &E2eConfig) -> Result<E2eReport, String> {
+    synthoseis_rpm::reset_run_records();
     cfg.validate_time()?;
     crate::pipeline_stream::SeismicFilters::from_config(cfg)?;
     let volumes = generate_tiny_cube(cfg);
