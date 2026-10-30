@@ -169,3 +169,48 @@ fn fold_flags_reach_multiprocess_workers() {
         );
     }
 }
+
+/// Tiling at 64 columns (review nit on #56): the 8-cubed tiling checks never
+/// reach the dip limit, so these seed-4 cubes are sized so that it binds
+/// (the summary must say "all folds scaled by"), for both styles. A
+/// 64-column cube cut into uneven 7 x 5 or 16 x 3 tiles equals the one-tile
+/// store. (`--shape` is single-worker only, so the multi-process path stays
+/// with `fold_flags_reach_multiprocess_workers`.)
+#[test]
+fn folds_scaled_path_tile_invariant_at_64_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    for (tag, flags) in [
+        ("similar", &["--shape", "64,16,256"][..]),
+        (
+            "parallel",
+            &["--shape", "64,16,64", "--fold-style", "parallel"][..],
+        ),
+    ] {
+        let seed = ["--seed", "4"];
+        let whole = dir.path().join(format!("{tag}-whole.mdio"));
+        let out = run(
+            &[
+                &seed[..],
+                flags,
+                &["--chunk-i", "64", "--chunk-j", "16"][..],
+            ]
+            .concat(),
+            &whole,
+        );
+        assert!(out.status.success(), "{tag}: {out:?}");
+        assert!(
+            stdout(&out).contains("(all folds scaled by "),
+            "{tag}: the dip limit must bind: {}",
+            stdout(&out)
+        );
+        for (mode, tiles) in [
+            ("7x5", ["--chunk-i", "7", "--chunk-j", "5"]),
+            ("16x3", ["--chunk-i", "16", "--chunk-j", "3"]),
+        ] {
+            let p = dir.path().join(format!("{tag}-{mode}.mdio"));
+            let out = run(&[&seed[..], flags, &tiles[..]].concat(), &p);
+            assert!(out.status.success(), "{tag} {mode}: {out:?}");
+            assert_eq!(volume(&whole), volume(&p), "{tag} {mode}: = one tile");
+        }
+    }
+}

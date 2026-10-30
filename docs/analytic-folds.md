@@ -41,6 +41,17 @@ Planar geometry, `--legacy-toy-depth` and the GPU path are untouched.
   `depth_step_m` is a follow-up.
 * Draws: own stream `STREAM_FOLD = 0xF01D`; every existing draw unchanged.
 
+## Known limits
+
+* Parallel-style folds are visibly weaker than similar-style ones on the
+  same seed: the parallel curvature limit (`t κ_max ≤ 0.8`) binds, so the
+  shared factor scales them down further (seed 4, 64×16×64: parallel
+  scaled by 0.465, similar not scaled).
+* Runtime: folded runs are about 4 % slower than `--legacy-fold-geometry`
+  (9.14 s vs 8.77 s, seed 4, 64×64×256, 4 faults, mean of 3, #56 review).
+  Geometry is no longer the cause (the stack is now built only twice per
+  run); more closures to fill (83 vs 76 on seeds 1–20) is a likely cause, not verified.
+
 ## Flags
 
 | Flag | Default | Range |
