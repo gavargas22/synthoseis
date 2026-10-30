@@ -270,6 +270,18 @@ pub struct RockPhysicsConfig {
     pub legacy_fold_geometry: bool,
     /// Analytic folds of the layered geometry (ignored when legacy).
     pub fold: crate::folds::FoldConfig,
+    /// Legacy switch: no unconformities (the #56 layered geometry, byte for
+    /// byte). CLI `--legacy-unconformity`. Implied by `legacy_fold_geometry`
+    /// and `legacy_toy_depth`. See [`crate::unconformity`].
+    pub legacy_unconformity: bool,
+    /// Angular unconformities of the layered geometry (ignored when legacy
+    /// or `count == 0`).
+    pub unconformity: crate::unconformity::UnconformityConfig,
+    /// Add the eroded thickness to the burial of the layers below each
+    /// unconformity (default on; CLI `--no-exhumation-burial`).
+    pub exhumation_burial: bool,
+    /// Shale seal at the unconformity (CLI `--unconformity-shale`).
+    pub unconformity_shale: crate::lithology::UnconformityShale,
 }
 
 impl Default for RockPhysicsConfig {
@@ -303,6 +315,10 @@ impl Default for RockPhysicsConfig {
             phys: PhysParams::default(),
             legacy_fold_geometry: false,
             fold: crate::folds::FoldConfig::default(),
+            legacy_unconformity: false,
+            unconformity: crate::unconformity::UnconformityConfig::default(),
+            exhumation_burial: true,
+            unconformity_shale: crate::lithology::UnconformityShale::default(),
         }
     }
 }
@@ -348,9 +364,23 @@ impl RockPhysicsConfig {
         }
     }
 
+    /// Unconformity configuration of the layered geometry: `None` with
+    /// `--legacy-unconformity`, `--legacy-fold-geometry`,
+    /// `--legacy-toy-depth` or `--unconformities 0`.
+    pub fn unconformity_config(&self) -> Option<&crate::unconformity::UnconformityConfig> {
+        if self.legacy_unconformity || self.legacy_fold_geometry || self.legacy_toy_depth || self.unconformity.count == 0 {
+            None
+        } else {
+            Some(&self.unconformity)
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if let Some(f) = self.fold_config() {
             f.validate()?;
+        }
+        if self.unconformity_config().is_some() {
+            self.unconformity.validate()?;
         }
         if !self.legacy_rock_physics {
             self.phys.validate()?;
@@ -879,6 +909,11 @@ pub struct RpmModel {
     pub partial: Option<Box<crate::partial_model::PartialModel>>,
     /// Legacy trends or the physical chain ([`RockPhysicsConfig::rock_model`]).
     pub rock: RockModel,
+    /// Unconformities of the geometry (labels); empty without any.
+    pub unconformities: std::sync::Arc<Vec<crate::unconformity::UnconformityRecord>>,
+    /// Unconformities whose eroded thickness is added to the burial of the
+    /// layers below (empty with `--no-exhumation-burial`).
+    pub exhumation: std::sync::Arc<Vec<crate::unconformity::UnconformityRecord>>,
 }
 
 /// Elastic properties used by every fuse path.
@@ -900,13 +935,7 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
     }
     let (maps, nh) = crate::pipeline_stream::toy_horizon_maps(cfg);
     let rp = &cfg.rock_physics;
-    let sand = crate::lithology::interval_sand(
-        cfg.effective_lithology(),
-        cfg.seed,
-        nh,
-        rp.sand_layer_fraction,
-        rp.sand_layer_thickness,
-    );
+    let sand = crate::pipeline_stream::sealed_interval_sand(cfg, nh);
     let rp = RockPhysicsConfig {
         closures_per_layer: cfg.effective_closures_per_layer(),
         ..rp.clone()
@@ -914,6 +943,13 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
     let salt = crate::salt::salt_body(cfg);
     let mut model = RpmModel::build_with_salt(cfg.seed, &rp, &maps, nh, labels, shape, &sand, salt);
     model.time = cfg.time_axis();
+    if rp.unconformity_config().is_some() {
+        let recs = crate::pipeline_stream::unconformity_records(cfg);
+        if rp.exhumation_burial {
+            model.exhumation = recs.clone();
+        }
+        model.unconformities = recs;
+    }
     if let Some(r) = cfg.effective_partial_voxels() {
         model.partial = Some(Box::new(crate::partial_model::PartialModel::build(cfg, &model, &rp, &sand, r)));
     }
@@ -963,13 +999,7 @@ pub fn closure_census(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Opti
     }
     let [ni, nj, nk] = shape;
     let (maps, nh) = crate::pipeline_stream::toy_horizon_maps(cfg);
-    let sand = crate::lithology::interval_sand(
-        cfg.effective_lithology(),
-        cfg.seed,
-        nh,
-        rp.sand_layer_fraction,
-        rp.sand_layer_thickness,
-    );
+    let sand = crate::pipeline_stream::sealed_interval_sand(cfg, nh);
     let salt = crate::salt::salt_body(cfg);
     let intervals = label_intervals(&maps, ni, nj, nh, nk);
     let max_column = rp.max_column_m / rp.depth_step_m;
@@ -1151,6 +1181,22 @@ impl RpmModel {
             time: None,
             partial: None,
             rock: rp.rock_model(),
+            unconformities: Default::default(),
+            exhumation: Default::default(),
+        }
+    }
+
+    /// Extra burial (metres) of interval `h` in column `c` from the
+    /// exhumation of the unconformities at or above it (spec §3.6; 0 without
+    /// any). Added to the shifted depth lookup of each voxel of the interval,
+    /// not to the depth trace, so the velocity step stays on the label
+    /// interface whatever the legacy layer and property shifts are.
+    #[inline]
+    pub fn exhumation_m(&self, c: usize, h: usize) -> f32 {
+        if self.exhumation.is_empty() {
+            0.0
+        } else {
+            crate::unconformity::exhumation_at(&self.exhumation, c, h) * self.step
         }
     }
 
@@ -1206,6 +1252,7 @@ impl RpmModel {
                     layer: lab as usize,
                     ng,
                     fluid,
+                    extra_m: self.exhumation_m(c, l.interval),
                 }
             } else {
                 VoxelKind::Unfilled
@@ -1249,6 +1296,29 @@ pub struct ColumnScratch {
 }
 
 impl ElasticModel {
+    /// Unconformity records of the model's geometry (empty without any, and
+    /// for the master toy model).
+    pub fn unconformities(&self) -> &[crate::unconformity::UnconformityRecord] {
+        match self {
+            ElasticModel::Rpm(m) => &m.unconformities,
+            ElasticModel::LegacyToy(_) => &[],
+        }
+    }
+
+    /// Whether an unconformity was applied (`unconformity_labels` exist).
+    pub fn has_unconformity(&self) -> bool {
+        crate::unconformity::applied(self.unconformities()).next().is_some()
+    }
+
+    /// Unfaulted production horizon maps `(ni*nj, nh)` of the model (`None`
+    /// for the master toy model).
+    pub fn horizon_maps(&self) -> Option<(&[f64], usize)> {
+        match self {
+            ElasticModel::Rpm(m) => Some((&m.maps, m.nh)),
+            ElasticModel::LegacyToy(_) => None,
+        }
+    }
+
     /// Salt body of the model (`None` without salt).
     pub fn salt(&self) -> Option<&crate::salt::SaltBody> {
         match self {

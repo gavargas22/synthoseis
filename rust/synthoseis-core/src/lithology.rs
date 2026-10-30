@@ -171,6 +171,57 @@ pub fn interval_sand(
     }
 }
 
+/// Where the shale seal of an unconformity goes (spec §3.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UnconformityShale {
+    /// Interval `s`, the layer under the surface (default).
+    #[default]
+    Below,
+    /// Interval `s - 1`, the first layer onlapping the surface.
+    Above,
+    Both,
+    /// No seal: the Markov chain is left as drawn.
+    None,
+}
+
+impl UnconformityShale {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UnconformityShale::Below => "below",
+            UnconformityShale::Above => "above",
+            UnconformityShale::Both => "both",
+            UnconformityShale::None => "none",
+        }
+    }
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "below" => Ok(Self::Below),
+            "above" => Ok(Self::Above),
+            "both" => Ok(Self::Both),
+            "none" => Ok(Self::None),
+            o => Err(format!("--unconformity-shale must be below, above, both or none, got {o:?}")),
+        }
+    }
+}
+
+/// Force shale (`false`) at the intervals next to each unconformity surface
+/// `s` (shallow-first horizon index). Applied after the Markov draws, so the
+/// chain of every other interval is unchanged.
+pub fn apply_unconformity_seal(sand: &mut [bool], surfaces: &[usize], mode: UnconformityShale) {
+    for &s in surfaces {
+        if matches!(mode, UnconformityShale::Below | UnconformityShale::Both) {
+            if let Some(v) = sand.get_mut(s) {
+                *v = false;
+            }
+        }
+        if matches!(mode, UnconformityShale::Above | UnconformityShale::Both) && s >= 1 {
+            if let Some(v) = sand.get_mut(s - 1) {
+                *v = false;
+            }
+        }
+    }
+}
+
 /// Sand units that carry closures, as half-open interval ranges `[top, end)`.
 /// This ports legacy `Closures.find_top_lith_horizons` and the unit loop of
 /// `create_closure_labels_from_depth_maps`:

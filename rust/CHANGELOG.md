@@ -6,6 +6,40 @@ Output-changing defaults are listed here with their opt-out flag.
 
 ### Changed
 
+- **Angular unconformity: bevel and ponded fill** (spec "erosion and
+  onlap"). Every layered cube with at least 10 horizons gets one erosion
+  surface, cut at the 0.35-0.65 quantile of a folded horizon, with the
+  older layers truncated against it and the younger layers ponding and
+  onlapping in the hollows. Exhumed intervals get the eroded thickness as
+  extra burial and the layer at the surface is forced to shale. Horizons,
+  labels, closures and stacks change. New output `data/unconformity_labels`
+  (u8, at the first sample at or below the surface; exactly one voxel per
+  column outside salt for one unconformity, in depth, faulted or not. With
+  two unconformities mark 2 is missing near the cube bottom, and in time
+  mode a mark below the last time sample is dropped. Seed 2, 48x48x256
+  (2304 columns), no salt, N = 2, dt 4 ms: depth 0 missing without faults
+  and 30 (1.3%) with 4 faults; time 75 (3.3%) without faults and 389 with
+  4 faults (359 from the time resampling plus the 30 of depth mode). Seeds
+  1, 3, 4, 5, 6: 0 missing everywhere; over the six seeds: no faults 0
+  (depth) and 0.27% (time), 4 faults 0.11% and 1.41%. N = 1: 0 missing and
+  0 duplicated), written only when
+  an unconformity was applied. The exhumation term is a depth
+  shift of the compaction trend, a proxy rather than a model of the removed
+  section. See `docs/unconformity.md`.
+  The default 8x8x32 and 32^3 cubes are below the size limit and do not
+  change. See `docs/unconformity.md`.
+  - Opt-outs: **`--legacy-unconformity`** or **`--unconformities 0`**
+    reproduce #56 byte for byte; `--legacy-fold-geometry` and
+    `--legacy-toy-depth` imply no unconformity.
+  - New flags: `--unconformities`, `--unconformity-position`,
+    `--unconformity-level`, `--unconformity-relief-m`,
+    `--unconformity-max-dip`, `--unconformity-fill-ratio`,
+    `--unconformity-shale`, `--no-exhumation-burial`.
+  - The whole-run MDIO writers now build the output-domain `fault_labels`,
+    `salt_labels` and `unconformity_labels` in one pass
+    (`time_mode::generate_output_masks`) instead of one model rebuild per
+    mask. Store content is unchanged.
+
 - **Salt partial-voxel maps keep sub-sample positions** (spec "salt
   partial-voxel far-field maps"). With salt on, the partial-voxel horizon
   maps were built from the *rounded* maps plus the drag, so far from salt

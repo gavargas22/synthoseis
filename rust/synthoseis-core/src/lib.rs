@@ -163,6 +163,7 @@ pub mod salt;
 mod salt_pv_maps_tests;
 pub mod time_mode;
 pub mod toy_geometry;
+pub mod unconformity;
 
 /// Spike-insertion kernel of the depth-to-time conversion (`--twt-kernel`).
 pub use synthoseis_seismic::TwtKernel;
@@ -189,6 +190,7 @@ pub use pipeline_overlap::run_e2e_streaming_overlapped;
 pub use pipeline_stream::{
     effective_wavelet, fault_model, fault_tile, generate_angle_stack_from_labels, generate_chunked,
     generate_chunked_at_angle, generate_fault_labels, generate_labels, generate_noise,
+    generate_unconformity_labels, unconformity_applied, unconformity_records,
     generate_reflectivity, noise_signal_std, resolve_chunk_shape, run_e2e_chunked,
     run_e2e_streaming, run_e2e_strip_stitched, seismic_filters, write_strip_partition,
     SeismicFilters, SeismicNoise, WorkingSetStats, DEFAULT_INCIDENCE_DEG, GENERATE_LABELS_CALLS,
@@ -200,10 +202,12 @@ pub use rock_physics::{
 };
 pub use time_mode::{
     generate_fault_labels_output, generate_labels_output, generate_output_labels,
-    generate_salt_labels_output, time_column_summary, OutputLabels, TimeColumnSummary,
+    generate_salt_labels_output, generate_unconformity_labels_output, time_column_summary, OutputLabels, TimeColumnSummary,
 };
 pub use toy_geometry::ToyGeometry;
 pub use folds::{FoldConfig, FoldStyle};
+pub use unconformity::{UnconformityConfig, UnconformityRecord};
+pub use lithology::UnconformityShale;
 
 #[cfg(test)]
 mod tests {

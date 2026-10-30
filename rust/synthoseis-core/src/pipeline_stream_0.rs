@@ -122,10 +122,64 @@ pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
 
 /// Production and continuous layered maps before salt drag, from one
 /// layered stack.
-pub(crate) type BaseMaps = ((Vec<f64>, usize), (Vec<f64>, usize));
+pub(crate) type BaseMaps = (
+    (Vec<f64>, usize),
+    (Vec<f64>, usize),
+    Vec<crate::unconformity::UnconformityRecord>,
+);
 
 pub(crate) fn layered_base_maps(cfg: &E2eConfig) -> BaseMaps {
-    crate::toy_geometry::layered_horizon_maps_both(cfg.seed, cfg.shape(), cfg.rock_physics.fold_config())
+    crate::toy_geometry::layered_horizon_maps_both(
+        cfg.seed,
+        cfg.shape(),
+        cfg.rock_physics.fold_config(),
+        cfg.rock_physics.unconformity_config(),
+    )
+}
+
+/// Unconformity records of `cfg` (shallowest first; empty without any, with
+/// the planar geometry, or when every unconformity was skipped for lack of
+/// room). From the geometry cache when it is built.
+pub fn unconformity_records(cfg: &E2eConfig) -> std::sync::Arc<Vec<crate::unconformity::UnconformityRecord>> {
+    if let Some(c) = crate::geometry_cache::GeometryCache::get(cfg) {
+        return c.unconf.clone();
+    }
+    match cfg.effective_geometry() {
+        crate::toy_geometry::ToyGeometry::Planar => Default::default(),
+        crate::toy_geometry::ToyGeometry::Layered => {
+            if cfg.rock_physics.unconformity_config().is_none() {
+                return Default::default();
+            }
+            std::sync::Arc::new(layered_base_maps(cfg).2)
+        }
+    }
+}
+
+/// Whether any unconformity of `cfg` was applied (the run then writes
+/// `data/unconformity_labels`).
+pub fn unconformity_applied(cfg: &E2eConfig) -> bool {
+    cfg.rock_physics.unconformity_config().is_some()
+        && cfg.effective_geometry() == crate::toy_geometry::ToyGeometry::Layered
+        && crate::unconformity::applied(&unconformity_records(cfg)).next().is_some()
+}
+
+/// `interval_sand` of `cfg` with the shale seal of its unconformities
+/// (spec §3.7). Identical to `interval_sand` without an applied one.
+pub fn sealed_interval_sand(cfg: &E2eConfig, n: usize) -> Vec<bool> {
+    let rp = &cfg.rock_physics;
+    let mut sand = crate::lithology::interval_sand(
+        cfg.effective_lithology(),
+        cfg.seed,
+        n,
+        rp.sand_layer_fraction,
+        rp.sand_layer_thickness,
+    );
+    if rp.unconformity_shale != crate::lithology::UnconformityShale::None && rp.unconformity_config().is_some() {
+        let recs = unconformity_records(cfg);
+        let surfaces: Vec<usize> = crate::unconformity::applied(&recs).map(|r| r.s).collect();
+        crate::lithology::apply_unconformity_seal(&mut sand, &surfaces, rp.unconformity_shale);
+    }
+    sand
 }
 
 /// [`toy_horizon_maps`] of the layered geometry from its base maps.
@@ -305,6 +359,46 @@ pub fn generate_fault_labels(cfg: &E2eConfig) -> Option<Vec<u8>> {
         }
     });
     Some(mask)
+}
+
+/// `unconformity_labels` volume for `cfg` in depth (`None` unless an
+/// unconformity was applied): the voxel of each applied unconformity's
+/// production-map boundary in every column, valued by its number, carried
+/// through the fault displacement like the layer labels and cleared in salt
+/// (spec §6.2). Evaluated tile by tile; a pure function of the column.
+pub fn generate_unconformity_labels(cfg: &E2eConfig) -> Option<Vec<u8>> {
+    let recs = unconformity_records(cfg);
+    crate::unconformity::applied(&recs).next()?;
+    let [ni, nj, nk] = cfg.shape();
+    let (maps, nh) = toy_horizon_maps(cfg);
+    let salt = crate::salt::salt_body(cfg);
+    let mut out = vec![0u8; ni * nj * nk];
+    let mut put = |t: &[u8], i0: usize, i1: usize, j0: usize, j1: usize| {
+        let tj = j1 - j0;
+        for i in i0..i1 {
+            let src = ((i - i0) * tj) * nk;
+            let dst = (i * nj + j0) * nk;
+            out[dst..dst + tj * nk].copy_from_slice(&t[src..src + tj * nk]);
+        }
+    };
+    match fault_model(cfg) {
+        Some(model) => model.for_each_tile(fault_tile(cfg), |t| {
+            let lab = crate::unconformity::label_tile(&recs, &maps, nh, [ni, nj, nk], t.i0, t.i1, t.j0, t.j1, Some(t), salt.as_ref());
+            put(&lab, t.i0, t.i1, t.j0, t.j1);
+        }),
+        None => {
+            let [ci, cj] = fault_tile(cfg);
+            for i0 in (0..ni).step_by(ci.max(1)) {
+                let i1 = (i0 + ci.max(1)).min(ni);
+                for j0 in (0..nj).step_by(cj.max(1)) {
+                    let j1 = (j0 + cj.max(1)).min(nj);
+                    let lab = crate::unconformity::label_tile(&recs, &maps, nh, [ni, nj, nk], i0, i1, j0, j1, None, salt.as_ref());
+                    put(&lab, i0, i1, j0, j1);
+                }
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Copy one MDIO chunk `[k0, k1)` of a fault tile's mask into `out`.

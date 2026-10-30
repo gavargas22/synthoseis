@@ -179,13 +179,19 @@ pub fn write_e2e_mdio_chunked(
     store
         .write_labels_u8(&volumes.labels)
         .map_err(|e| e.to_string())?;
-    if let Some(mask) = crate::time_mode::generate_fault_labels_output(cfg) {
+    let [fault_mask, salt_mask, unconf_mask] = crate::time_mode::generate_output_masks(cfg);
+    if let Some(mask) = fault_mask {
         store
             .write_fault_labels_u8(&mask)
             .map_err(|e| e.to_string())?;
     }
-    if let Some(mask) = crate::time_mode::generate_salt_labels_output(cfg) {
+    if let Some(mask) = salt_mask {
         store.write_salt_labels_u8(&mask).map_err(|e| e.to_string())?;
+    }
+    if let Some(mask) = unconf_mask {
+        store
+            .write_unconformity_labels_u8(&mask)
+            .map_err(|e| e.to_string())?;
     }
     Ok(chunks)
 }

@@ -164,6 +164,7 @@ fn legacy_kinds(fx: &Value, fluids: bool) -> (Vec<f32>, Vec<VoxelKind>) {
                     layer: (age[g] - 1) as usize,
                     ng: ng[g],
                     fluid,
+                    extra_m: 0.0,
                 }
             }
         })

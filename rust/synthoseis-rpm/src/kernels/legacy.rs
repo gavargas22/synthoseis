@@ -258,8 +258,16 @@ pub enum VoxelKind {
     /// Never written by the layer loop: left at 0, then forward-filled.
     Unfilled,
     /// Sediment of `layer` (index into the shift table) with net-to-gross
-    /// `ng` (sand fraction; `ng > 0` mixes in `fluid` sand).
-    Layer { layer: usize, ng: f32, fluid: Fluid },
+    /// `ng` (sand fraction; `ng > 0` mixes in `fluid` sand). `extra_m` is
+    /// burial (metres) added to the shifted depth lookup of this voxel, so a
+    /// step in it sits exactly on the label interface (exhumation of an
+    /// unconformity; 0 otherwise, which leaves every value bit-identical).
+    Layer {
+        layer: usize,
+        ng: f32,
+        fluid: Fluid,
+        extra_m: f32,
+    },
     /// Legacy `lith == 2` (salt body): constant salt properties from
     /// [`salt_elastic`], set before the base forward-fill (legacy
     /// `Seismic.py`, after the layer loop).
@@ -307,10 +315,10 @@ pub fn voxel_properties(
         VoxelKind::Water => WATER,
         VoxelKind::Salt => salt,
         VoxelKind::Unfilled => Elastic32::default(),
-        VoxelKind::Layer { layer, ng, fluid } => {
+        VoxelKind::Layer { layer, ng, fluid, extra_m } => {
             let nk = depth.len();
             let s = shifts[layer];
-            let z = |dz: i64| depth[shifted_index(k, s.layer + dz, nk)];
+            let z = |dz: i64| depth[shifted_index(k, s.layer + dz, nk)] + extra_m;
             let d = s.row(None);
             let shale = shale_f32(z(d[0]), z(d[1]), z(d[2]));
             if ng > 0.0 {
@@ -365,5 +373,76 @@ mod salt_elastic_tests {
         let l = salt_elastic(true);
         assert_eq!((l.rho, l.vp, l.vs), (2.17, 4500.0, SALT_VS_LEGACY));
         assert_ne!(d.vs, l.vs);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `extra_m` (the exhumation term) is added to every depth read of the
+    /// legacy kernel: shale and every fluid's sand, rho, vp and vs. The
+    /// result with `extra_m = e` is bit-identical to the result with the
+    /// depth column raised by `e`, and each of rho, vp and vs moves, so
+    /// dropping the term, flipping its sign, or applying it to one of the
+    /// three reads is caught.
+    #[test]
+    fn extra_m_shifts_every_depth_read_of_the_legacy_kernel() {
+        let nk = 64;
+        let depth: Vec<f32> = (0..nk).map(|k| 40.0 + 7.5 * k as f32).collect();
+        let e = 123.5f32;
+        let raised: Vec<f32> = depth.iter().map(|d| d + e).collect();
+        let shifts = [
+            LayerShifts::default(),
+            LayerShifts {
+                layer: 2,
+                props: [[1, -2, 3], [-3, 2, 1], [4, 0, -1], [0, 5, -2]],
+            },
+        ];
+        let salt = salt_elastic(false);
+        let mut moved = 0;
+        for (li, _) in shifts.iter().enumerate() {
+            for fluid in [Fluid::Brine, Fluid::Oil, Fluid::Gas] {
+                for ng in [0.0f32, 0.5] {
+                    for k in [8usize, 20, 35] {
+                        for mixing in [MixingMethod::InverseVelocity, MixingMethod::BackusModuli] {
+                            let kind = |extra_m| VoxelKind::Layer { layer: li, ng, fluid, extra_m };
+                            let base = voxel_properties(&depth, k, kind(0.0), &shifts, mixing, salt);
+                            let got = voxel_properties(&depth, k, kind(e), &shifts, mixing, salt);
+                            let want = voxel_properties(&raised, k, kind(0.0), &shifts, mixing, salt);
+                            assert_eq!(
+                                (got.rho.to_bits(), got.vp.to_bits(), got.vs.to_bits()),
+                                (want.rho.to_bits(), want.vp.to_bits(), want.vs.to_bits()),
+                                "layer {li} {fluid:?} ng {ng} k {k}"
+                            );
+                            // Each of the three reads matters.
+                            assert_ne!(got.rho, base.rho, "rho read: layer {li} {fluid:?} ng {ng} k {k}");
+                            assert_ne!(got.vp, base.vp, "vp read: layer {li} {fluid:?} ng {ng} k {k}");
+                            assert_ne!(got.vs, base.vs, "vs read: layer {li} {fluid:?} ng {ng} k {k}");
+                            // Burial raises the velocities (the trends increase with depth).
+                            assert!(got.vp > base.vp && got.vs > base.vs);
+                            moved += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(moved, 2 * 3 * 2 * 3 * 2);
+    }
+
+    /// No exhumation: the kernel is bit-identical to the pre-exhumation
+    /// result (`extra_m = 0.0` adds nothing).
+    #[test]
+    fn zero_extra_m_is_the_identity() {
+        let depth: Vec<f32> = (0..48).map(|k| 10.0 + 11.25 * k as f32).collect();
+        let shifts = [LayerShifts::default()];
+        for k in [3usize, 17, 30] {
+            let kind = VoxelKind::Layer { layer: 0, ng: 0.3, fluid: Fluid::Oil, extra_m: 0.0 };
+            let a = voxel_properties(&depth, k, kind, &shifts, MixingMethod::InverseVelocity, salt_elastic(false));
+            let shale = shale_f32(depth[k], depth[k], depth[k]);
+            let sand = sand_f32(Fluid::Oil, depth[k], depth[k], depth[k]);
+            let want = mix_f32(shale, sand, 0.3, MixingMethod::InverseVelocity);
+            assert_eq!(a, want);
+        }
     }
 }

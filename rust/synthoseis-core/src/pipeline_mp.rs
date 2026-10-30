@@ -116,6 +116,11 @@ pub fn prepare_multiprocess_store(
             .ensure_salt_labels_array()
             .map_err(|e| e.to_string())?;
     }
+    if crate::pipeline_stream::unconformity_applied(&cfg) {
+        store
+            .ensure_unconformity_labels_array()
+            .map_err(|e| e.to_string())?;
+    }
 
     let plan_path = multiprocess_plan_path(&path);
     if let Some(parent) = plan_path.parent() {
@@ -279,6 +284,7 @@ pub fn finalize_multiprocess_e2e(
             return Err("multiprocess fault_labels diverged from single-pass reference".into());
         }
     }
+    verify_unconformity_labels(&opened, cfg)?;
     crate::salt::verify_salt_labels(&opened, cfg)
         .map_err(|e| format!("multiprocess salt_labels diverged from the salt body: {e}"))?;
     if !parity.passes_defaults() {
@@ -297,6 +303,29 @@ pub fn finalize_multiprocess_e2e(
         },
         stats,
     ))
+}
+
+/// Compare `data/unconformity_labels` of a finished multi-process store with
+/// the single-pass reference (spec §7 test 8): the array must exist exactly
+/// when an unconformity was applied, with identical bytes.
+pub fn verify_unconformity_labels(store: &MdioStore, cfg: &E2eConfig) -> Result<(), String> {
+    match crate::time_mode::generate_unconformity_labels_output(cfg) {
+        Some(reference) => {
+            if !store.has_unconformity_labels() {
+                return Err("multiprocess unconformity_labels missing from the store".into());
+            }
+            let back = store.read_unconformity_labels_u8().map_err(|e| e.to_string())?;
+            if back != reference {
+                return Err("multiprocess unconformity_labels diverged from single-pass reference".into());
+            }
+        }
+        None => {
+            if store.has_unconformity_labels() {
+                return Err("multiprocess store has unconformity_labels but none was applied".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// In-process multi-process e2e (prepare → N× [`run_worker_partition`] → finalize).

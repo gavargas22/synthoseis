@@ -199,14 +199,35 @@ pub fn layered_stack_unfolded(seed: u64, shape: [usize; 3]) -> Vec<Vec<f64>> {
 
 /// Unrounded horizon stack of [`layered_horizon_maps_with`], deepest
 /// first: the 7e80f2af stack, then the analytic folds when `fold` is
-/// `Some` (`None` = `--legacy-fold-geometry`). The layer count and every
-/// existing draw are unchanged (folds use their own stream).
-pub fn layered_stack(seed: u64, shape: [usize; 3], fold: Option<&crate::folds::FoldConfig>) -> Vec<Vec<f64>> {
+/// `Some` (`None` = `--legacy-fold-geometry`), then the unconformities when
+/// `uncf` is `Some` (`None` = `--legacy-unconformity` / none). The layer count
+/// and every existing draw are unchanged (folds and unconformities use their
+/// own streams).
+pub fn layered_stack(
+    seed: u64,
+    shape: [usize; 3],
+    fold: Option<&crate::folds::FoldConfig>,
+    uncf: Option<&crate::unconformity::UnconformityConfig>,
+) -> Vec<Vec<f64>> {
+    layered_stack_records(seed, shape, fold, uncf).0
+}
+
+/// [`layered_stack`] and the unconformity records (labels, exhumation).
+pub fn layered_stack_records(
+    seed: u64,
+    shape: [usize; 3],
+    fold: Option<&crate::folds::FoldConfig>,
+    uncf: Option<&crate::unconformity::UnconformityConfig>,
+) -> (Vec<Vec<f64>>, Vec<crate::unconformity::UnconformityRecord>) {
     let mut stack = layered_stack_unfolded(seed, shape);
     if let Some(cfg) = fold {
         crate::folds::apply_folds(&mut stack, seed, shape, cfg);
     }
-    stack
+    let recs = match uncf {
+        Some(u) if u.count > 0 => crate::unconformity::apply_unconformities(&mut stack, seed, shape, u),
+        _ => Vec::new(),
+    };
+    (stack, recs)
 }
 
 /// The fold set [`layered_stack`] draws for `cfg` (for the run summary).
@@ -216,32 +237,59 @@ pub fn layered_fold_set(seed: u64, shape: [usize; 3], cfg: &crate::folds::FoldCo
     crate::folds::FoldSet::draw(seed, shape, cfg, &tp)
 }
 
-/// [`layered_horizon_maps_with`] with the default folds.
+/// [`layered_horizon_maps_with`] with the default folds and unconformity.
 pub fn layered_horizon_maps(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
-    layered_horizon_maps_with(seed, shape, Some(&crate::folds::FoldConfig::default()))
+    layered_horizon_maps_with(
+        seed,
+        shape,
+        Some(&crate::folds::FoldConfig::default()),
+        Some(&crate::unconformity::UnconformityConfig::default()),
+    )
 }
 
-/// [`layered_horizon_maps_continuous_with`] with the default folds.
+/// [`layered_horizon_maps_continuous_with`] with the default folds and unconformity.
 pub fn layered_horizon_maps_continuous(seed: u64, shape: [usize; 3]) -> (Vec<f64>, usize) {
-    layered_horizon_maps_continuous_with(seed, shape, Some(&crate::folds::FoldConfig::default()))
+    layered_horizon_maps_continuous_with(
+        seed,
+        shape,
+        Some(&crate::folds::FoldConfig::default()),
+        Some(&crate::unconformity::UnconformityConfig::default()),
+    )
 }
 
 /// Horizon maps `(ni, nj, nh)` in samples, shallow first (horizon 0 = seabed).
-pub fn layered_horizon_maps_with(seed: u64, shape: [usize; 3], fold: Option<&crate::folds::FoldConfig>) -> (Vec<f64>, usize) {
-    layered_production_maps(&layered_stack(seed, shape, fold), shape)
+pub fn layered_horizon_maps_with(
+    seed: u64,
+    shape: [usize; 3],
+    fold: Option<&crate::folds::FoldConfig>,
+    uncf: Option<&crate::unconformity::UnconformityConfig>,
+) -> (Vec<f64>, usize) {
+    layered_production_maps(&layered_stack(seed, shape, fold, uncf), shape)
 }
-pub fn layered_horizon_maps_continuous_with(seed: u64, shape: [usize; 3], fold: Option<&crate::folds::FoldConfig>) -> (Vec<f64>, usize) {
-    layered_continuous_maps(&layered_stack(seed, shape, fold), shape)
+pub fn layered_horizon_maps_continuous_with(
+    seed: u64,
+    shape: [usize; 3],
+    fold: Option<&crate::folds::FoldConfig>,
+    uncf: Option<&crate::unconformity::UnconformityConfig>,
+) -> (Vec<f64>, usize) {
+    layered_continuous_maps(&layered_stack(seed, shape, fold, uncf), shape)
 }
 
-/// Production and continuous maps from one [`layered_stack`] (build once).
+/// Production and continuous maps and the unconformity records from one
+/// [`layered_stack`] (build once).
+#[allow(clippy::type_complexity)]
 pub fn layered_horizon_maps_both(
     seed: u64,
     shape: [usize; 3],
     fold: Option<&crate::folds::FoldConfig>,
-) -> ((Vec<f64>, usize), (Vec<f64>, usize)) {
-    let stack = layered_stack(seed, shape, fold);
-    (layered_production_maps(&stack, shape), layered_continuous_maps(&stack, shape))
+    uncf: Option<&crate::unconformity::UnconformityConfig>,
+) -> (
+    (Vec<f64>, usize),
+    (Vec<f64>, usize),
+    Vec<crate::unconformity::UnconformityRecord>,
+) {
+    let (stack, recs) = layered_stack_records(seed, shape, fold, uncf);
+    (layered_production_maps(&stack, shape), layered_continuous_maps(&stack, shape), recs)
 }
 
 /// Whole-sample maps of a stack (deepest first).

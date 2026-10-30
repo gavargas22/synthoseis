@@ -6,6 +6,7 @@
 mod cli_e2e;
 mod cli_jobs;
 mod cli_fold;
+mod cli_unconformity;
 mod cli_rock;
 
 use std::path::PathBuf;
@@ -256,6 +257,8 @@ enum Commands {
         phys: cli_rock::PhysArgs,
         #[command(flatten)]
         folds: cli_fold::FoldArgs,
+        #[command(flatten)]
+        unconf: cli_unconformity::UnconformityArgs,
         /// Legacy switch: write the depth-sampled seismic as time (each depth
         /// sample = one 4 ms sample, an implied constant 2000 m/s), master
         /// f3720fb2 bit for bit. Default: convert to two-way time from the
@@ -793,6 +796,7 @@ fn main() {
             legacy_salt_pv_maps,
             phys,
             folds,
+            unconf,
             legacy_depth_as_time,
             dt_ms,
             twt_samples,
@@ -958,6 +962,7 @@ fn main() {
             )
             .and_then(|r| cli_rock::apply_rock_physics(r, &phys))
             .and_then(|r| cli_fold::apply_folds(r, geometry, &folds))
+            .and_then(|r| cli_unconformity::apply_unconformities(r, geometry, &unconf))
             .unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);
@@ -1172,6 +1177,7 @@ mod tests {
             legacy_salt_pv_maps,
             phys,
             folds,
+            unconf,
             legacy_depth_as_time,
             dt_ms,
             twt_samples,
@@ -1244,8 +1250,59 @@ mod tests {
         )
         .and_then(|r| super::cli_rock::apply_rock_physics(r, &phys))
         .and_then(|r| super::cli_fold::apply_folds(r, geometry, &folds))
+        .and_then(|r| super::cli_unconformity::apply_unconformities(r, geometry, &unconf))
         .unwrap();
         (rock, geometry, time)
+    }
+
+    /// Every unconformity flag reaches multi-process workers: the worker
+    /// argv (`cli_jobs::worker_args`, the one the spawn site uses) rebuilds
+    /// the same unconformity configuration through `main`'s parse chain.
+    /// The CLI's `--multiprocess` rejects `--shape` and the default cube is
+    /// below the margins of D10, so end-to-end store equality across the
+    /// writers is in `synthoseis-core/tests/unconformity.rs`
+    /// (`t6_every_writer_produces_the_same_store_content`).
+    #[test]
+    fn unconformity_flags_reach_multiprocess_workers() {
+        let argv = |extra: &[&str]| -> Vec<String> {
+            ["synthoseis", "run", "--e2e", "--chunked"]
+                .iter()
+                .chain(extra)
+                .map(|s| s.to_string())
+                .collect()
+        };
+        for extra in [
+            &[][..],
+            &["--unconformities", "0"][..],
+            &["--unconformities", "2", "--unconformity-position", "0.3"][..],
+            &["--legacy-unconformity"][..],
+            &["--legacy-fold-geometry"][..],
+            &["--legacy-fold-geometry", "--legacy-unconformity"][..],
+            &["--no-exhumation-burial", "--unconformity-shale", "none"][..],
+            &["--unconformity-shale", "above"][..],
+            &["--unconformity-shale", "both", "--unconformity-fill-ratio", "3.5"][..],
+            &[
+                "--unconformity-level", "0.42", "--unconformity-relief-m", "20.5",
+                "--unconformity-max-dip", "0.35", "--unconformity-fill-ratio", "1.25",
+                "--unconformity-position", "0.7",
+            ][..],
+            &["--unconformity-relief-m", "0"][..],
+            &["--toy-geometry", "planar"][..],
+            &["--legacy-toy-depth"][..],
+        ] {
+            let (rock, geometry, time) = rebuild_from_argv(&argv(extra));
+            let mut worker = argv(&[]);
+            worker.extend(crate::cli_jobs::worker_args(&rock, &time, geometry));
+            let (back, back_geometry, _) = rebuild_from_argv(&worker);
+            assert_eq!(back_geometry, geometry, "{extra:?}");
+            assert_eq!(back.unconformity, rock.unconformity, "{extra:?}");
+            assert_eq!(back.unconformity_shale, rock.unconformity_shale, "{extra:?}");
+            assert_eq!(back.exhumation_burial, rock.exhumation_burial, "{extra:?}");
+            // `--legacy-fold-geometry` implies no unconformities, so the
+            // worker needs no `--legacy-unconformity` next to it.
+            assert_eq!(back.unconformity_config(), rock.unconformity_config(), "{extra:?}");
+            assert_eq!(back.legacy_fold_geometry, rock.legacy_fold_geometry, "{extra:?}");
+        }
     }
 
     /// `--salt-legacy-vs` (and the other salt switches) reach multi-process

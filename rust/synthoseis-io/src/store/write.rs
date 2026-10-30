@@ -3,7 +3,7 @@ use super::MdioStore;
 use crate::zarr::*;
 use crate::{
     err, CreateConfig, Dimension, Result, FAULT_LABELS_VARIABLE, LABELS_VARIABLE, PRIMARY_VARIABLE,
-    SALT_LABELS_VARIABLE,
+    SALT_LABELS_VARIABLE, UNCONFORMITY_LABELS_VARIABLE,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -185,6 +185,21 @@ impl MdioStore {
         self.write_u8_variable_chunk(&SALT_LABELS, chunk_indices, labels)
     }
 
+    /// Write the unconformity-surface volume under `data/unconformity_labels`.
+    pub fn write_unconformity_labels_u8(&self, labels: &[u8]) -> Result<()> {
+        self.write_u8_variable(&UNCONFORMITY_LABELS, labels)
+    }
+
+    /// Ensure `data/unconformity_labels` exists with the store's chunk shape.
+    pub fn ensure_unconformity_labels_array(&self) -> Result<()> {
+        self.ensure_u8_variable(&UNCONFORMITY_LABELS)
+    }
+
+    /// Write one `data/unconformity_labels` chunk (same indexing as [`Self::write_chunk`]).
+    pub fn write_unconformity_labels_chunk(&self, chunk_indices: [usize; 3], labels: &[u8]) -> Result<()> {
+        self.write_u8_variable_chunk(&UNCONFORMITY_LABELS, chunk_indices, labels)
+    }
+
     fn ensure_u8_variable(&self, var: &U8Variable) -> Result<()> {
         let shape = self.shape();
         let chunks = self.config.chunks_or_shape();
@@ -355,6 +370,13 @@ const SALT_LABELS: U8Variable = U8Variable {
     name: SALT_LABELS_VARIABLE,
     long_name: "salt_labels",
     deliverable: "salt_labels",
+    fill: 0,
+};
+
+const UNCONFORMITY_LABELS: U8Variable = U8Variable {
+    name: UNCONFORMITY_LABELS_VARIABLE,
+    long_name: "unconformity_labels",
+    deliverable: "unconformity_labels",
     fill: 0,
 };
 

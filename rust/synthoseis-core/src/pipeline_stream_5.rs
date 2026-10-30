@@ -73,6 +73,9 @@ pub fn run_e2e_strip_stitched(
     if trends.salt().is_some() {
         store.ensure_salt_labels_array().map_err(|e| e.to_string())?;
     }
+    if trends.has_unconformity() {
+        store.ensure_unconformity_labels_array().map_err(|e| e.to_string())?;
+    }
     let wavelet = cfg.ricker();
 
     // FS ownership is the lock: partitions from from_config_chunk_aligned never

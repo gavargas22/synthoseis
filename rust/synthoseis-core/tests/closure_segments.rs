@@ -289,6 +289,8 @@ fn faulted_sandy(seed: u64, unsegmented: bool) -> E2eConfig {
             closures_unsegmented: unsegmented,
             // Pinned master b4f4259 scenario (tests/salt.rs covers salt).
             salt: false,
+            // The segmentation test recomputes the unsealed sand map.
+            legacy_unconformity: true,
             ..RockPhysicsConfig::default()
         },
         geometry: ToyGeometry::Layered,

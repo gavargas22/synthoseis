@@ -349,6 +349,8 @@ fn run_cases(dir: &Path, extra: &[&str], summary: &str, attr: Option<&str>) -> V
         // `--legacy-salt-pv-maps` exits 2 with `--legacy-whole-voxels`
         // (no partial-voxel maps); those cases run without it.
         let whole = args.contains(&"--legacy-whole-voxels");
+        // `--legacy-unconformity` exits 2 on a fold-free geometry.
+        let flat = args.contains(&"planar") || args.contains(&"--legacy-toy-depth");
         let args: Vec<&str> = args
             .iter()
             .copied()
@@ -356,7 +358,8 @@ fn run_cases(dir: &Path, extra: &[&str], summary: &str, attr: Option<&str>) -> V
                 extra
                     .iter()
                     .copied()
-                    .filter(|f| !(whole && *f == "--legacy-salt-pv-maps")),
+                    .filter(|f| !(whole && *f == "--legacy-salt-pv-maps"))
+                    .filter(|f| !(flat && *f == "--legacy-unconformity")),
             )
             .collect();
         let out = run(&args, &dir.join(format!("{name}.mdio")));
@@ -456,7 +459,8 @@ fn legacy_salt_pv_maps_reproduces_a60ec34a_on_every_path() {
 #[test]
 fn physical_filter_edges_default_pins() {
     let dir = tempfile::tempdir().unwrap();
-    let got = run_cases(dir.path(), &[], SUMMARY_PHYSICAL, Some("physical"));
+    // Folded geometry of #56 (unconformity spec §6.3): isolated, no re-pin.
+    let got = run_cases(dir.path(), &["--legacy-unconformity"], SUMMARY_PHYSICAL, Some("physical"));
     check(&got, PHYSICAL, "physical filter edges");
     for (name, h) in &got {
         let old = MASTER_1C22B653.iter().find(|(n, _)| n == name).unwrap().1;

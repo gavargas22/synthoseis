@@ -18,6 +18,7 @@ pub(crate) struct Cached {
     pub maps: (Vec<f64>, usize),
     pub continuous: Option<(Vec<f64>, usize)>,
     pub salt: Option<SaltBody>,
+    pub unconf: Arc<Vec<crate::unconformity::UnconformityRecord>>,
 }
 
 /// Optional cached geometry of an [`E2eConfig`]; empty by default. It does
@@ -55,8 +56,8 @@ impl GeometryCache {
     pub(crate) fn build(cfg: &E2eConfig) -> Self {
         let mut plain = cfg.clone();
         plain.maps_cache = GeometryCache::default();
-        let (maps, continuous, salt) = match plain.effective_geometry() {
-            crate::toy_geometry::ToyGeometry::Planar => (crate::pipeline_stream::toy_horizon_maps(&plain), None, None),
+        let (maps, continuous, salt, unconf) = match plain.effective_geometry() {
+            crate::toy_geometry::ToyGeometry::Planar => (crate::pipeline_stream::toy_horizon_maps(&plain), None, None, Vec::new()),
             crate::toy_geometry::ToyGeometry::Layered => {
                 // One layered stack for all three.
                 let base = crate::pipeline_stream::layered_base_maps(&plain);
@@ -67,7 +68,7 @@ impl GeometryCache {
                 } else {
                     None
                 };
-                (maps, Some(cont), salt)
+                (maps, Some(cont), salt, base.2)
             }
         };
         GeometryCache(Some(Arc::new(Cached {
@@ -75,6 +76,7 @@ impl GeometryCache {
             maps,
             continuous,
             salt,
+            unconf: Arc::new(unconf),
         })))
     }
 }
