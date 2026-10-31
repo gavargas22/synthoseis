@@ -256,6 +256,13 @@ impl FaultModel {
         self.shape
     }
 
+    /// Mutable faults (tests: swap in an analytic geometry).
+    #[cfg(test)]
+    pub(crate) fn faults_mut(&mut self) -> &mut Vec<ResolvedFault> {
+        self.cache = None;
+        &mut self.faults
+    }
+
     /// Active (inserted) faults in application order.
     pub fn faults(&self) -> &[ResolvedFault] {
         &self.faults

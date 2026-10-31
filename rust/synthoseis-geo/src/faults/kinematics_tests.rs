@@ -61,58 +61,147 @@ fn displaced(m: &FaultModel) -> Vec<([usize; 3], [f64; 3], f64, [f64; 3])> {
     out
 }
 
-/// §9 row 2: the slip vector lies in the fault surface (down-dip) where the
-/// surface is steeper than the 30° floor, and is `d / tan δ_min` sideways
-/// where it is shallower. At voxels whose physical dip is 60° (± 0.5°) the
-/// heave is `T·dz / (tan 60°·bin)` bins (± 0.5 bin) and the vertical offset
-/// is `T` (± 0.5 sample). Kills: heave sign flipped, heave = 0, tan ↔ sin.
+/// §9 row 2, independent of the kernel (review S5, Strata's check A): the
+/// offset is measured through `apply_to_volume_f32` on coordinate fields
+/// and compared with `d / max(tan δ_v, tan δ_min,v)`, where `tan δ_v` comes
+/// from a finite-difference normal of the surface function (not the
+/// kernel's analytic gradient) and `d` is the measured vertical offset.
+/// Within 0.5 bin at ≥ 99 % of the displaced voxels (the rest sit where the
+/// slip changes between the two samples the gather interpolates); the dip
+/// floor always holds and no voxel moves toward the footwall. Kills (checked):
+/// heave sign flipped, dip floor removed (the planar test kills tan δ form).
 #[test]
-fn heave_is_down_dip_with_the_dip_floor() {
+fn heave_matches_a_finite_difference_dip() {
+    let shape = [64, 64, 96];
+    let [ni, nj, nk] = shape;
     let p = HeaveParams::default();
-    let (mut steep, mut floor, mut at60) = (0usize, 0usize, 0usize);
-    for m in single_faults(6) {
-        for (_, u, d, g) in displaced(&m) {
-            let nh = norm(&g[..2]);
-            if nh < 1e-9 || g[2] == 0.0 {
-                continue;
+    let (mut n, mut bad, mut floor_bad, mut toward, mut floored) =
+        (0usize, 0usize, 0usize, 0usize, 0usize);
+    for m in single_faults(8) {
+        let mk = |f: &dyn Fn(usize, usize, usize) -> f32| {
+            let mut v = vec![0f32; ni * nj * nk];
+            for i in 0..ni {
+                for j in 0..nj {
+                    for k in 0..nk {
+                        v[(i * nj + j) * nk + k] = f(i, j, k);
+                    }
+                }
             }
-            assert!(
-                (u[2] - d).abs() < 1e-4,
-                "vertical offset {} vs throw {d}",
-                u[2]
-            );
-            let uh = norm(&u[..2]);
-            let tan_v = nh / g[2].abs();
-            if tan_v >= p.tan_min_v() {
-                // ∇f · u = 0: the hanging wall slides along the surface.
-                let dot = g[0] * u[0] + g[1] * u[1] + g[2] * u[2];
-                assert!(
-                    dot.abs() <= 1e-4 * norm(&g) * norm(&u),
-                    "slip leaves the surface: {dot}"
-                );
-                steep += 1;
-            } else {
-                assert!(
-                    (uh - d / p.tan_min_v()).abs() < 1e-4,
-                    "floor heave {uh} vs {}",
-                    d / p.tan_min_v()
-                );
-                floor += 1;
+            v
+        };
+        let (mut vx, mut vy, mut vz) = (
+            mk(&|i, _, _| i as f32),
+            mk(&|_, j, _| j as f32),
+            mk(&|_, _, k| k as f32),
+        );
+        for v in [&mut vx, &mut vy, &mut vz] {
+            m.apply_to_volume_f32(v, [16, 16]);
+        }
+        let f = &m.faults()[0];
+        let e = 1e-3;
+        for i in 2..ni - 2 {
+            for j in 2..nj - 2 {
+                for k in 2..nk - 2 {
+                    let o = (i * nj + j) * nk + k;
+                    let (sx, sy, sz) = (vx[o] as f64, vy[o] as f64, vz[o] as f64);
+                    let d = k as f64 - sz;
+                    if d <= 1.0
+                        || sz <= 1.0
+                        || sx <= 1.0
+                        || sy <= 1.0
+                        || sx >= (ni - 2) as f64
+                        || sy >= (nj - 2) as f64
+                    {
+                        continue;
+                    }
+                    let v = |x: f64, y: f64, z: f64| f.geometry.value_at(x, y, z);
+                    let (x, y, z) = (i as f64, j as f64, k as f64);
+                    let g = [
+                        (v(x + e, y, z) - v(x - e, y, z)) / (2.0 * e),
+                        (v(x, y + e, z) - v(x, y - e, z)) / (2.0 * e),
+                        (v(x, y, z + e) - v(x, y, z - e)) / (2.0 * e),
+                    ];
+                    let gh = g[0].hypot(g[1]);
+                    if gh < 1e-9 || g[2] == 0.0 {
+                        continue;
+                    }
+                    let tan_v = gh / g[2].abs();
+                    floored += (tan_v < p.tan_min_v()) as usize;
+                    let want = d / tan_v.max(p.tan_min_v());
+                    let uh = (x - sx).hypot(y - sy);
+                    n += 1;
+                    bad += ((uh - want).abs() > 0.5) as usize;
+                    floor_bad += (uh > 0.5 && d / uh < p.tan_min_v() - 1e-3) as usize;
+                    toward += ((x - sx) * g[0] + (y - sy) * g[1] > 1e-9) as usize;
+                }
             }
-            let dip_deg = (tan_v * p.dz_m / p.bin_m).atan().to_degrees();
-            if (dip_deg - 60.0).abs() <= 0.5 {
+        }
+    }
+    assert!(
+        n > 5000 && floored > 500,
+        "coverage n={n} floored={floored}"
+    );
+    assert!(
+        bad as f64 <= 0.01 * n as f64,
+        "{bad}/{n} voxels off d/tan δ by > 0.5 bin"
+    );
+    assert_eq!(floor_bad, 0, "dip floor violated");
+    assert_eq!(toward, 0, "hanging wall moved toward the footwall");
+}
+
+/// §9 row 2, analytic (review S5): a planar fault dipping 60° (physical)
+/// gives a heave of `T·dz / (tan 60°·bin)` bins (`T / tan 60°` in metres)
+/// ± 0.5 bin and a vertical offset `T` ± 0.5 sample at every displaced
+/// voxel, down-dip. The plane `x cos θ − z sin θ = c` (dipping towards +x) is the near face of
+/// a slab-shaped ellipsoid (huge axes), so the kernel sees an exactly
+/// planar surface; throw profile and lateral weight are a real fault's.
+#[test]
+fn planar_60_degree_fault_has_the_analytic_heave() {
+    let p = HeaveParams::default();
+    let tan_v = 60f64.to_radians().tan() * p.bin_m / p.dz_m;
+    // Normal n = (cos θ, 0, sin θ) has tan δ_v = cos θ / sin θ.
+    let th = (1.0 / tan_v).atan();
+    let (c, s) = (th.cos(), th.sin());
+    let rot = [[c, 0.0, -s], [0.0, 1.0, 0.0], [s, 0.0, c]];
+    let half = 1.0e3;
+    let [ni, nj, nk] = SHAPE;
+    let mut m = single_faults(1).remove(0);
+    let plane = 0.5 * (ni as f64 * c - nk as f64 * s);
+    m.faults_mut()[0].geometry =
+        FaultGeometry::from_parts(rot, [plane + half, 0.0, 0.0], [half * half, 1e12, 1e12]);
+    let f = m.faults()[0].clone();
+    let (mut at60, mut worst) = (0usize, 0f64);
+    for i in 1..ni - 1 {
+        for j in 1..nj - 1 {
+            for k in 1..nk - 1 {
+                if f.geometry.value(i, j, k) > 1.0 {
+                    continue;
+                }
+                let d = f.lateral(i, j) * f.profile[k];
+                let s = m.gather(i, j, k).src;
+                if d <= 1.0 || s[2] <= 0.0 || s[0] <= 0.0 || s[0] >= (ni - 1) as f64 {
+                    continue;
+                }
                 let want = d * p.dz_m / (60f64.to_radians().tan() * p.bin_m);
-                assert!((uh - want).abs() <= 0.5, "60° heave {uh} vs {want}");
+                let uh = (i as f64 - s[0]).hypot(j as f64 - s[1]);
+                assert!(
+                    (uh - want).abs() <= 0.5,
+                    "({i},{j},{k}): heave {uh} vs {want}"
+                );
+                assert!(
+                    ((k as f64 - s[2]) - d).abs() <= 0.5,
+                    "vertical {} vs {d}",
+                    k as f64 - s[2]
+                );
+                // Down-dip: the hanging wall (above the plane) moves towards +x.
+                assert!((i as f64 - s[0]) * c > 0.0, "heave toward the footwall");
+                worst = worst.max((uh - want).abs());
                 at60 += 1;
             }
         }
     }
-    // Legacy surfaces are low-angle in physical units, so a 64×64×96 draw
-    // has few voxels at 60°; the at-60° check runs wherever they occur.
-    assert!(
-        steep > 1000 && floor > 1000,
-        "coverage steep={steep} floor={floor} at60={at60}"
-    );
+    assert!(at60 > 1000, "at60 = {at60}");
+    assert!(worst <= 0.5, "worst {worst}");
 }
 
 /// §9 row 3: the hanging wall moves away from the footwall in map view

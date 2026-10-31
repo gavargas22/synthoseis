@@ -56,6 +56,13 @@ impl FaultGeometry {
         }
     }
 
+    /// Geometry from its rotation, origin and squared axes (tests: analytic
+    /// surfaces).
+    #[cfg(test)]
+    pub(crate) fn from_parts(rot: [[f64; 3]; 3], origin: [f64; 3], axes: [f64; 3]) -> Self {
+        Self { rot, origin, axes }
+    }
+
     /// Ellipsoid function at voxel `(i, j, k)` (`<= 1` inside).
     #[inline]
     pub fn value(&self, i: usize, j: usize, k: usize) -> f64 {
