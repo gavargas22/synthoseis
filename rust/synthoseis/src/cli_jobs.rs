@@ -46,8 +46,7 @@ pub fn maybe_run_worker(
         eprintln!("parse partition plan: {e}");
         std::process::exit(1);
     });
-    let cfg = synthoseis_core::pipeline::E2eConfig {
-        maps_cache: Default::default(),
+    let cfg = synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
         time: time.clone(),
         faults: Default::default(),
         filters: Default::default(),
@@ -58,8 +57,7 @@ pub fn maybe_run_worker(
         store_path: Some(store_path.clone()),
         chunk_shape: chunk_shape.or_else(|| {
             Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
-                &synthoseis_core::pipeline::E2eConfig {
-                    maps_cache: Default::default(),
+                &synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
                     time: time.clone(),
                     faults: Default::default(),
                     filters: Default::default(),
@@ -114,8 +112,7 @@ pub fn maybe_write_partition_plan(
     let plan = if chunked || chunk_i.is_some() {
         let ci = chunk_shape.map(|c| c[0]).unwrap_or_else(|| {
             synthoseis_core::pipeline_stream::resolve_chunk_shape(
-                &synthoseis_core::pipeline::E2eConfig {
-                    maps_cache: Default::default(),
+                &synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
                     time: time.clone(),
                     faults: Default::default(),
                     filters: Default::default(),
@@ -252,10 +249,7 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     a.extend(crate::cli_rock::rock_model_args(rock));
     // Partial voxels: the CLI always sets an explicit reflectivity.
     if rock.partial_voxels.enabled() {
-        let r = rock
-            .partial_voxels
-            .reflectivity
-            .expect("CLI partial voxels carry an explicit reflectivity");
+        let r = rock.partial_voxels.reflectivity.expect("CLI partial voxels carry an explicit reflectivity");
         a.push("--partial-voxel-reflectivity".into());
         a.push(r.as_str().into());
     }
@@ -326,8 +320,7 @@ pub fn maybe_run_multiprocess(
     });
     let resolved = chunk_shape.or_else(|| {
         Some(synthoseis_core::pipeline_stream::resolve_chunk_shape(
-            &synthoseis_core::pipeline::E2eConfig {
-                maps_cache: Default::default(),
+            &synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
                 time: time.clone(),
                 faults: Default::default(),
                 filters: Default::default(),
@@ -342,8 +335,7 @@ pub fn maybe_run_multiprocess(
             },
         ))
     });
-    let cfg = synthoseis_core::pipeline::E2eConfig {
-        maps_cache: Default::default(),
+    let cfg = synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
         time: time.clone(),
         faults: Default::default(),
         filters: Default::default(),

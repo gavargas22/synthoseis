@@ -575,12 +575,7 @@ pub fn drag_horizon_maps_before_pushdown(
 /// cell under lift-only. Used only by the partial-voxel maps; production
 /// keeps [`drag_horizon_maps`] (in smooth-all mode `R + D` can differ from
 /// `G(R+L)` in the last bit).
-pub fn drag_offsets(
-    maps: &[f64],
-    shape: [usize; 3],
-    salt: &SaltBody,
-    smooth_all: bool,
-) -> Vec<f64> {
+pub fn drag_offsets(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all: bool) -> Vec<f64> {
     drag_loop(maps, shape, salt, smooth_all, true)
 }
 
@@ -672,13 +667,7 @@ fn drag_warp_column(col: &mut [u8], knots: &[(f64, f64)], src: &mut [u8], idx: &
     }
 }
 
-fn drag_loop(
-    maps: &[f64],
-    shape: [usize; 3],
-    salt: &SaltBody,
-    smooth_all: bool,
-    offsets: bool,
-) -> Vec<f64> {
+fn drag_loop(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all: bool, offsets: bool) -> Vec<f64> {
     let [ni, nj, nh] = shape;
     let n = ni * nj;
     assert_eq!(maps.len(), n * nh);
@@ -710,11 +699,7 @@ fn drag_loop(
             }
             let s = gaussian_filter_sigma3(&m, ni, nj);
             for c in 0..n {
-                out[c * nh + h] = if offsets {
-                    s[c] - maps[c * nh + h]
-                } else {
-                    s[c]
-                };
+                out[c * nh + h] = if offsets { s[c] - maps[c * nh + h] } else { s[c] };
             }
         } else {
             let s = gaussian_filter_sigma3(&lift, ni, nj);
