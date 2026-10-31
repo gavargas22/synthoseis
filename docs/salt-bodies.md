@@ -141,12 +141,15 @@ traveltime (depth-to-time §3.4). So:
   large cubes (`salt_top_offset_scale_capped_at_one`, on a 1600-sample
   cube). `--salt-legacy-top-offset` keeps the absolute legacy offset. The radius
   already scales with `ni`, as in legacy.
-- **The drag acts on the unfaulted toy horizons, before faulting.** In Rust
-  the faults displace labels, and there are no faulted depth maps. So:
-  - the p99 top uses the unfaulted horizon 1;
-  - the smoothing does not blur fault offsets. Legacy smooths the faulted
-    maps, so its horizons lose their sharp fault steps (not ported);
-  - the salt body itself is not faulted, as in legacy.
+- **The drag acts after faulting (roadmap 7d).** The p99 top and the drag
+  offsets come from the undragged, unfaulted toy horizons, but the drag is
+  applied after the fault gather, as a per-column monotone warp of the
+  faulted labels (`apply_salt_drag_warp`; knots at the faulted run tops). So
+  a horizon cut by a fault is dragged with its fault offset intact, and no
+  sediment voxel gathers salt-dragged layers from inside the body (0 such
+  voxels on seeds 1–20 against 0.52% of non-salt on master). The salt body
+  itself is not faulted, as in legacy. `--legacy-salt-fault-order` restores
+  the pre-fault drag of master 481805cc byte for byte.
 - **Gaps come from the labels.** A column is a gap when the closure unit's
   top sample lies in salt. Legacy's `faulted_depth_maps_gaps` test on the
   dragged horizon depth is equivalent for whole-sample horizons. Legacy's
