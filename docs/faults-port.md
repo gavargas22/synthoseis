@@ -241,6 +241,36 @@ step. Its depth-axis stores are byte-identical to those written by a master
 f3720fb2 or d51ab237 build, except the creation timestamp. In time mode the
 switch has no effect, and the store equals d51ab237 either way.
 
+## Fault heave (default; spec-fault-kinematics 7a)
+
+Faults now slip down the dip of the drawn surface instead of straight down.
+For a throw `d` (samples) at a surface voxel with voxel-space dip tangent
+`tan δ_v`, the hanging wall also moves sideways by the heave
+`d / max(tan δ_v, tan δ_min,v)` bins, down-dip, where
+`tan δ_min,v = tan δ_min · bin / dz` is the dip floor (`--fault-min-dip`,
+default 30°, allowed 15-60). Because the hanging wall moves away from the
+footwall, a horizon map shows a gap (heave gap) along each fault.
+
+- Each output voxel gathers its source position through the faults from
+  youngest to oldest (`FaultModel::gather`), so crossing faults compose and
+  older fault labels move with younger hanging walls.
+- Layer labels, partial-voxel fractions, rock physics (net-to-gross,
+  exhumation, unconformity marks) are read at the continuous source position
+  (maps bilinear; per-column draws at the nearest source column).
+- Fault labels are a closed-form band `|f − 1| / |∇f| ≤ 1` voxel around the
+  surface (`LABEL_BAND_VOXELS`).
+- Tiles carry a lateral halo `ceil(t_max / tan δ_min,v) + 2` (19 at the
+  defaults), so the output does not depend on `--chunk-i/--chunk-j`.
+- Faults remain single-worker `--e2e --chunked` only.
+
+`--legacy-fault-kinematics` restores the vertical-only lookup of master
+ce905d9e byte for byte. `--fault-min-dip` with the legacy switch, either flag
+without `--faults`, or a dip outside 15-60 exits with status 2.
+
+Evidence (seeds 1, 7, 13, 128x128x256, `--faults 4`):
+`cargo run --release -p synthoseis-core --example heave_evidence` and
+`examples/plot_heave_evidence.py` (see the example header).
+
 ## Deferred (follow-ups)
 
 - Hockey-stick drag zone (throw ≥ 29.75). Faults are flagged

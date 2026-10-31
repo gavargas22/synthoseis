@@ -6,6 +6,16 @@ Output-changing defaults are listed here with their opt-out flag.
 
 ### Changed
 
+- **Fault heave** (spec "fault kinematics", 7a). Faults slip down the dip
+  of their surface, so the hanging wall also moves sideways (heave = throw /
+  tan dip, with a dip floor `--fault-min-dip`, default 30 degrees, range
+  15-60) and horizons show a gap along each fault. Crossing faults compose
+  youngest first; rock physics reads each voxel's source position; fault
+  labels are a one-voxel band around the surface. Every faulted cube
+  changes (stack, labels, fault labels); unfaulted cubes do not. Opt out
+  with `--legacy-fault-kinematics` (byte-identical to ce905d9e). The summary
+  prints `fault kinematics: heave, min dip D deg` or the legacy line.
+
 - **Angular unconformity: bevel and ponded fill** (spec "erosion and
   onlap"). Every layered cube with at least 10 horizons gets one erosion
   surface, cut at the 0.35-0.65 quantile of a folded horizon, with the

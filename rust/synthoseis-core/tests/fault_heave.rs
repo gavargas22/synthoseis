@@ -3,9 +3,9 @@
 //! column of every displaced voxel, and the defaults turn heave on.
 
 use synthoseis_core::pipeline::{E2eConfig, FaultConfig};
-use synthoseis_geo::faults::DEFAULT_MIN_DIP_DEG;
 use synthoseis_core::rock_physics::elastic_model;
 use synthoseis_core::{fault_model, generate_labels, generate_unconformity_labels};
+use synthoseis_geo::faults::DEFAULT_MIN_DIP_DEG;
 
 fn cfg(seed: u64, shape: [usize; 3], legacy: bool) -> E2eConfig {
     let mut c = E2eConfig::tiny(seed);
@@ -71,8 +71,14 @@ fn vp_follows_the_source_layer() {
         let (ls, lm) = vp_step_match(&cfg(seed, [48, 48, 128], true));
         let (share, legacy) = (matched as f64 / steps as f64, lm as f64 / ls as f64);
         assert!(steps > 1000, "seed {seed}: {steps} Vp steps");
-        assert!(share >= 0.97, "seed {seed}: {matched}/{steps} Vp steps on a layer boundary");
-        assert!(share >= legacy - 5e-3, "seed {seed}: share {share:.4} vs legacy {legacy:.4}");
+        assert!(
+            share >= 0.97,
+            "seed {seed}: {matched}/{steps} Vp steps on a layer boundary"
+        );
+        assert!(
+            share >= legacy - 5e-3,
+            "seed {seed}: share {share:.4} vs legacy {legacy:.4}"
+        );
     }
 }
 
@@ -84,7 +90,9 @@ fn unconformity_crossing_is_evaluated_at_the_source() {
     let mut checked = 0;
     for seed in 1..=12u64 {
         let c = cfg(seed, [48, 48, 128], false);
-        let Some(marks) = generate_unconformity_labels(&c) else { continue };
+        let Some(marks) = generate_unconformity_labels(&c) else {
+            continue;
+        };
         let (labels, [ni, nj, nk]) = generate_labels(&c);
         let (mut n, mut on) = (0usize, 0usize);
         for q in 0..ni * nj {
@@ -101,4 +109,3 @@ fn unconformity_crossing_is_evaluated_at_the_source() {
     }
     assert!(checked >= 3);
 }
-

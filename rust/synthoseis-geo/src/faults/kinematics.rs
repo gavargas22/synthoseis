@@ -84,7 +84,15 @@ pub enum FaultKinematics {
 /// fault's frame): `(a, [hx, hy], d)` with `a = clip(kk − d)` the source
 /// sample and `h` the heave in bins (0 outside the hanging wall).
 #[inline]
-pub fn stage_slip(f: &ResolvedFault, p: &HeaveParams, x: f64, y: f64, kk: usize, lat: f64, top: f64) -> (f64, [f64; 2], f64) {
+pub fn stage_slip(
+    f: &ResolvedFault,
+    p: &HeaveParams,
+    x: f64,
+    y: f64,
+    kk: usize,
+    lat: f64,
+    top: f64,
+) -> (f64, [f64; 2], f64) {
     let z = kk as f64;
     let d = if f.geometry.value_at(x, y, z) <= 1.0 {
         lat * f.profile[kk]
@@ -102,7 +110,14 @@ pub fn stage_slip(f: &ResolvedFault, p: &HeaveParams, x: f64, y: f64, kk: usize,
 /// `d / max(tan δ_v, tan δ_min,v)`; zero on a horizontal or vertical
 /// surface patch (no down-dip azimuth / no heave).
 #[inline]
-pub fn heave_vector(f: &ResolvedFault, p: &HeaveParams, x: f64, y: f64, z: f64, d: f64) -> [f64; 2] {
+pub fn heave_vector(
+    f: &ResolvedFault,
+    p: &HeaveParams,
+    x: f64,
+    y: f64,
+    z: f64,
+    d: f64,
+) -> [f64; 2] {
     let g = f.geometry.gradient_at(x, y, z);
     let gn = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
     if !(gn > 0.0) {
@@ -160,7 +175,14 @@ impl FaultModel {
 
     /// [`Self::gather`] with explicit parameters. `oldest_first` is a
     /// mutation hook for the order test (never used by the pipeline).
-    pub fn gather_with(&self, p: &HeaveParams, i: usize, j: usize, k: usize, oldest_first: bool) -> Gathered {
+    pub fn gather_with(
+        &self,
+        p: &HeaveParams,
+        i: usize,
+        j: usize,
+        k: usize,
+        oldest_first: bool,
+    ) -> Gathered {
         let [ni, nj, nk] = self.shape();
         let top = (nk.max(1) - 1) as f64;
         let (imax, jmax) = ((ni.max(1) - 1) as f64, (nj.max(1) - 1) as f64);

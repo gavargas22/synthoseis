@@ -48,7 +48,8 @@ fn displaced(m: &FaultModel) -> Vec<([usize; 3], [f64; 3], f64, [f64; 3])> {
                     continue;
                 }
                 let s = m.gather(i, j, k).src;
-                if s[0] <= 0.0 || s[1] <= 0.0 || s[0] >= (ni - 1) as f64 || s[1] >= (nj - 1) as f64 {
+                if s[0] <= 0.0 || s[1] <= 0.0 || s[0] >= (ni - 1) as f64 || s[1] >= (nj - 1) as f64
+                {
                     continue;
                 }
                 let u = [i as f64 - s[0], j as f64 - s[1], k as f64 - s[2]];
@@ -75,16 +76,27 @@ fn heave_is_down_dip_with_the_dip_floor() {
             if nh < 1e-9 || g[2] == 0.0 {
                 continue;
             }
-            assert!((u[2] - d).abs() < 1e-4, "vertical offset {} vs throw {d}", u[2]);
+            assert!(
+                (u[2] - d).abs() < 1e-4,
+                "vertical offset {} vs throw {d}",
+                u[2]
+            );
             let uh = norm(&u[..2]);
             let tan_v = nh / g[2].abs();
             if tan_v >= p.tan_min_v() {
                 // ∇f · u = 0: the hanging wall slides along the surface.
                 let dot = g[0] * u[0] + g[1] * u[1] + g[2] * u[2];
-                assert!(dot.abs() <= 1e-4 * norm(&g) * norm(&u), "slip leaves the surface: {dot}");
+                assert!(
+                    dot.abs() <= 1e-4 * norm(&g) * norm(&u),
+                    "slip leaves the surface: {dot}"
+                );
                 steep += 1;
             } else {
-                assert!((uh - d / p.tan_min_v()).abs() < 1e-4, "floor heave {uh} vs {}", d / p.tan_min_v());
+                assert!(
+                    (uh - d / p.tan_min_v()).abs() < 1e-4,
+                    "floor heave {uh} vs {}",
+                    d / p.tan_min_v()
+                );
                 floor += 1;
             }
             let dip_deg = (tan_v * p.dz_m / p.bin_m).atan().to_degrees();
@@ -97,7 +109,10 @@ fn heave_is_down_dip_with_the_dip_floor() {
     }
     // Legacy surfaces are low-angle in physical units, so a 64×64×96 draw
     // has few voxels at 60°; the at-60° check runs wherever they occur.
-    assert!(steep > 1000 && floor > 1000, "coverage steep={steep} floor={floor} at60={at60}");
+    assert!(
+        steep > 1000 && floor > 1000,
+        "coverage steep={steep} floor={floor} at60={at60}"
+    );
 }
 
 /// §9 row 3: the hanging wall moves away from the footwall in map view
@@ -132,8 +147,16 @@ fn legacy_assemble(m: &FaultModel) -> (Vec<f32>, Vec<u8>) {
 }
 
 fn jaccard(a: &[u8], b: &[u8]) -> f64 {
-    let inter = a.iter().zip(b).filter(|(x, y)| **x != 0 && **y != 0).count();
-    let uni = a.iter().zip(b).filter(|(x, y)| **x != 0 || **y != 0).count();
+    let inter = a
+        .iter()
+        .zip(b)
+        .filter(|(x, y)| **x != 0 && **y != 0)
+        .count();
+    let uni = a
+        .iter()
+        .zip(b)
+        .filter(|(x, y)| **x != 0 || **y != 0)
+        .count();
     if uni == 0 {
         1.0
     } else {
@@ -162,7 +185,11 @@ fn zero_heave_reproduces_the_legacy_throw_and_label() {
         let m = legacy.clone().with_kinematics(zero);
         let [ni, nj, _] = SHAPE;
         let t = m.compute_tile(0, ni, 0, nj);
-        let dmax = look.iter().zip(&t.lookup).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
+        let dmax = look
+            .iter()
+            .zip(&t.lookup)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
         assert!(dmax <= 1e-4, "seed {seed}: max |Δ throw| {dmax}");
         let s = t.src_ij.as_ref().unwrap();
         assert!(s.iter().enumerate().all(|(o, &(x, y))| {
@@ -228,7 +255,9 @@ fn heave_tiles_equal_the_whole_cube() {
         let b = m.apply_to_labels(&mut l2, [23, 17]);
         assert_eq!(l1, l2);
         assert_eq!(a, b);
-        let vol: Vec<f32> = (0..ni * nj * nk).map(|o| (o % nk) as f32 * 0.5 + (o / nk % 7) as f32).collect();
+        let vol: Vec<f32> = (0..ni * nj * nk)
+            .map(|o| (o % nk) as f32 * 0.5 + (o / nk % 7) as f32)
+            .collect();
         let (mut v1, mut v2) = (vol.clone(), vol.clone());
         m.apply_to_volume_f32(&mut v1, [ni, nj]);
         m.apply_to_volume_f32(&mut v2, [23, 17]);
@@ -258,13 +287,25 @@ fn heave_stays_inside_the_halo_bound() {
             }
         }
     }
-    assert!(worst <= h - 1.0, "max lateral pull {worst:.2} > H − 1 = {}", h - 1.0);
+    assert!(
+        worst <= h - 1.0,
+        "max lateral pull {worst:.2} > H − 1 = {}",
+        h - 1.0
+    );
     assert!(worst > 1.0, "no heave at all ({worst})");
 }
 
 /// One stage by hand: the source of continuous `(x, y, z)` through fault `f`,
 /// linear between the integer samples around `z` (spec §6.1/§6.3).
-fn hand_stage(f: &ResolvedFault, p: &HeaveParams, x: f64, y: f64, z: f64, top: f64, ij_max: f64) -> [f64; 3] {
+fn hand_stage(
+    f: &ResolvedFault,
+    p: &HeaveParams,
+    x: f64,
+    y: f64,
+    z: f64,
+    top: f64,
+    ij_max: f64,
+) -> [f64; 3] {
     let lat = f.lateral_at(x, y);
     let k0 = z.floor() as usize;
     let w = z - k0 as f64;
@@ -297,7 +338,8 @@ fn crossing_faults_compose_youngest_first() {
         for i in (0..ni).step_by(3) {
             for j in (0..nj).step_by(3) {
                 for k in 0..nk {
-                    let young = hand_stage(&m.faults()[1], &p, i as f64, j as f64, k as f64, top, 63.0);
+                    let young =
+                        hand_stage(&m.faults()[1], &p, i as f64, j as f64, k as f64, top, 63.0);
                     let z1 = young[2] as f32 as f64;
                     let want = hand_stage(&m.faults()[0], &p, young[0], young[1], z1, top, 63.0);
                     let got = m.gather(i, j, k).src;
@@ -305,8 +347,12 @@ fn crossing_faults_compose_youngest_first() {
                         both += 1;
                     }
                     for c in 0..3 {
-                        assert!((got[c] - want[c] as f32 as f64).abs() <= 1e-5 + 1e-6 * want[c].abs(),
-                            "seed {seed} ({i},{j},{k}) axis {c}: {} vs {}", got[c], want[c]);
+                        assert!(
+                            (got[c] - want[c] as f32 as f64).abs() <= 1e-5 + 1e-6 * want[c].abs(),
+                            "seed {seed} ({i},{j},{k}) axis {c}: {} vs {}",
+                            got[c],
+                            want[c]
+                        );
                     }
                     let old = m.gather_with(&p, i, j, k, true).src;
                     if (0..3).any(|c| (old[c] - got[c]).abs() > 1e-3) {

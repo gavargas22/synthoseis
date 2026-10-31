@@ -20,7 +20,12 @@ fn run(args: &[&str], store: &Path) -> Output {
 /// so the comparison is on values, not files).
 fn decoded(store: &Path) -> (Vec<u32>, Vec<u8>, Vec<u8>, Vec<u8>) {
     let s = MdioStore::open(store).expect("open store");
-    let vol = s.read_volume().unwrap().iter().map(|v| v.to_bits()).collect();
+    let vol = s
+        .read_volume()
+        .unwrap()
+        .iter()
+        .map(|v| v.to_bits())
+        .collect();
     (
         vol,
         s.read_labels_u8().unwrap(),
@@ -39,13 +44,29 @@ fn heave_output_is_tile_invariant() {
         a.extend(["--seed", seed]);
         let mut b = a.clone();
         b.extend(["--chunk-i", "5", "--chunk-j", "7"]);
-        let (pa, pb) = (dir.path().join(format!("a{seed}")), dir.path().join(format!("b{seed}")));
+        let (pa, pb) = (
+            dir.path().join(format!("a{seed}")),
+            dir.path().join(format!("b{seed}")),
+        );
         let oa = run(&a, &pa);
-        assert!(oa.status.success(), "{}", String::from_utf8_lossy(&oa.stderr));
-        assert!(String::from_utf8_lossy(&oa.stdout).contains("fault kinematics: heave, min dip 30 deg"));
+        assert!(
+            oa.status.success(),
+            "{}",
+            String::from_utf8_lossy(&oa.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&oa.stdout).contains("fault kinematics: heave, min dip 30 deg")
+        );
         let ob = run(&b, &pb);
-        assert!(ob.status.success(), "{}", String::from_utf8_lossy(&ob.stderr));
-        assert!(decoded(&pa) == decoded(&pb), "seed {seed}: tiles changed the output");
+        assert!(
+            ob.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ob.stderr)
+        );
+        assert!(
+            decoded(&pa) == decoded(&pb),
+            "seed {seed}: tiles changed the output"
+        );
     }
 }
 
@@ -55,7 +76,13 @@ fn bad_kinematics_flags_exit_2() {
     let cases: &[&[&str]] = &[
         &["--faults", "4", "--fault-min-dip", "10"],
         &["--faults", "4", "--fault-min-dip", "61"],
-        &["--faults", "4", "--fault-min-dip", "40", "--legacy-fault-kinematics"],
+        &[
+            "--faults",
+            "4",
+            "--fault-min-dip",
+            "40",
+            "--legacy-fault-kinematics",
+        ],
         &["--faults", "0", "--fault-min-dip", "40"],
         &["--faults", "0", "--legacy-fault-kinematics"],
         &["--fault-min-dip", "40"],
@@ -65,12 +92,29 @@ fn bad_kinematics_flags_exit_2() {
         let mut a = vec!["--chunked", "--shape", "16,16,64"];
         a.extend_from_slice(extra);
         let o = run(&a, &dir.path().join(format!("s{k}")));
-        assert_eq!(o.status.code(), Some(2), "{extra:?}: {}", String::from_utf8_lossy(&o.stderr));
+        assert_eq!(
+            o.status.code(),
+            Some(2),
+            "{extra:?}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
     }
     for dip in ["15", "60"] {
-        let a = ["--chunked", "--shape", "16,16,64", "--faults", "2", "--fault-min-dip", dip];
+        let a = [
+            "--chunked",
+            "--shape",
+            "16,16,64",
+            "--faults",
+            "2",
+            "--fault-min-dip",
+            dip,
+        ];
         let o = run(&a, &dir.path().join(format!("ok{dip}")));
-        assert!(o.status.success(), "dip {dip}: {}", String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success(),
+            "dip {dip}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
         assert!(String::from_utf8_lossy(&o.stdout).contains(&format!("min dip {dip} deg")));
     }
 }

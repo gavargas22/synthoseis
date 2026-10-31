@@ -28,17 +28,36 @@ fn pct(v: &mut [f64], q: f64) -> f64 {
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
-    let (legacy, heave, seed, count, out) = (&a[1], &a[2], a[3].parse::<u64>().unwrap(), a[4].parse::<usize>().unwrap(), &a[5]);
+    let (legacy, heave, seed, count, out) = (
+        &a[1],
+        &a[2],
+        a[3].parse::<u64>().unwrap(),
+        a[4].parse::<usize>().unwrap(),
+        &a[5],
+    );
     std::fs::create_dir_all(out).unwrap();
-    let w = |n: &str, b: &[u8]| std::fs::File::create(format!("{out}/{n}")).unwrap().write_all(b).unwrap();
+    let w = |n: &str, b: &[u8]| {
+        std::fs::File::create(format!("{out}/{n}"))
+            .unwrap()
+            .write_all(b)
+            .unwrap()
+    };
     let mut shape = [0; 3];
     for (tag, p) in [("legacy", legacy), ("heave", heave)] {
         let s = synthoseis_io::MdioStore::open(std::path::Path::new(p)).unwrap();
         shape = s.shape();
-        let v: Vec<u8> = s.read_volume().unwrap().iter().flat_map(|x| x.to_le_bytes()).collect();
+        let v: Vec<u8> = s
+            .read_volume()
+            .unwrap()
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
         w(&format!("{tag}_stack.f32"), &v);
         w(&format!("{tag}_labels.u8"), &s.read_labels_u8().unwrap());
-        w(&format!("{tag}_faults.u8"), &s.read_fault_labels_u8().unwrap());
+        w(
+            &format!("{tag}_faults.u8"),
+            &s.read_fault_labels_u8().unwrap(),
+        );
     }
     let [ni, nj, nk] = shape;
     w("shape.txt", format!("{ni} {nj} {nk}").as_bytes());
@@ -52,7 +71,9 @@ fn main() {
         ..Default::default()
     };
     let m = synthoseis_core::pipeline_stream::fault_model(&cfg).expect("faulted model");
-    let FaultKinematics::Heave(p) = m.kinematics() else { panic!("expected heave") };
+    let FaultKinematics::Heave(p) = m.kinematics() else {
+        panic!("expected heave")
+    };
     let top = (nk - 1) as f64;
     let (mut all_t, mut all_h) = (Vec::new(), Vec::new());
     let mut stats = String::new();
@@ -66,7 +87,9 @@ fn main() {
                     let (x, y, z) = (i as f64, j as f64, k as f64);
                     let g = f.geometry.gradient_at(x, y, z);
                     let gn = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
-                    if !(gn > 0.0) || (f.geometry.value_at(x, y, z) - 1.0).abs() / gn > LABEL_BAND_VOXELS {
+                    if !(gn > 0.0)
+                        || (f.geometry.value_at(x, y, z) - 1.0).abs() / gn > LABEL_BAND_VOXELS
+                    {
                         continue;
                     }
                     let (_, hv, d) = stage_slip(f, &p, x, y, k, lat, top);
@@ -97,7 +120,10 @@ fn main() {
         pct(&mut all_h, 5.0), pct(&mut all_h, 50.0), pct(&mut all_h, 95.0), pct(&mut all_h, 100.0)
     ));
     // Sanity: rebuilt model labels vs the heave store's fault labels.
-    let store = synthoseis_io::MdioStore::open(std::path::Path::new(heave)).unwrap().read_fault_labels_u8().unwrap();
+    let store = synthoseis_io::MdioStore::open(std::path::Path::new(heave))
+        .unwrap()
+        .read_fault_labels_u8()
+        .unwrap();
     let mut same = 0usize;
     for i in 0..ni {
         for j in 0..nj {
@@ -106,7 +132,10 @@ fn main() {
             }
         }
     }
-    stats.push_str(&format!("model/store fault-label agreement {:.4}\n", same as f64 / (ni * nj * nk) as f64));
+    stats.push_str(&format!(
+        "model/store fault-label agreement {:.4}\n",
+        same as f64 / (ni * nj * nk) as f64
+    ));
     print!("{stats}");
     w("stats.txt", stats.as_bytes());
 }
