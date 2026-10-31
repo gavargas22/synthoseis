@@ -5,7 +5,7 @@
 mod salt_order_metrics;
 use m::Mode;
 use salt_order_metrics as m;
-use synthoseis_core::pipeline::E2eConfig;
+use synthoseis_core::time_mode::{resample_columns, tile_twt};
 
 const SHAPE: [usize; 3] = [128, 128, 256];
 const FAR_SHAPE: [usize; 3] = [256, 256, 128];
@@ -332,69 +332,57 @@ fn output_masks_unchanged_depth() {
     }
 }
 
-/// Depth-domain salt and fault labels of `c` mapped onto the time axis
-/// through the time–depth function of `t_cfg` (its depth labels and
-/// elastic model), with the pipeline's own `tile_twt` + point sampling.
-fn depth_masks_through(c: &E2eConfig, t_cfg: &E2eConfig) -> (Vec<u8>, Vec<u8>) {
-    use synthoseis_core::time_mode::{resample_columns, tile_twt};
-    let [ni, nj, nz] = c.shape();
-    let (labels, shape) = synthoseis_core::pipeline_stream::generate_labels(t_cfg);
-    let model = synthoseis_core::elastic_model(t_cfg, &labels, shape);
-    let axis = t_cfg.time_axis().expect("time mode");
-    let t = tile_twt(&model, &labels, shape, 0, ni, 0, nj, &axis);
-    let salt = synthoseis_core::salt::generate_salt_labels(c).expect("salt");
-    let faults = synthoseis_core::generate_fault_labels(c).expect("faults");
-    assert_eq!(salt.len(), ni * nj * nz);
-    (
-        resample_columns(&salt, nz, &t, axis.nt, axis.dt_ms),
-        resample_columns(&faults, nz, &t, axis.nt, axis.dt_ms),
-    )
-}
-
-fn time_cfg(seed: u64, mode: Mode) -> E2eConfig {
-    let mut c = m::cfg(seed, [64, 64, 128], 4, mode);
-    c.time = synthoseis_core::TimeConfig::default();
-    c.with_geometry_cache()
-}
-
-/// Spec tests 6 and 7 in time mode (Strata ruling on #61): the depth-domain
-/// salt and fault labels are master's byte for byte, and the time-mode
-/// masks are exactly those depth labels mapped through the NEW time–depth
-/// function. Mapping through master's (pre-7d) velocity does not reproduce
-/// them, so the test sees which function was used.
+/// Spec tests 6 and 7 in time mode (Strata ruling on #61, her test
+/// `zz_strata_timemask.rs`): depth-domain salt and fault labels equal
+/// master's byte for byte, and the time-mode masks are exactly those depth
+/// labels mapped through the NEW time-depth function.
 #[test]
 fn time_masks_are_depth_masks_through_new_twt() {
-    for seed in [1u64, 7] {
-        let c = time_cfg(seed, Mode::PostFault);
-        let cm = time_cfg(seed, Mode::Master);
-        assert!(
-            synthoseis_core::salt::generate_salt_labels(&c)
-                == synthoseis_core::salt::generate_salt_labels(&cm),
-            "seed {seed}: depth salt_labels differ from master"
+    for seed in [1u64, 7, 13] {
+        let mut c = m::cfg(seed, [64, 64, 128], 4, Mode::PostFault);
+        c.time = synthoseis_core::TimeConfig::default();
+        let c = c.with_geometry_cache();
+        let mut cm = m::cfg(seed, [64, 64, 128], 4, Mode::Master);
+        cm.time = synthoseis_core::TimeConfig::default();
+        let cm = cm.with_geometry_cache();
+        let shape = c.shape();
+        let (labels, _) = synthoseis_core::pipeline_stream::generate_labels(&c);
+        let model = synthoseis_core::rock_physics::elastic_model(&c, &labels, shape);
+        let axis = model.time().unwrap().clone();
+        let t = tile_twt(&model, &labels, shape, 0, shape[0], 0, shape[1], &axis);
+        // depth masks of the PR and of master (time-independent in depth)
+        let sd = synthoseis_core::salt::generate_salt_labels(&c).unwrap();
+        let fd = synthoseis_core::pipeline_stream::generate_fault_labels(&c).unwrap();
+        assert_eq!(
+            sd,
+            synthoseis_core::salt::generate_salt_labels(&cm).unwrap(),
+            "seed {seed} salt depth"
+        );
+        assert_eq!(
+            fd,
+            synthoseis_core::pipeline_stream::generate_fault_labels(&cm).unwrap(),
+            "seed {seed} fault depth"
+        );
+        let [f, s, _] = synthoseis_core::time_mode::generate_output_masks(&c);
+        let rs = |d: &[u8]| resample_columns(d, shape[2], &t, axis.nt, axis.dt_ms);
+        assert!(s.unwrap() == rs(&sd), "seed {seed}: salt time != depth∘T");
+        assert!(f.unwrap() == rs(&fd), "seed {seed}: fault time != depth∘T");
+        // The mapping is non-trivial: master's TWT differs.
+        let (lm, _) = synthoseis_core::pipeline_stream::generate_labels(&cm);
+        let mm = synthoseis_core::rock_physics::elastic_model(&cm, &lm, shape);
+        let tm = tile_twt(&mm, &lm, shape, 0, shape[0], 0, shape[1], &axis);
+        let dmax = t
+            .iter()
+            .zip(&tm)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
+        eprintln!(
+            "seed {seed}: max |ΔTWT| vs master {dmax:.2} ms (dt {} ms)",
+            axis.dt_ms
         );
         assert!(
-            synthoseis_core::generate_fault_labels(&c)
-                == synthoseis_core::generate_fault_labels(&cm),
-            "seed {seed}: depth fault_labels differ from master"
-        );
-        let (s_out, f_out) = (
-            synthoseis_core::generate_salt_labels_output(&c).expect("salt"),
-            synthoseis_core::generate_fault_labels_output(&c).expect("faults"),
-        );
-        let (s_new, f_new) = depth_masks_through(&c, &c);
-        assert!(
-            s_out == s_new,
-            "seed {seed}: time salt_labels != depth labels through new TWT"
-        );
-        assert!(
-            f_out == f_new,
-            "seed {seed}: time fault_labels != depth labels through new TWT"
-        );
-        // The old function maps them elsewhere (otherwise the check is vacuous).
-        let (s_old, f_old) = depth_masks_through(&c, &cm);
-        assert!(
-            s_old != s_new || f_old != f_new,
-            "seed {seed}: old and new TWT agree"
+            dmax > 0.0,
+            "seed {seed}: new and master TWT agree (vacuous)"
         );
     }
 }
