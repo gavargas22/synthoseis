@@ -149,8 +149,29 @@ fn drag_follows_faulted_horizons() {
 /// fill.
 #[test]
 fn drag_knots_are_faulted_run_tops() {
-    let c = m::cfg(1, SHAPE, 4, Mode::PostFault);
+    let (tops, bad) = knot_misses(1, 0);
+    assert!(tops > 1000, "{tops} run tops in the band");
+    assert_eq!(bad, 0, "{bad} of {tops} run tops off their knot");
+}
+
+/// The knot check restricted to run tops the faults moved: the faulted run
+/// top lies ≥ 3 samples from the same label's top in the unfaulted fill
+/// (seed 7). Knots taken from the unfaulted labels (mutant M3) put exactly
+/// these tops at the unfaulted top + D, off their knot.
+#[test]
+fn drag_knots_follow_fault_displaced_tops() {
+    let (tops, bad) = knot_misses(7, 3);
+    assert!(tops > 200, "{tops} displaced run tops in the band");
+    assert_eq!(bad, 0, "{bad} of {tops} displaced run tops off their knot");
+}
+
+/// `(run tops checked, run tops off their knot)` of `seed`; with
+/// `min_throw > 0` only tops whose faulted source top is at least that far
+/// from the label's top in the unfaulted fill.
+fn knot_misses(seed: u64, min_throw: usize) -> (usize, usize) {
+    let c = m::cfg(seed, SHAPE, 4, Mode::PostFault);
     let r = m::run(&c);
+    let und = (min_throw > 0).then(|| m::undragged(seed, SHAPE));
     let d = synthoseis_core::pipeline_stream::salt_drag_offsets(&c).expect("drag");
     let table = synthoseis_core::pipeline_stream::salt_drag_label_table(&c).expect("table");
     let maps = m::maps(&c);
@@ -176,6 +197,16 @@ fn drag_knots_are_faulted_run_tops() {
             // The faulted run top `a` lies in (w⁻¹(k − 1), w⁻¹(k)]: where the
             // warp stretches, output cells skip source cells.
             let (lo, hi) = (r.warp[v - 1] as f64 + 1.0, r.warp[v] as f64);
+            if let Some(u) = &und {
+                let col = &u[q * nk..(q + 1) * nk];
+                let moved = col
+                    .iter()
+                    .position(|&x| x == l)
+                    .is_none_or(|t| (t as f64 - hi).abs() >= min_throw as f64);
+                if !moved {
+                    continue;
+                }
+            }
             // The source top with its knot nearest to k (D varies with
             // depth, so solve a + D(a) = k over the bracket).
             let src = (0..=((hi - lo).max(0.0) * 4.0) as usize)
@@ -207,8 +238,7 @@ fn drag_knots_are_faulted_run_tops() {
             }
         }
     }
-    assert!(tops > 1000, "{tops} run tops in the band");
-    assert_eq!(bad, 0, "{bad} of {tops} run tops off their knot");
+    (tops, bad)
 }
 
 /// Spec tests 4 and 5 on seed 1: the warp only lifts (`k − w⁻¹(k) ≤ 0`),
