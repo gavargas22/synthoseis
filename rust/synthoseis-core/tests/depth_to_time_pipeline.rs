@@ -49,7 +49,7 @@ fn rich(seed: u64, shape: [usize; 3], nt: Option<usize>, lateral: usize) -> E2eC
         inline_count: shape[0],
         crossline_count: shape[1],
         samples: shape[2],
-        faults: FaultConfig::with_count(3),
+        faults: FaultConfig::legacy_with_count(3),
         filters,
         time: TimeConfig { samples: nt, ..TimeConfig::default() },
         ..E2eConfig::default()
@@ -723,7 +723,7 @@ fn uniform_2000_time_reflectivity_is_the_depth_fuse_one_sample_down() {
             inline_count: shape[0],
             crossline_count: shape[1],
             samples: shape[2],
-            faults: FaultConfig::with_count(2),
+            faults: FaultConfig::legacy_with_count(2),
             time: TimeConfig::legacy(),
             ..E2eConfig::default()
         };
@@ -835,8 +835,8 @@ fn legacy_depth_as_time_reproduces_master_f3720fb2() {
     let mut f = FilterConfig::legacy(4.0, 30.0, 3);
     f.noise = NoiseConfig { snr_db: Some(12.5), ..NoiseConfig::default() };
     let bp = E2eConfig { filters: f, ..demo.clone() };
-    let faulted = E2eConfig { faults: FaultConfig::with_count(3), ..demo.clone() };
-    let faulted_bp = E2eConfig { faults: FaultConfig::with_count(3), ..bp.clone() };
+    let faulted = E2eConfig { faults: FaultConfig::legacy_with_count(3), ..demo.clone() };
+    let faulted_bp = E2eConfig { faults: FaultConfig::legacy_with_count(3), ..bp.clone() };
     let through = through_salt(&faulted);
     const LABELS: u64 = 0x1960_f999_e466_ce51;
     const FAULTED_LABELS: u64 = 0x3737_d29c_cb8c_0876;

@@ -99,10 +99,24 @@ jobs:
           ! grep -q closure_min /tmp/cm-legacy.mdio/.zattrs
           cargo run --profile test -p synthoseis -- run $CM --min-closure-voxels 100 --store /tmp/cm-100.mdio | tee /tmp/cm-100.txt
           grep -q "closures: minimum 100 voxels (fixed 100)" /tmp/cm-100.txt
+      - name: fault heave smoke (default heave, --fault-min-dip, --legacy-fault-kinematics, bad flags exit 2)
+        run: |
+          set -euo pipefail
+          FH="--e2e --chunked --seed 7 --shape 32,32,128 --faults 4"
+          cargo run --profile test -p synthoseis -- run $FH --store /tmp/fh.mdio | tee /tmp/fh.txt
+          grep -q "^fault kinematics: heave, min dip 30 deg" /tmp/fh.txt
+          cargo run --profile test -p synthoseis -- run $FH --fault-min-dip 45 --store /tmp/fh-45.mdio | tee /tmp/fh-45.txt
+          grep -q "^fault kinematics: heave, min dip 45 deg" /tmp/fh-45.txt
+          cargo run --profile test -p synthoseis -- run $FH --legacy-fault-kinematics --store /tmp/fh-legacy.mdio | tee /tmp/fh-legacy.txt
+          grep -q "^fault kinematics: legacy vertical (--legacy-fault-kinematics)" /tmp/fh-legacy.txt
+          set +e; cargo run --profile test -p synthoseis -- run $FH --fault-min-dip 70 --store /tmp/fh-bad.mdio; rc=$?; set -e
+          test "$rc" -eq 2
       - name: fault labels masked by salt smoke (default, --fault-labels-through-salt, gpu; time and legacy axis)
         run: |
           set -euo pipefail
-          FM="--e2e --chunked --seed 11 --shape 24,24,128 --faults 4 --sand-layer-fraction 0.4"
+          # The counts below predate fault heave (fault-kinematics spec 7a);
+          # --legacy-fault-kinematics keeps them.
+          FM="--e2e --chunked --seed 11 --shape 24,24,128 --faults 4 --sand-layer-fraction 0.4 --legacy-fault-kinematics"
           # Legacy axis: depth-domain counts (lift-only default; was 3919/155 under smooth-all).
           cargo run --profile test -p synthoseis -- run $FM --legacy-depth-as-time --store /tmp/fm.mdio | tee /tmp/fm.txt
           grep -q "fault_voxels=3855, masked_in_salt=155 " /tmp/fm.txt

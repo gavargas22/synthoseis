@@ -96,6 +96,17 @@ enum Commands {
         /// `data/fault_labels` into the MDIO store.
         #[arg(long, default_value_t = 0)]
         faults: usize,
+        /// Legacy switch: vertical-only fault displacement (master ce905d9e,
+        /// bit for bit). By default the hanging wall also moves sideways by
+        /// the heave (spec-fault-kinematics 7a; docs/faults-port.md).
+        /// Requires --faults.
+        #[arg(long, default_value_t = false)]
+        legacy_fault_kinematics: bool,
+        /// Dip floor (degrees, 15-60, default 30) of the fault heave: the
+        /// heave is throw / tan(max(dip, floor)). Requires --faults; rejected
+        /// with --legacy-fault-kinematics.
+        #[arg(long)]
+        fault_min_dip: Option<f64>,
         /// Cube shape `NI,NJ,NK` for single-worker `--e2e --chunked` (default 8,8,8).
         #[arg(long)]
         shape: Option<String>,
@@ -765,6 +776,8 @@ fn main() {
             worker_id,
             gpu,
             faults,
+            legacy_fault_kinematics,
+            fault_min_dip,
             shape,
             bandpass,
             lateral_filter,
@@ -837,6 +850,11 @@ fn main() {
                 );
                 std::process::exit(2);
             }
+            let fault_cfg = parse_fault_kinematics(faults, legacy_fault_kinematics, fault_min_dip)
+                .unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                });
             if (faults > 0 || shape.is_some())
                 && !(e2e
                     && chunked
@@ -1075,7 +1093,7 @@ fn main() {
                     samples,
                     chunk_shape,
                     &config,
-                    faults,
+                    fault_cfg,
                     filters,
                     rock,
                     geometry,
@@ -1089,6 +1107,31 @@ fn main() {
             }
         }
     }
+}
+
+/// Fault configuration of `--faults N [--legacy-fault-kinematics |
+/// --fault-min-dip D]`. Errors (exit 2) for a dip outside 15-60, a dip with
+/// the legacy switch, or either switch without faults.
+pub fn parse_fault_kinematics(
+    faults: usize,
+    legacy: bool,
+    min_dip: Option<f64>,
+) -> Result<synthoseis_core::FaultConfig, String> {
+    if faults == 0 && (legacy || min_dip.is_some()) {
+        return Err("--legacy-fault-kinematics / --fault-min-dip have no effect without --faults".into());
+    }
+    if legacy && min_dip.is_some() {
+        return Err("--fault-min-dip has no effect with --legacy-fault-kinematics (no heave)".into());
+    }
+    let mut c = synthoseis_core::FaultConfig::with_count(faults);
+    c.legacy_kinematics = legacy;
+    if let Some(d) = min_dip {
+        if !(15.0..=60.0).contains(&d) {
+            return Err(format!("--fault-min-dip {d} outside 15..=60 degrees"));
+        }
+        c.min_dip_deg = d;
+    }
+    Ok(c)
 }
 
 #[cfg(test)]

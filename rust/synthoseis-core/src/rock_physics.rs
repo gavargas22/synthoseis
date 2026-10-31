@@ -591,6 +591,32 @@ pub fn layer_depth_trace(
     step: f32,
     depth: &mut [f32],
 ) -> usize {
+    layer_depth_trace_with(
+        col,
+        maps_col[0],
+        maps_col.len(),
+        |h, _| maps_col[h],
+        intervals,
+        step,
+        depth,
+    )
+}
+
+/// [`layer_depth_trace`] with the unfaulted base of each run read through
+/// `zb(h, k_last)` (horizon `h` at the source column of the run's last
+/// sample `k_last`; fault heave, spec-fault-kinematics §7). `z0` is the
+/// output column's seabed (the seabed is never faulted), `nh` the number of
+/// horizons. Identical to [`layer_depth_trace`] when `zb` reads the
+/// column's own maps.
+pub fn layer_depth_trace_with(
+    col: &[u8],
+    z0: f64,
+    nh: usize,
+    zb_at: impl Fn(usize, usize) -> f64,
+    intervals: &[usize],
+    step: f32,
+    depth: &mut [f32],
+) -> usize {
     let nk = col.len();
     assert_eq!(depth.len(), nk);
     let seabed = col.iter().position(|&v| v != 255).unwrap_or(nk);
@@ -598,7 +624,6 @@ pub fn layer_depth_trace(
     if seabed == nk {
         return seabed;
     }
-    let z0 = maps_col[0];
     let dk0 = seabed as i64 - (z0.ceil() as i64).clamp(0, nk as i64);
     let mut k = seabed;
     while k < nk {
@@ -609,8 +634,8 @@ pub fn layer_depth_trace(
         }
         let h = intervals.get(lab as usize).copied();
         match h {
-            Some(h) if lab != 255 && h + 1 < maps_col.len() => {
-                let zb = maps_col[h + 1];
+            Some(h) if lab != 255 && h + 1 < nh => {
+                let zb = zb_at(h + 1, e - 1);
                 let expect = (zb.floor() as i64).clamp(0, nk as i64);
                 let dk = e as i64 - expect;
                 let mut tv = zb as f32 - z0 as f32;
@@ -914,6 +939,28 @@ pub struct RpmModel {
     /// Unconformities whose eroded thickness is added to the burial of the
     /// layers below (empty with `--no-exhumation-burial`).
     pub exhumation: std::sync::Arc<Vec<crate::unconformity::UnconformityRecord>>,
+    /// Fault model with heave (`None` without faults or under
+    /// `--legacy-fault-kinematics`): voxels read the maps, net-to-gross and
+    /// exhumation of their source column (spec-fault-kinematics §7).
+    pub heave: Option<HeaveColumns>,
+}
+
+/// Shared fault model used to find each voxel's source column under heave.
+#[derive(Debug, Clone)]
+pub struct HeaveColumns(pub std::sync::Arc<synthoseis_geo::faults::FaultModel>);
+
+impl PartialEq for HeaveColumns {
+    fn eq(&self, o: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &o.0)
+    }
+}
+
+impl HeaveColumns {
+    /// Continuous source `(i, j)` of every sample of column `(i, j)`.
+    pub fn column_sources(&self, i: usize, j: usize, nk: usize, out: &mut Vec<(f64, f64)>) {
+        debug_assert_eq!(nk, self.0.shape()[2]);
+        self.0.column_sources(i, j, out);
+    }
 }
 
 /// Elastic properties used by every fuse path.
@@ -950,6 +997,9 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
         }
         model.unconformities = recs;
     }
+    model.heave = crate::pipeline_stream::fault_model(cfg)
+        .filter(|m| m.has_heave())
+        .map(|m| HeaveColumns(std::sync::Arc::new(m)));
     if let Some(r) = cfg.effective_partial_voxels() {
         model.partial = Some(Box::new(crate::partial_model::PartialModel::build(cfg, &model, &rp, &sand, r)));
     }
@@ -1183,6 +1233,7 @@ impl RpmModel {
             rock: rp.rock_model(),
             unconformities: Default::default(),
             exhumation: Default::default(),
+            heave: None,
         }
     }
 
@@ -1213,6 +1264,117 @@ impl RpmModel {
         layer_depth_trace(col, &self.maps[c * self.nh..(c + 1) * self.nh], &self.intervals, self.step, depth)
     }
 
+    /// [`Self::depth_trace`] reading each run's base at its source column
+    /// `src[k]` (bilinear in the maps; fault heave).
+    pub fn depth_trace_src(
+        &self,
+        i: usize,
+        j: usize,
+        col: &[u8],
+        src: &[(f64, f64)],
+        depth: &mut [f32],
+    ) -> usize {
+        let c = i * self.shape[1] + j;
+        let zb = |h: usize, k: usize| self.map_at(src[k].0, src[k].1, h);
+        layer_depth_trace_with(
+            col,
+            self.maps[c * self.nh],
+            self.nh,
+            zb,
+            &self.intervals,
+            self.step,
+            depth,
+        )
+    }
+
+    /// Horizon `h` (samples) at a continuous column `(x, y)`: bilinear in
+    /// the maps, exact at integer positions.
+    pub fn map_at(&self, x: f64, y: f64, h: usize) -> f64 {
+        let [ni, nj, _] = self.shape;
+        let ax = |v: f64, n: usize| {
+            let v = v.clamp(0.0, (n.max(1) - 1) as f64);
+            let a = v.floor() as usize;
+            (a, (a + 1).min(n - 1), v - a as f64)
+        };
+        let (i0, i1, wi) = ax(x, ni);
+        let (j0, j1, wj) = ax(y, nj);
+        let at = |i: usize, j: usize| self.maps[(i * nj + j) * self.nh + h];
+        let lerp = |a: f64, b: f64, w: f64| if w == 0.0 { a } else { a + w * (b - a) };
+        lerp(
+            lerp(at(i0, j0), at(i0, j1), wj),
+            lerp(at(i1, j0), at(i1, j1), wj),
+            wi,
+        )
+    }
+
+    /// All `nh` continuous horizons at `(x, y)`, appended to `out`; equal
+    /// to [`RpmModel::continuous_map_at`] per horizon (axis weights shared).
+    pub fn continuous_maps_at(
+        &self,
+        pm: &crate::partial_model::PartialModel,
+        x: f64,
+        y: f64,
+        out: &mut Vec<f64>,
+    ) {
+        let [ni, nj, _] = self.shape;
+        let nh = self.nh;
+        let ax = |v: f64, n: usize| {
+            let v = v.clamp(0.0, (n.max(1) - 1) as f64);
+            let a = v.floor() as usize;
+            (a, (a + 1).min(n - 1), v - a as f64)
+        };
+        let (i0, i1, wi) = ax(x, ni);
+        let (j0, j1, wj) = ax(y, nj);
+        let lerp = |a: f64, b: f64, w: f64| if w == 0.0 { a } else { a + w * (b - a) };
+        let base = |i: usize, j: usize| (i * nj + j) * nh;
+        let (o00, o01, o10, o11) = (base(i0, j0), base(i0, j1), base(i1, j0), base(i1, j1));
+        let at = |o: usize| self.maps[o] + pm.delta[o] as f64;
+        out.extend((0..nh).map(|h| {
+            lerp(
+                lerp(at(o00 + h), at(o01 + h), wj),
+                lerp(at(o10 + h), at(o11 + h), wj),
+                wi,
+            )
+        }));
+    }
+
+    /// Continuous (partial-voxel) horizon `h` at `(x, y)`: bilinear in
+    /// `maps + delta`, exact at integer positions.
+    pub fn continuous_map_at(
+        &self,
+        pm: &crate::partial_model::PartialModel,
+        x: f64,
+        y: f64,
+        h: usize,
+    ) -> f64 {
+        let [ni, nj, _] = self.shape;
+        let ax = |v: f64, n: usize| {
+            let v = v.clamp(0.0, (n.max(1) - 1) as f64);
+            let a = v.floor() as usize;
+            (a, (a + 1).min(n - 1), v - a as f64)
+        };
+        let (i0, i1, wi) = ax(x, ni);
+        let (j0, j1, wj) = ax(y, nj);
+        let at = |i: usize, j: usize| {
+            let o = (i * nj + j) * self.nh + h;
+            self.maps[o] + pm.delta[o] as f64
+        };
+        let lerp = |a: f64, b: f64, w: f64| if w == 0.0 { a } else { a + w * (b - a) };
+        lerp(
+            lerp(at(i0, j0), at(i0, j1), wj),
+            lerp(at(i1, j0), at(i1, j1), wj),
+            wi,
+        )
+    }
+
+    /// Nearest column index of a continuous source `(x, y)`.
+    #[inline]
+    pub fn nearest_column(&self, x: f64, y: f64) -> usize {
+        let [ni, nj, _] = self.shape;
+        let r = |v: f64, n: usize| (v + 0.5).floor().clamp(0.0, (n.max(1) - 1) as f64) as usize;
+        r(x, ni) * nj + r(y, nj)
+    }
+
     /// Elastic properties of column `(i, j)` from its labels `col`.
     /// `scratch` holds the depth trace and voxel kinds.
     #[allow(clippy::too_many_arguments)]
@@ -1231,9 +1393,23 @@ impl RpmModel {
         let c = i * nj + j;
         scratch.depth.resize(nk, 0.0);
         scratch.kinds.clear();
-        let seabed = self.depth_trace(i, j, col, &mut scratch.depth);
+        let seabed = match &self.heave {
+            Some(hv) => {
+                hv.column_sources(i, j, nk, &mut scratch.src_ij);
+                let src = std::mem::take(&mut scratch.src_ij);
+                let s = self.depth_trace_src(i, j, col, &src, &mut scratch.depth);
+                scratch.src_ij = src;
+                s
+            }
+            None => self.depth_trace(i, j, col, &mut scratch.depth),
+        };
         let salt = self.salt.as_ref().filter(|s| s.runs[c].1 > s.runs[c].0);
         for (k, &lab) in col.iter().enumerate() {
+            // Source column of the voxel (its own without heave).
+            let cs = match &self.heave {
+                Some(_) => self.nearest_column(scratch.src_ij[k].0, scratch.src_ij[k].1),
+                None => c,
+            };
             let kind = if salt.is_some_and(|s| s.contains(c, k)) {
                 VoxelKind::Salt
             } else if k < seabed {
@@ -1244,7 +1420,7 @@ impl RpmModel {
                         Some(f) if (k as f32) < f.contact[c] => f.fluid[c],
                         _ => Fluid::Brine,
                     };
-                    (l.ng[c], fluid)
+                    (l.ng[cs], fluid)
                 } else {
                     (0.0, Fluid::Brine)
                 };
@@ -1252,7 +1428,7 @@ impl RpmModel {
                     layer: lab as usize,
                     ng,
                     fluid,
-                    extra_m: self.exhumation_m(c, l.interval),
+                    extra_m: self.exhumation_m(cs, l.interval),
                 }
             } else {
                 VoxelKind::Unfilled
@@ -1290,6 +1466,8 @@ impl RpmModel {
 #[derive(Debug, Default, Clone)]
 pub struct ColumnScratch {
     pub depth: Vec<f32>,
+    /// Source `(i, j)` per sample under fault heave (empty otherwise).
+    pub src_ij: Vec<(f64, f64)>,
     pub kinds: Vec<VoxelKind>,
     /// Partial-voxel scratch ([`RpmModel::column_partial`]).
     pub partial: crate::partial_model::PartialScratch,

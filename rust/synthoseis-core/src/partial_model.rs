@@ -28,8 +28,9 @@ use synthoseis_rpm::{
 use synthoseis_seismic::{subcell_column, SubLayer, SubcellColumn};
 
 use crate::partial_voxels::{
-    absorb_water_below, cell_model, column_parts, column_parts_faulted, source_intervals,
-    CellModel, ColumnGeometry, ColumnParts, PartKind, PartialVoxelStats, PvReflectivity, Unit,
+    absorb_water_below, cell_model, column_parts, column_parts_faulted, column_parts_faulted_cells,
+    source_intervals, CellModel, ColumnGeometry, ColumnParts, PartKind, PartialVoxelStats,
+    PvReflectivity, Unit,
 };
 use crate::pipeline::{E2eConfig, TimeAxis};
 use crate::rock_physics::{
@@ -149,6 +150,16 @@ impl PartialTile {
             .enumerate()
             .any(|(k, &v)| v != k as f32)
             .then_some(col)
+            .or_else(|| self.heave_column(i, j).then_some(col))
+    }
+
+    /// Whether any voxel of column `(i, j)` pulls from another column
+    /// (fault heave).
+    fn heave_column(&self, i: usize, j: usize) -> bool {
+        let Some(t) = self.fault.as_ref() else {
+            return false;
+        };
+        t.src_ij.is_some() && (0..t.nk).any(|k| t.source_ij(i, j, k) != (i as f64, j as f64))
     }
 }
 
@@ -159,6 +170,8 @@ pub struct PartialScratch {
     horizons: Vec<f64>,
     contacts: Vec<f32>,
     src: Vec<(f64, f64)>,
+    /// Per-cell source horizons under fault heave (`nk * nh`).
+    cell_horizons: Vec<f64>,
     brk: Vec<bool>,
     mix: Vec<(f64, Elastic32)>,
     seen: Vec<bool>,
@@ -220,6 +233,7 @@ impl RpmModel {
             depth,
             kinds,
             partial: ps,
+            ..
         } = scratch;
         ps.horizons.clear();
         ps.horizons
@@ -249,8 +263,43 @@ impl RpmModel {
                         prev = cur;
                     }
                 }
-                source_intervals(lookup, &mut ps.brk, &mut ps.src);
-                column_parts_faulted(&geom, &ps.src, &mut ps.parts);
+                let heave = tile.fault.as_ref().filter(|t| t.src_ij.is_some());
+                if let Some(t) = heave {
+                    // Heave: source horizons per cell (bilinear in the
+                    // continuous maps at the cell's source column) and a
+                    // break wherever the rounded source column changes.
+                    ps.cell_horizons.clear();
+                    let mut prev = None;
+                    // Bit-exact source of the previous cell: runs of cells
+                    // with one source reuse its horizons (same values).
+                    let mut last = None;
+                    for k in 0..nk {
+                        let (x, y) = t.source_ij(i, j, k);
+                        let sc = self.nearest_column(x, y);
+                        if k > 0 && prev != Some(sc) {
+                            ps.brk[k] = true;
+                        }
+                        prev = Some(sc);
+                        let bits = (x.to_bits(), y.to_bits());
+                        if last == Some(bits) {
+                            let n = ps.cell_horizons.len();
+                            ps.cell_horizons.extend_from_within(n - nh..n);
+                        } else {
+                            self.continuous_maps_at(pm, x, y, &mut ps.cell_horizons);
+                            last = Some(bits);
+                        }
+                    }
+                    source_intervals(lookup, &mut ps.brk, &mut ps.src);
+                    column_parts_faulted_cells(
+                        &geom,
+                        Some(&ps.cell_horizons),
+                        &ps.src,
+                        &mut ps.parts,
+                    );
+                } else {
+                    source_intervals(lookup, &mut ps.brk, &mut ps.src);
+                    column_parts_faulted(&geom, &ps.src, &mut ps.parts);
+                }
             }
         }
         if tile.lookup(i, j).is_some() {
@@ -561,10 +610,14 @@ mod tests {
         };
         let mut off_cfg = cfg.clone();
         off_cfg.rock_physics.exhumation_burial = false;
-        let ElasticModel::Rpm(off) = crate::rock_physics::elastic_model(&off_cfg, &labels, shape) else {
+        let ElasticModel::Rpm(off) = crate::rock_physics::elastic_model(&off_cfg, &labels, shape)
+        else {
             panic!("rpm")
         };
-        let pm = on.partial.as_deref().expect("partial voxels are on by default");
+        let pm = on
+            .partial
+            .as_deref()
+            .expect("partial voxels are on by default");
         let (mut sc, mut so) = (ColumnScratch::default(), ColumnScratch::default());
         let z = || vec![0f32; nk];
         let (mut r, mut p, mut s) = (z(), z(), z());
@@ -579,8 +632,9 @@ mod tests {
                 let k = nk / 2;
                 for h in 0..on.nh - 1 {
                     let l = pm.interval_layer[h];
-                    let near = (k - 1..=k + 1)
-                        .any(|kk| matches!(sc.kinds[kk], VoxelKind::Layer { layer, .. } if layer == l));
+                    let near = (k - 1..=k + 1).any(
+                        |kk| matches!(sc.kinds[kk], VoxelKind::Layer { layer, .. } if layer == l),
+                    );
                     if near {
                         continue;
                     }
@@ -596,10 +650,17 @@ mod tests {
                         // interval with erosion (or the exhumation steps
                         // up at `h`) the part is raised, whatever `h - 1`
                         // carries.
-                        let above = if h == 0 { 0.0 } else { exhumation_at(&recs, c, h - 1) };
+                        let above = if h == 0 {
+                            0.0
+                        } else {
+                            exhumation_at(&recs, c, h - 1)
+                        };
                         if above == 0.0 {
                             boundary += 1;
-                            assert!(a.vp > b.vp, "col {c} h {h}: first eroded interval not raised");
+                            assert!(
+                                a.vp > b.vp,
+                                "col {c} h {h}: first eroded interval not raised"
+                            );
                         }
                         if above != e {
                             stepped += 1;
@@ -611,7 +672,13 @@ mod tests {
                 }
             }
         }
-        assert!(raised > 100 && same > 100, "raised {raised}, unchanged {same}");
-        assert!(boundary > 10 && stepped >= boundary, "boundary parts {boundary}, stepped {stepped}");
+        assert!(
+            raised > 100 && same > 100,
+            "raised {raised}, unchanged {same}"
+        );
+        assert!(
+            boundary > 10 && stepped >= boundary,
+            "boundary parts {boundary}, stepped {stepped}"
+        );
     }
 }

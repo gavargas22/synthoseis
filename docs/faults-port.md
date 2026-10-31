@@ -241,8 +241,84 @@ step. Its depth-axis stores are byte-identical to those written by a master
 f3720fb2 or d51ab237 build, except the creation timestamp. In time mode the
 switch has no effect, and the store equals d51ab237 either way.
 
+## Fault heave (default; spec-fault-kinematics 7a)
+
+Faults now slip down the dip of the drawn surface instead of straight down.
+For a throw `d` (samples) at a surface voxel with voxel-space dip tangent
+`tan δ_v`, the hanging wall also moves sideways by the heave
+`d / max(tan δ_v, tan δ_min,v)` bins, down-dip, where
+`tan δ_min,v = tan δ_min · bin / dz` is the dip floor (`--fault-min-dip`,
+default 30°, allowed 15-60). Because the hanging wall moves away from the
+footwall, a horizon map shows a gap (heave gap) along each fault.
+
+- Each output voxel gathers its source position through the faults from
+  youngest to oldest (`FaultModel::gather`), so crossing faults compose and
+  older fault labels move with younger hanging walls.
+- Layer labels, partial-voxel fractions, rock physics (net-to-gross,
+  exhumation, unconformity marks) are read at the continuous source position
+  (maps bilinear; per-column draws at the nearest source column).
+- Fault labels are a closed-form band `|f − 1| / |∇f| ≤ 1` voxel around the
+  surface (`LABEL_BAND_VOXELS`).
+- Tiles carry a lateral halo `ceil(Σ t_max / tan δ_min,v) + 2` (19 for one
+  fault at the defaults; the throws of all faults are summed because a
+  gather path can cross several hanging walls), so the output does not
+  depend on `--chunk-i/--chunk-j`. Labels and volumes are faulted in place
+  strip by strip from a window of the unfaulted rows `[i0 − H, i1 + H)`
+  (a full-`nj` strip of `tile_i + 2H` rows);
+  every source read is asserted to lie in the tile plus halo, and the cube
+  is never copied whole.
+- The fault model lives in the geometry cache with a bounded gather cache
+  of the last `GATHER_CACHE_TILES` (4) tiles, filled by the tile consumers
+  (labels, time-mode labels, partial voxels); rock physics
+  (`column_sources`) reads a cached tile or gathers the column. Memory is
+  fixed by the tile size, not the cube (max RSS at `--chunk-i/j 32`,
+  ×256, 4 faults: master 134 / 491 MB at 128² / 256², heave 173 / 541 MB;
+  it was 243 / 901 MB with a whole-cube cache). Test:
+  `kinematics_tests.rs::gather_cache_memory_is_bounded_by_the_tile`.
+- Salt is stationary: the body is emplaced after faulting (fault ∧ salt = 0
+  in every output), so the salt kind is decided at the output column while
+  the sediments next to it come from their source columns. Where a source
+  position lies inside the body the voxel takes the salt-dragged layers
+  that are normally hidden under the salt, which shows as staircase
+  fragments on the flanks (e.g. `seed1_inline`). Over seeds 1–20 at
+  128×128×256, 4 faults, salt on, these fragments are 0.86% of the cube on
+  average (717,669 of 83.9M voxels), median 0.76%, max 2.19% (seed 2), min
+  0.08% (seeds 9 and 19), i.e. 2.7–82% of the salt volume (82% on seed 6).
+  The legacy vertical lookup already makes the same kind of voxel (source
+  `k` inside the body's run): seeds 1 / 7 / 13 give 61,261 / 9,533 /
+  42,227 under `--legacy-fault-kinematics` against 52,150 / 14,090 /
+  53,280 with heave. Labels still mark 83.2% of the Vp steps inside the
+  fragments (98.6% elsewhere). Salt properties still use the heaved burial
+  depth. Tests: `fault_heave.rs::salt_is_stationary_under_heave`,
+  `fault_heave.rs::salt_flank_fragments_stay_bounded` (≤ 2.5% of the cube
+  and ≤ 1.6× legacy on seeds 1, 7, 13).
+- Faults remain single-worker `--e2e --chunked` only.
+
+`--legacy-fault-kinematics` restores the vertical-only lookup of master
+ce905d9e byte for byte. `--fault-min-dip` with the legacy switch, either flag
+without `--faults`, or a dip outside 15-60 exits with status 2.
+
+Evidence (seeds 1, 7, 13, 128x128x256, `--faults 4`):
+`cargo run --release -p synthoseis-core --example heave_evidence` and
+`examples/plot_heave_evidence.py` (see the example header). Heave at peak
+throw over seeds 1-20 (`heave_at_peak_throw`, spec §2/§6.4) is
+p5/50/95/max 1.2/4.9/11.3/14.5 bins after the 30° floor; checked by
+`fault_heave.rs::heave_at_peak_throw_matches_the_spec` (`--ignored`).
+
 ## Deferred (follow-ups)
 
+- Salt-flank fragments under heave (PR #59 review S3; no GitHub issue,
+  Issues are disabled, tracked on the Notion roadmap). Sediment voxels
+  whose gathered source lies inside the stationary salt body take the
+  salt-dragged layers hidden under the salt: 0.86% of the cube on average
+  over seeds 1–20 (max 2.19%, up to 82% of the salt volume), comparable to
+  legacy (0.85–1.48× on seeds 1/7/13), and 83.2% of their Vp steps are
+  labelled against 98.6% elsewhere. Fix: fault before the drag (gather the
+  undragged stack and add the salt drag at the output column), or fill
+  in-body sources from the nearest out-of-body sample along the gather
+  path. Done when the fragment count drops well below legacy and the
+  labelled-step fraction in the fragments matches the rest of the cube;
+  `salt_flank_fragments_stay_bounded` then tightens to the new bound.
 - Hockey-stick drag zone (throw ≥ 29.75). Faults are flagged
   `hockey_stick_deferred`, and the default throw range 5–29 avoids it.
 - Fault intersections volume and dilation; `fault_intersections` output.

@@ -603,7 +603,7 @@ fn t6_labels_identical_with_and_without_geometry_cache() {
     for (seed, faults, salt) in [(4u64, 0usize, false), (7, 3, true), (12, 2, false)] {
         for count in [1usize, 2] {
             let mut c = cfg(seed, [40, 36, 128]);
-            c.faults = FaultConfig::with_count(faults);
+            c.faults = FaultConfig::legacy_with_count(faults);
             c.rock_physics.salt = salt;
             c.rock_physics.unconformity.count = count;
             assert!(unconformity_applied(&c), "seed {seed} N {count}: no unconformity");
@@ -638,7 +638,7 @@ fn t6_every_writer_produces_the_same_store_content() {
     for legacy_axis in [false, true] {
         for count in [1usize, 2] {
             let mut base = cfg(7, [24, 20, 128]);
-            base.faults = FaultConfig::with_count(3);
+            base.faults = FaultConfig::legacy_with_count(3);
             base.rock_physics.salt = true;
             base.rock_physics.unconformity.count = count;
             if legacy_axis {
@@ -731,14 +731,14 @@ fn t8_labels_follow_faults_and_are_cleared_in_salt() {
     let (mut checked, mut moved) = (0usize, 0usize);
     for seed in [4u64, 7, 12, 3] {
         let mut c = cfg(seed, [40, 36, 128]);
-        c.faults = FaultConfig::with_count(4);
+        c.faults = FaultConfig::legacy_with_count(4);
         c.rock_physics.salt = false;
         let (labels, [ni, nj, nk]) = generate_labels(&c);
         let faults = generate_fault_labels_for(&c);
         assert!(faults.iter().any(|&v| v == 1), "no fault voxels");
         let mask = generate_unconformity_labels(&c).expect("applied");
         let mut b = c.clone();
-        b.faults = FaultConfig::with_count(0);
+        b.faults = FaultConfig::legacy_with_count(0);
         let (plain, _) = generate_labels(&b);
         let base = generate_unconformity_labels(&b).unwrap();
         let recs = unconformity_records(&c);
@@ -803,7 +803,7 @@ fn t8_time_mode_labels() {
         let mut c = cfg(4, [32, 28, 128]);
         c.rock_physics.salt = false;
         if faulted {
-            c.faults = FaultConfig::with_count(4);
+            c.faults = FaultConfig::legacy_with_count(4);
         }
         let depth = generate_unconformity_labels(&c).expect("applied");
         let mut legacy = c.clone();
@@ -1171,11 +1171,11 @@ fn t11_faults_displace_the_mask_and_the_layers_together() {
     let mut same_layer = 0usize;
     for seed in [7u64, 4, 12] {
         let mut c = cfg(seed, [40, 36, 128]);
-        c.faults = FaultConfig::with_count(4);
+        c.faults = FaultConfig::legacy_with_count(4);
         c.rock_physics.salt = false;
         let (faulted, [ni, nj, nk]) = generate_labels(&c);
         let mut plain_cfg = c.clone();
-        plain_cfg.faults = FaultConfig::with_count(0);
+        plain_cfg.faults = FaultConfig::legacy_with_count(0);
         let (plain, _) = generate_labels(&plain_cfg);
         let mask = generate_unconformity_labels(&c).expect("applied");
         let mask0 = generate_unconformity_labels(&plain_cfg).expect("applied");
@@ -1213,7 +1213,7 @@ fn t8_mp_verifier_rejects_mutated_stores() {
     use synthoseis_core::pipeline_mp::verify_unconformity_labels;
     let dir = tempfile::tempdir().unwrap();
     let mut c = cfg(7, [24, 20, 128]);
-    c.faults = FaultConfig::with_count(2);
+    c.faults = FaultConfig::legacy_with_count(2);
     c.chunk_shape = Some([8, 5, 16]);
     c.store_path = Some(dir.path().join("good.mdio"));
     assert!(unconformity_applied(&c));

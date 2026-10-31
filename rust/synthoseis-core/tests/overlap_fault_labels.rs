@@ -53,7 +53,7 @@ fn case(
         inline_count: shape[0],
         crossline_count: shape[1],
         samples: shape[2],
-        faults: FaultConfig::with_count(faults),
+        faults: FaultConfig::legacy_with_count(faults),
         rock_physics: RockPhysicsConfig {
             sand_layer_fraction: sand,
             ..RockPhysicsConfig::default()

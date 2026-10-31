@@ -16,6 +16,7 @@
 //!    binary fault mask, fault segment ids. Tiles are exactly independent.
 
 mod apply;
+mod kinematics;
 mod model;
 mod params;
 mod segments;
@@ -23,10 +24,16 @@ mod segments;
 mod tests;
 #[cfg(test)]
 mod tests_reach;
+#[cfg(test)]
+mod kinematics_tests;
 
 pub use apply::{
-    horizon_depth_from_age, interp_trace_into, interp_uniform, remap_nearest, FaultModel,
-    FaultTile, SURVEY_TILE,
+    horizon_depth_from_age, interp_trace_into, interp_uniform, remap_nearest, trilinear,
+    FaultModel, FaultTile, SURVEY_TILE,
+};
+pub use kinematics::{
+    heave_at_peak_throw, heave_vector, stage_slip, FaultKinematics, Gathered, HeaveParams, DEFAULT_MIN_DIP_DEG,
+    LABEL_BAND_VOXELS,
 };
 pub use model::{
     fit_sigma_to_column, middle_candidates, resolve_fault, resolve_fault_mode, survey_surface,

@@ -21,7 +21,7 @@ pub fn run_e2e(
     samples: usize,
     chunk_shape: Option<[usize; 3]>,
     config: &RunConfig,
-    faults: usize,
+    faults: synthoseis_core::FaultConfig,
     filters: synthoseis_core::FilterConfig,
     rock: synthoseis_core::RockPhysicsConfig,
     geometry: synthoseis_core::ToyGeometry,
@@ -51,7 +51,7 @@ pub fn run_e2e(
         };
         let cfg = synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
             time: time.clone(),
-            faults: synthoseis_core::FaultConfig::with_count(faults),
+            faults: faults.clone(),
             filters: filters.clone(),
             seed,
             inline_count,
@@ -173,7 +173,7 @@ pub fn run_e2e(
     if chunked || chunk_shape.is_some() {
         let cfg = synthoseis_core::pipeline::E2eConfig { maps_cache: Default::default(),
             time: time.clone(),
-            faults: synthoseis_core::FaultConfig::with_count(faults),
+            faults: faults.clone(),
             filters: filters.clone(),
             seed,
             inline_count,
@@ -600,6 +600,11 @@ fn print_fault_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         model.skipped().len(),
         voxels
     );
+    if cfg.faults.legacy_kinematics {
+        println!("fault kinematics: legacy vertical (--legacy-fault-kinematics)");
+    } else {
+        println!("fault kinematics: heave, min dip {} deg", cfg.faults.min_dip_deg);
+    }
 }
 
 pub fn run_single_worker_placeholder(config: &RunConfig, store: Option<PathBuf>, seed: u64) {

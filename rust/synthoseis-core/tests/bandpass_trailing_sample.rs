@@ -45,7 +45,7 @@ fn planar(filters: FilterConfig) -> E2eConfig {
         crossline_count: 20,
         samples: 64,
         chunk_shape: Some([8, 5, 64]),
-        faults: FaultConfig::with_count(3),
+        faults: FaultConfig::legacy_with_count(3),
         filters,
         time: synthoseis_core::TimeConfig::legacy(),
         ..E2eConfig::default()
@@ -70,7 +70,7 @@ fn rich_salt(filters: FilterConfig) -> E2eConfig {
         crossline_count: 32,
         samples: 96,
         chunk_shape: Some([8, 8, 96]),
-        faults: FaultConfig::with_count(4),
+        faults: FaultConfig::legacy_with_count(4),
         filters,
         time: synthoseis_core::TimeConfig::legacy(),
         ..E2eConfig::default()

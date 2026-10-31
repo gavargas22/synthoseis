@@ -260,6 +260,14 @@ pub struct FaultConfig {
     /// reproducing master f3720fb2 bit for bit. Default `false`: it writes
     /// them like every other MDIO path (see `crate::pipeline_overlap_faults`).
     pub overlap_legacy_no_fault_labels: bool,
+    /// Legacy switch: vertical-only fault displacement (master ce905d9e,
+    /// bit for bit). Default `false`: the hanging wall slides down-dip and
+    /// moves sideways by the heave (spec-fault-kinematics 7a). CLI
+    /// `--legacy-fault-kinematics`.
+    pub legacy_kinematics: bool,
+    /// Physical dip floor of the heave in degrees (15–60, default 30).
+    /// CLI `--fault-min-dip`.
+    pub min_dip_deg: f64,
 }
 
 impl Default for FaultConfig {
@@ -270,6 +278,8 @@ impl Default for FaultConfig {
             throw_max: 29.0,
             legacy_reach: false,
             overlap_legacy_no_fault_labels: false,
+            legacy_kinematics: false,
+            min_dip_deg: synthoseis_geo::faults::DEFAULT_MIN_DIP_DEG,
         }
     }
 }
@@ -279,6 +289,17 @@ impl FaultConfig {
     pub fn with_count(count: usize) -> Self {
         Self {
             count,
+            ..Self::default()
+        }
+    }
+
+    /// `count` faults with the pre-heave vertical-throw kinematics
+    /// (`--legacy-fault-kinematics`), under which outputs pinned before the
+    /// fault-heave change stay bit-identical.
+    pub fn legacy_with_count(count: usize) -> Self {
+        Self {
+            count,
+            legacy_kinematics: true,
             ..Self::default()
         }
     }
@@ -400,7 +421,9 @@ impl TimeConfig {
         // The floor is 16 samples, or nt₀ when the default axis itself is
         // shorter (tiny cubes, e.g. the 8³ CLI default), so the default
         // never fails; an explicit `--twt-samples` below both is rejected.
-        let floor = 16.min(synthoseis_seismic::default_twt_samples(nz, dz, self.dt_ms)).max(2);
+        let floor = 16
+            .min(synthoseis_seismic::default_twt_samples(nz, dz, self.dt_ms))
+            .max(2);
         if nt < floor || nt > 8 * nz {
             return Err(format!(
                 "twt-samples {nt} outside {floor}..={} (8 x {nz} depth samples)",
@@ -539,7 +562,9 @@ impl E2eConfig {
     /// Fault labels are masked by the salt body (`fault AND NOT salt`):
     /// salt present, faults enabled and no `--fault-labels-through-salt`.
     pub fn effective_fault_salt_mask(&self) -> bool {
-        self.effective_salt() && self.faults.enabled() && !self.rock_physics.fault_labels_through_salt
+        self.effective_salt()
+            && self.faults.enabled()
+            && !self.rock_physics.fault_labels_through_salt
     }
 
     pub fn tiny(seed: u64) -> Self {
@@ -566,7 +591,9 @@ impl E2eConfig {
     pub fn time_axis(&self) -> Option<TimeAxis> {
         self.time_enabled().then(|| TimeAxis {
             dt_ms: self.time.dt_ms,
-            nt: self.time.output_samples(self.samples, self.rock_physics.depth_step_m),
+            nt: self
+                .time
+                .output_samples(self.samples, self.rock_physics.depth_step_m),
             dz: self.rock_physics.depth_step_m,
             kernel: self.time.kernel,
             constant_twt_vp: self.time.constant_twt_vp,
@@ -584,7 +611,11 @@ impl E2eConfig {
     /// label cube written to MDIO. Equals [`E2eConfig::shape`] on the legacy
     /// axis.
     pub fn output_shape(&self) -> [usize; 3] {
-        [self.inline_count, self.crossline_count, self.output_samples()]
+        [
+            self.inline_count,
+            self.crossline_count,
+            self.output_samples(),
+        ]
     }
 
     /// Output sample interval (ms): `dt` in time mode, else 4 ms. Drives the
@@ -615,9 +646,15 @@ impl E2eConfig {
     /// Legacy rock physics only: the physical model's minimum is only known
     /// after the run, see [`E2eConfig::time_warning_after_run`].
     pub fn time_warning(&self) -> Option<String> {
-        let legacy = matches!(self.rock_physics.rock_model(), synthoseis_rpm::RockModel::Legacy);
+        let legacy = matches!(
+            self.rock_physics.rock_model(),
+            synthoseis_rpm::RockModel::Legacy
+        );
         (legacy && self.time_enabled())
-            .then(|| self.time.staircase_warning(self.rock_physics.depth_step_m, VP_MIN_SEDIMENT))
+            .then(|| {
+                self.time
+                    .staircase_warning(self.rock_physics.depth_step_m, VP_MIN_SEDIMENT)
+            })
             .flatten()
     }
 
@@ -627,14 +664,19 @@ impl E2eConfig {
     /// evaluated here (multi-process parent), the [`E2eConfig::vp_min_sediment`]
     /// bound.
     pub fn time_warning_after_run(&self) -> Option<String> {
-        if matches!(self.rock_physics.rock_model(), synthoseis_rpm::RockModel::Legacy) || !self.time_enabled() {
+        if matches!(
+            self.rock_physics.rock_model(),
+            synthoseis_rpm::RockModel::Legacy
+        ) || !self.time_enabled()
+        {
             return None;
         }
         let v = synthoseis_rpm::observed_vp_min()
             .map(|v| v as f64)
             .unwrap_or_else(|| self.vp_min_sediment())
             .floor();
-        self.time.staircase_warning(self.rock_physics.depth_step_m, v)
+        self.time
+            .staircase_warning(self.rock_physics.depth_step_m, v)
     }
 
     /// Lowest sediment P velocity of this run's rock model (m/s), for the
@@ -647,7 +689,11 @@ impl E2eConfig {
             synthoseis_rpm::RockModel::Legacy => VP_MIN_SEDIMENT,
             synthoseis_rpm::RockModel::Physical(p) => {
                 let fluids: &[synthoseis_rpm::Fluid] = if self.rock_physics.fluids {
-                    &[synthoseis_rpm::Fluid::Brine, synthoseis_rpm::Fluid::Oil, synthoseis_rpm::Fluid::Gas]
+                    &[
+                        synthoseis_rpm::Fluid::Brine,
+                        synthoseis_rpm::Fluid::Oil,
+                        synthoseis_rpm::Fluid::Gas,
+                    ]
                 } else {
                     &[synthoseis_rpm::Fluid::Brine]
                 };
@@ -730,11 +776,28 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     let mut vs = vec![0.0f32; ni * nj * nk];
     let mut rho = vec![0.0f32; ni * nj * nk];
     let model = crate::rock_physics::elastic_model(cfg, &labels, [ni, nj, nk]);
-    model.tile_properties(&labels, [ni, nj, nk], 0, ni, 0, nj, &mut vp, &mut vs, &mut rho);
+    model.tile_properties(
+        &labels,
+        [ni, nj, nk],
+        0,
+        ni,
+        0,
+        nj,
+        &mut vp,
+        &mut vs,
+        &mut rho,
+    );
 
     // --- seismic: single mid-angle RFC + Ricker wavelet → angle stack ---
     let angles = [15.0_f64];
-    let rfc = compute_rfc_volumes_form(&vp, &vs, &rho, [ni, nj, nk], &angles, model.zoeppritz_form());
+    let rfc = compute_rfc_volumes_form(
+        &vp,
+        &vs,
+        &rho,
+        [ni, nj, nk],
+        &angles,
+        model.zoeppritz_form(),
+    );
     // rfc shape: (1, ni, nj, nk-1) — pad last sample with 0 to match nk.
     let mut angle_cube = vec![0.0f32; ni * nj * nk];
     let zm1 = nk - 1;
@@ -835,7 +898,9 @@ pub fn write_e2e_mdio(path: &Path, cfg: &E2eConfig, volumes: &E2eVolumes) -> Res
             .map_err(|e| e.to_string())?;
     }
     if let Some(mask) = salt_mask {
-        store.write_salt_labels_u8(&mask).map_err(|e| e.to_string())?;
+        store
+            .write_salt_labels_u8(&mask)
+            .map_err(|e| e.to_string())?;
     }
     if let Some(mask) = unconf_mask {
         store

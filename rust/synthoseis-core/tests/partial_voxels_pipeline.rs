@@ -43,7 +43,7 @@ fn rich(seed: u64, shape: [usize; 3], faults: usize, time: TimeConfig) -> E2eCon
         inline_count: shape[0],
         crossline_count: shape[1],
         samples: shape[2],
-        faults: FaultConfig::with_count(faults),
+        faults: FaultConfig::legacy_with_count(faults),
         filters,
         time,
         rock_physics: RockPhysicsConfig {
@@ -459,7 +459,7 @@ fn faulted_label_guard() {
                         inline_count: shape[0],
                         crossline_count: shape[1],
                         samples: shape[2],
-                        faults: FaultConfig::with_count(faults),
+                        faults: FaultConfig::legacy_with_count(faults),
                         ..E2eConfig::default()
                     },
                     Some(PvReflectivity::Subcell),

@@ -19,6 +19,19 @@ pub(crate) struct Cached {
     pub continuous: Option<(Vec<f64>, usize)>,
     pub salt: Option<SaltBody>,
     pub unconf: Arc<Vec<crate::unconformity::UnconformityRecord>>,
+    /// Fault model of the run with its shared per-tile gather cache
+    /// (heave only), keyed by [`fault_key`]; built on first use.
+    pub faults: std::sync::OnceLock<(String, Option<synthoseis_geo::faults::FaultModel>)>,
+}
+
+/// Every input of the fault model besides the geometry key.
+pub(crate) fn fault_key(cfg: &E2eConfig) -> String {
+    format!(
+        "{:?}|{:?}|{:?}",
+        cfg.faults,
+        cfg.rock_physics.fold,
+        crate::pipeline_stream::fault_tile(cfg)
+    )
 }
 
 /// Optional cached geometry of an [`E2eConfig`]; empty by default. It does
@@ -57,12 +70,19 @@ impl GeometryCache {
         let mut plain = cfg.clone();
         plain.maps_cache = GeometryCache::default();
         let (maps, continuous, salt, unconf) = match plain.effective_geometry() {
-            crate::toy_geometry::ToyGeometry::Planar => (crate::pipeline_stream::toy_horizon_maps(&plain), None, None, Vec::new()),
+            crate::toy_geometry::ToyGeometry::Planar => (
+                crate::pipeline_stream::toy_horizon_maps(&plain),
+                None,
+                None,
+                Vec::new(),
+            ),
             crate::toy_geometry::ToyGeometry::Layered => {
                 // One layered stack for all three.
                 let base = crate::pipeline_stream::layered_base_maps(&plain);
                 let maps = crate::pipeline_stream::toy_horizon_maps_from(&plain, &base);
-                let cont = crate::pipeline_stream::toy_horizon_maps_continuous_from(&plain, &base, &maps.0);
+                let cont = crate::pipeline_stream::toy_horizon_maps_continuous_from(
+                    &plain, &base, &maps.0,
+                );
                 let salt = if plain.effective_salt() {
                     crate::salt::salt_body_from_maps(&plain, &base.0 .0, base.0 .1)
                 } else {
@@ -77,6 +97,7 @@ impl GeometryCache {
             continuous,
             salt,
             unconf: Arc::new(unconf),
+            faults: std::sync::OnceLock::new(),
         })))
     }
 }
