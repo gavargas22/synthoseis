@@ -109,3 +109,109 @@ fn unconformity_crossing_is_evaluated_at_the_source() {
     }
     assert!(checked >= 3);
 }
+
+/// Config with a strongly varying net-to-gross map in every sand layer
+/// (mean `U(0, 1)`, std 0.3), so a few bins of heave change the
+/// net-to-gross a voxel should get.
+fn ng_cfg(seed: u64) -> E2eConfig {
+    let mut c = cfg(seed, [48, 48, 128], false);
+    c.rock_physics.net_to_gross = synthoseis_core::rock_physics::NetToGross::Legacy {
+        avg: [0.0, 1.0],
+        stdev: [0.3, 0.3],
+        octaves: 9,
+    };
+    c
+}
+
+/// Concordance of sand Vp with the net-to-gross of the source column and of
+/// the output column: over pairs of interior sand voxels of one layer at one
+/// sample whose source column is at least 2 bins from the output column, the
+/// share of pairs where Vp moves the same way as each net-to-gross (pairs
+/// with a net-to-gross difference > 0.1 under both readings).
+fn ng_concordance(c: &E2eConfig, model_heave: bool) -> (f64, usize) {
+    let (labels, shape) = generate_labels(c);
+    let [ni, nj, nk] = shape;
+    let mut model = elastic_model(c, &labels, shape);
+    let synthoseis_core::rock_physics::ElasticModel::Rpm(m) = &mut model else {
+        panic!("physical rock model expected");
+    };
+    if !model_heave {
+        m.heave = None;
+    }
+    let n = ni * nj * nk;
+    let (mut vp, mut vs, mut rho) = (vec![0f32; n], vec![0f32; n], vec![0f32; n]);
+    model.tile_properties(&labels, shape, 0, ni, 0, nj, &mut vp, &mut vs, &mut rho);
+    let synthoseis_core::rock_physics::ElasticModel::Rpm(m) = &model else {
+        unreachable!()
+    };
+    let faults = fault_model(c).expect("faults");
+    let mut groups: std::collections::HashMap<(u8, usize), Vec<(f32, f32, f32)>> =
+        Default::default();
+    for i in 0..ni {
+        for j in 0..nj {
+            let q = (i * nj + j) * nk;
+            for k in 1..nk - 1 {
+                let lab = labels[q + k];
+                if lab == 255 || labels[q + k - 1] != lab || labels[q + k + 1] != lab {
+                    continue;
+                }
+                let layer = &m.layers[lab as usize];
+                if !layer.sand || layer.ng.is_empty() {
+                    continue;
+                }
+                let s = faults.gather(i, j, k).src;
+                let (si, sj) = (s[0].round() as usize, s[1].round() as usize);
+                if (si as f64 - i as f64).hypot(sj as f64 - j as f64) < 2.0 {
+                    continue;
+                }
+                let ng_src = layer.ng[si * nj + sj];
+                let ng_out = layer.ng[i * nj + j];
+                groups
+                    .entry((lab, k))
+                    .or_default()
+                    .push((vp[q + k], ng_src, ng_out));
+            }
+        }
+    }
+    // Only the pairs where the two readings disagree on which voxel has the
+    // higher net-to-gross tell them apart.
+    let (mut pairs, mut follow_src) = (0usize, 0usize);
+    for g in groups.values() {
+        for (x, a) in g.iter().enumerate() {
+            for b in &g[x + 1..] {
+                let (dv, ds, d_o) = (a.0 - b.0, a.1 - b.1, a.2 - b.2);
+                if dv == 0.0 || ds.abs() <= 0.05 || d_o.abs() <= 0.05 || (ds > 0.0) == (d_o > 0.0) {
+                    continue;
+                }
+                pairs += 1;
+                follow_src += ((dv > 0.0) == (ds > 0.0)) as usize;
+            }
+        }
+    }
+    (follow_src as f64 / pairs.max(1) as f64, pairs)
+}
+
+/// §9 row 12 (strong form): with a laterally varying net-to-gross, sand Vp
+/// of a heaved voxel follows the net-to-gross of its source column, not of
+/// its output column. Over the voxel pairs where the two readings disagree
+/// on which voxel has the higher net-to-gross, Vp sides with the source
+/// reading in >= 70 % of pairs (0.97 / 0.92 / 0.76 for seeds 1 / 7 / 13);
+/// reading the output column's maps (the model without its heave columns,
+/// the "same-column maps" mutant) sides with it in <= 6 %.
+#[test]
+fn sand_vp_follows_the_source_column_net_to_gross() {
+    for seed in [1u64, 7, 13] {
+        let c = ng_cfg(seed);
+        let (share, pairs) = ng_concordance(&c, true);
+        assert!(pairs > 10_000, "seed {seed}: {pairs} pairs");
+        assert!(
+            share >= 0.7,
+            "seed {seed}: Vp follows the source column in {share:.3} of {pairs} pairs"
+        );
+        let (out, _) = ng_concordance(&c, false);
+        assert!(
+            out <= 0.2,
+            "seed {seed}: output-column model still follows the source ({out:.3})"
+        );
+    }
+}
