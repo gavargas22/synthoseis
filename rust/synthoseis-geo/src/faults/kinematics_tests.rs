@@ -370,3 +370,71 @@ fn crossing_faults_compose_youngest_first() {
     }
     assert!(found, "no seed with two crossing faults");
 }
+
+/// Review S1/S2: the shared per-tile gather cache gives the uncached
+/// tiles and column sources bit for bit (on a different tiling than the
+/// cache grid), and the windowed in-place apply (tile + halo only, no
+/// whole-cube copy) equals a reference that gathers from a full copy.
+#[test]
+fn gather_cache_and_halo_window_match_the_reference() {
+    for seed in [1u64, 7, 13] {
+        let plain = heave(random_model(SHAPE, seed, 4));
+        if !plain.has_heave() {
+            continue;
+        }
+        let cached = plain.clone().with_gather_cache([16, 16]);
+        let [ni, nj, nk] = SHAPE;
+        for (i0, i1, j0, j1) in [(0, ni, 0, nj), (5, 29, 11, 40), (48, 64, 0, 17)] {
+            assert_eq!(
+                cached.compute_tile(i0, i1, j0, j1),
+                plain.compute_tile(i0, i1, j0, j1)
+            );
+        }
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        for (i, j) in [(0, 0), (17, 33), (63, 63), (31, 8)] {
+            cached.column_sources(i, j, &mut a);
+            plain.column_sources(i, j, &mut b);
+            assert_eq!(a, b);
+            let g: Vec<(f64, f64)> = (0..nk)
+                .map(|k| {
+                    let s = plain.gather(i, j, k).src;
+                    (s[0], s[1])
+                })
+                .collect();
+            assert_eq!(a, g);
+        }
+        let base: Vec<u8> = (0..ni * nj * nk).map(|o| 1 + (o % nk / 8) as u8).collect();
+        let whole = plain.compute_tile(0, ni, 0, nj);
+        let mut want = base.clone();
+        for i in 0..ni {
+            for j in 0..nj {
+                for k in 0..nk {
+                    let [si, sj, sk] = whole.nearest_source(i, j, k, ni, nj);
+                    want[(i * nj + j) * nk + k] = base[(si * nj + sj) * nk + sk];
+                }
+            }
+        }
+        for tile in [[16, 16], [7, 64], [64, 5]] {
+            let mut got = base.clone();
+            cached.apply_to_labels(&mut got, tile);
+            assert_eq!(got, want, "seed {seed} tile {tile:?}");
+        }
+        let vol: Vec<f32> = (0..ni * nj * nk)
+            .map(|o| (o % nk) as f32 * 0.5 + (o / nk % 7) as f32)
+            .collect();
+        let mut vwant = vol.clone();
+        for i in 0..ni {
+            for j in 0..nj {
+                let l = whole.col_offset(i, j);
+                for k in 0..nk {
+                    let (x, y) = whole.source_ij(i, j, k);
+                    vwant[(i * nj + j) * nk + k] =
+                        trilinear(&vol, SHAPE, x, y, whole.lookup[l + k] as f64);
+                }
+            }
+        }
+        let mut vgot = vol.clone();
+        cached.apply_to_volume_f32(&mut vgot, [9, 13]);
+        assert_eq!(vgot, vwant);
+    }
+}

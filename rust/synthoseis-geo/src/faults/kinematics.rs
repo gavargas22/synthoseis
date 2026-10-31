@@ -92,17 +92,38 @@ pub fn stage_slip(
     lat: f64,
     top: f64,
 ) -> (f64, [f64; 2], f64) {
+    stage_slip_pre(f, p, x, y, kk, lat, top, None)
+}
+
+/// [`stage_slip`] with the surface value and gradient at `(x, y, kk)`
+/// already known (`pre`, from the label-band check at the same point).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn stage_slip_pre(
+    f: &ResolvedFault,
+    p: &HeaveParams,
+    x: f64,
+    y: f64,
+    kk: usize,
+    lat: f64,
+    top: f64,
+    pre: Option<(f64, [f64; 3])>,
+) -> (f64, [f64; 2], f64) {
     let z = kk as f64;
-    let d = if f.geometry.value_at(x, y, z) <= 1.0 {
-        lat * f.profile[kk]
-    } else {
-        0.0
+    let v = match pre {
+        Some((v, _)) => v,
+        None => f.geometry.value_at(x, y, z),
     };
+    let d = if v <= 1.0 { lat * f.profile[kk] } else { 0.0 };
     let a = (z - d).clamp(0.0, top);
     if d == 0.0 || p.heave_scale == 0.0 {
         return (a, [0.0, 0.0], d);
     }
-    (a, heave_vector(f, p, x, y, z, d), d)
+    let g = match pre {
+        Some((_, g)) => g,
+        None => f.geometry.gradient_at(x, y, z),
+    };
+    (a, heave_from_gradient(p, g, d), d)
 }
 
 /// Heave `u_h` (bins) for throw `d` at `(x, y, z)`: down-dip, magnitude
@@ -117,7 +138,12 @@ pub fn heave_vector(
     z: f64,
     d: f64,
 ) -> [f64; 2] {
-    let g = f.geometry.gradient_at(x, y, z);
+    heave_from_gradient(p, f.geometry.gradient_at(x, y, z), d)
+}
+
+/// [`heave_vector`] from the surface gradient `g` at the point.
+#[inline]
+fn heave_from_gradient(p: &HeaveParams, g: [f64; 3], d: f64) -> [f64; 2] {
     let gn = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
     if !(gn > 0.0) {
         return [0.0, 0.0];
@@ -192,6 +218,7 @@ impl FaultModel {
             let n = if oldest_first { step } else { nf - 1 - step };
             let f = &self.faults()[n];
             let lat = f.lateral_at(x, y);
+            let mut pre = None;
             if id == 0 && lat * profile_at(f, z, top) > 1.0 {
                 let g = f.geometry.gradient_at(x, y, z);
                 let gn = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
@@ -199,11 +226,15 @@ impl FaultModel {
                 if gn > 0.0 && (v - 1.0).abs() / gn <= LABEL_BAND_VOXELS {
                     id = (n + 1).min(254) as u8;
                 }
+                pre = Some((v, g));
             }
             let zc = z.clamp(0.0, top);
             let k0 = zc.floor() as usize;
             let w = zc - k0 as f64;
-            let (a0, h0, _) = stage_slip(f, p, x, y, k0, lat, top);
+            // The band check evaluated the surface at (x, y, z); reuse it
+            // when that is the stage's sample k0 (same operations, same bits).
+            let pre = pre.filter(|_| w == 0.0 && z == k0 as f64);
+            let (a0, h0, _) = stage_slip_pre(f, p, x, y, k0, lat, top, pre);
             let (a, h) = if w == 0.0 {
                 (a0, h0)
             } else {

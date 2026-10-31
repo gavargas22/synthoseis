@@ -998,11 +998,8 @@ impl PartialEq for HeaveColumns {
 impl HeaveColumns {
     /// Continuous source `(i, j)` of every sample of column `(i, j)`.
     pub fn column_sources(&self, i: usize, j: usize, nk: usize, out: &mut Vec<(f64, f64)>) {
-        out.clear();
-        out.extend((0..nk).map(|k| {
-            let g = self.0.gather(i, j, k);
-            (g.src[0], g.src[1])
-        }));
+        debug_assert_eq!(nk, self.0.shape()[2]);
+        self.0.column_sources(i, j, out);
     }
 }
 

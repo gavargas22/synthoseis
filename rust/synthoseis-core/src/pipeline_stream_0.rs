@@ -340,6 +340,20 @@ pub fn fault_model(cfg: &E2eConfig) -> Option<FaultModel> {
     if !cfg.faults.enabled() {
         return None;
     }
+    if let Some(c) = crate::geometry_cache::GeometryCache::get(cfg) {
+        // One model per run: its gather cache is shared by the labels,
+        // rock physics, time-mode labels and partial voxels (each tile is
+        // gathered once).
+        let key = crate::geometry_cache::fault_key(cfg);
+        let (k, m) = c.faults.get_or_init(|| {
+            let m = build_fault_model(cfg, &c.maps.0, c.maps.1)
+                .map(|m| if m.has_heave() { m.with_gather_cache(fault_tile(cfg)) } else { m });
+            (key.clone(), m)
+        });
+        if *k == key {
+            return m.clone();
+        }
+    }
     let (maps, nh) = toy_horizon_maps(cfg);
     build_fault_model(cfg, &maps, nh)
 }
@@ -361,7 +375,9 @@ pub fn fault_tile(cfg: &E2eConfig) -> [usize; 2] {
 /// Apply the optional fault model to generated labels in place (no-op when
 /// disabled, so fault-free output stays bit-identical).
 pub(crate) fn apply_faults_to_labels(cfg: &E2eConfig, maps: &[f64], nh: usize, labels: &mut [u8]) {
-    if let Some(model) = build_fault_model(cfg, maps, nh) {
+    let cached = crate::geometry_cache::GeometryCache::get(cfg).is_some_and(|c| c.maps.0 == maps && c.maps.1 == nh);
+    let model = if cached { fault_model(cfg) } else { build_fault_model(cfg, maps, nh) };
+    if let Some(model) = model {
         let _ = model.apply_to_labels(labels, fault_tile(cfg));
     }
 }

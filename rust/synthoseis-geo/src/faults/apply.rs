@@ -17,9 +17,9 @@
 //! Every step only touches one trace plus an analytic halo, so tiles are
 //! independent and results do not depend on tiling or worker count.
 
+use super::kinematics::FaultKinematics;
 use super::model::{FaultSkip, ReachMode, ResolvedFault, Seabed};
 use super::params::{FaultParams, FaultRng};
-use super::kinematics::FaultKinematics;
 use super::segments::{segment_block, SEG_ZERO};
 
 /// A set of resolved faults over one model cube.
@@ -33,6 +33,40 @@ pub struct FaultModel {
     clamp: Option<Seabed>,
     /// Legacy vertical lookup or heave (spec-fault-kinematics 7a).
     kinematics: FaultKinematics,
+    /// Per-tile gather results shared by every consumer of a heave run
+    /// ([`Self::with_gather_cache`]); `None` = gather on demand.
+    cache: Option<std::sync::Arc<GatherCache>>,
+}
+
+/// Gather results of one tile `[i0,i1) × [j0,j1) × [0,nk)` (row-major).
+#[derive(Debug)]
+pub struct GatherTile {
+    pub i0: usize,
+    pub i1: usize,
+    pub j0: usize,
+    pub j1: usize,
+    pub nk: usize,
+    /// Continuous source `(i, j, k)` of every voxel ([`super::kinematics::Gathered::src`]).
+    pub src: Vec<[f64; 3]>,
+    /// Fault id of every voxel ([`super::kinematics::Gathered::id`]).
+    pub id: Vec<u8>,
+}
+
+impl GatherTile {
+    #[inline]
+    fn offset(&self, i: usize, j: usize) -> usize {
+        debug_assert!(i >= self.i0 && i < self.i1 && j >= self.j0 && j < self.j1);
+        ((i - self.i0) * (self.j1 - self.j0) + (j - self.j0)) * self.nk
+    }
+}
+
+/// Lazily filled grid of [`GatherTile`]s: each tile is gathered once per
+/// run, by whichever consumer asks first, and reused by the others.
+#[derive(Debug)]
+struct GatherCache {
+    grid: [usize; 2],
+    ntj: usize,
+    tiles: Vec<std::sync::OnceLock<std::sync::Arc<GatherTile>>>,
 }
 
 /// Default tile used for the global survey pass (does not affect results).
@@ -79,6 +113,7 @@ impl FaultModel {
             mode,
             clamp,
             kinematics: FaultKinematics::Legacy,
+            cache: None,
         }
     }
 
@@ -91,13 +126,110 @@ impl FaultModel {
             mode: ReachMode::default(),
             clamp: None,
             kinematics: FaultKinematics::Legacy,
+            cache: None,
         }
     }
 
     /// The same model with other kinematics (no RNG draws).
     pub fn with_kinematics(mut self, kinematics: FaultKinematics) -> Self {
         self.kinematics = kinematics;
+        self.cache = None;
         self
+    }
+
+    /// The same model with a shared per-tile gather cache on the `grid`
+    /// tiling (clones share it). Results are identical with and without
+    /// the cache; it only removes repeated gathers of a heave run.
+    pub fn with_gather_cache(mut self, grid: [usize; 2]) -> Self {
+        let [ni, nj, _] = self.shape;
+        let grid = [grid[0].max(1), grid[1].max(1)];
+        let (nti, ntj) = (ni.div_ceil(grid[0]), nj.div_ceil(grid[1]));
+        self.cache = Some(std::sync::Arc::new(GatherCache {
+            grid,
+            ntj,
+            tiles: (0..nti * ntj).map(|_| std::sync::OnceLock::new()).collect(),
+        }));
+        self
+    }
+
+    /// Lateral halo (bins) that holds every heave source of a tile:
+    /// `ceil(Σ_f t_max,f / tan δ_min,v) + 2`, the spec §11 halo with the
+    /// largest throws of all faults summed, because a voxel's gather path
+    /// can cross several hanging walls (19 bins for one fault at the
+    /// defaults; 0 without heave). Each stage moves at most
+    /// `t_f / tan δ_min,v` bins (lateral weight ≤ 1).
+    pub fn heave_halo(&self) -> usize {
+        match self.kinematics {
+            FaultKinematics::Heave(p) if !self.faults.is_empty() => {
+                let t: f64 = self
+                    .faults
+                    .iter()
+                    .map(|f| f.profile.iter().map(|v| v.abs()).fold(0.0f64, f64::max))
+                    .sum();
+                p.halo(t)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Gather every voxel of `[i0,i1) × [j0,j1)` (no cache).
+    fn gather_block(&self, i0: usize, i1: usize, j0: usize, j1: usize) -> GatherTile {
+        let nk = self.shape[2];
+        let n = (i1 - i0) * (j1 - j0) * nk;
+        let mut src = Vec::with_capacity(n);
+        let mut id = Vec::with_capacity(n);
+        for i in i0..i1 {
+            for j in j0..j1 {
+                for k in 0..nk {
+                    let g = self.gather(i, j, k);
+                    src.push(g.src);
+                    id.push(g.id);
+                }
+            }
+        }
+        GatherTile {
+            i0,
+            i1,
+            j0,
+            j1,
+            nk,
+            src,
+            id,
+        }
+    }
+
+    /// Gather results of the cache tile holding column `(i, j)`; `None`
+    /// without a cache.
+    fn cached_tile(&self, i: usize, j: usize) -> Option<std::sync::Arc<GatherTile>> {
+        let c = self.cache.as_ref()?;
+        let [ni, nj, _] = self.shape;
+        let (ti, tj) = (i / c.grid[0], j / c.grid[1]);
+        let t = c.tiles[ti * c.ntj + tj].get_or_init(|| {
+            let (i0, j0) = (ti * c.grid[0], tj * c.grid[1]);
+            std::sync::Arc::new(self.gather_block(
+                i0,
+                (i0 + c.grid[0]).min(ni),
+                j0,
+                (j0 + c.grid[1]).min(nj),
+            ))
+        });
+        Some(t.clone())
+    }
+
+    /// Continuous source `(i, j)` of every sample of column `(i, j)`
+    /// (from the gather cache when the model has one).
+    pub fn column_sources(&self, i: usize, j: usize, out: &mut Vec<(f64, f64)>) {
+        out.clear();
+        match self.cached_tile(i, j) {
+            Some(t) => {
+                let o = t.offset(i, j);
+                out.extend(t.src[o..o + t.nk].iter().map(|s| (s[0], s[1])));
+            }
+            None => out.extend((0..self.shape[2]).map(|k| {
+                let g = self.gather(i, j, k);
+                (g.src[0], g.src[1])
+            })),
+        }
     }
 
     /// Kinematics the tiles are computed with.
@@ -256,19 +388,29 @@ impl FaultModel {
         let mut src_ij = vec![(0.0f32, 0.0f32); n];
         let mut mask = vec![0u8; n];
         let mut segment_id = vec![0u8; n];
+        let own = if self.cache.is_none() {
+            Some(std::sync::Arc::new(self.gather_block(i0, i1, j0, j1)))
+        } else {
+            None
+        };
         for di in 0..ti {
             for dj in 0..tj {
                 let (i, j) = (i0 + di, j0 + dj);
+                let g = match &own {
+                    Some(t) => t.clone(),
+                    None => self.cached_tile(i, j).expect("cache"),
+                };
+                let o = g.offset(i, j);
                 let base = (di * tj + dj) * nk;
                 let wb = self.clamp.as_ref().map(|sb| sb.at(i, j, nj));
                 for k in 0..nk {
-                    let g = self.gather(i, j, k);
-                    lookup[base + k] = g.src[2] as f32;
-                    src_ij[base + k] = (g.src[0] as f32, g.src[1] as f32);
-                    let on = g.id != 0 && !wb.is_some_and(|w| (k as f64) < w);
+                    let (s, id) = (g.src[o + k], g.id[o + k]);
+                    lookup[base + k] = s[2] as f32;
+                    src_ij[base + k] = (s[0] as f32, s[1] as f32);
+                    let on = id != 0 && !wb.is_some_and(|w| (k as f64) < w);
                     if on {
                         mask[base + k] = 1;
-                        segment_id[base + k] = g.id;
+                        segment_id[base + k] = id;
                     }
                 }
             }
@@ -286,6 +428,61 @@ impl FaultModel {
         }
     }
 
+    /// Run `f` on every tile of a heave model with a window of the
+    /// *unfaulted* `data` holding the tile plus its [`Self::heave_halo`]
+    /// (and writes the tile in place). Tiles go strip by strip in `i`; the
+    /// window keeps the original rows `[i0 − H, i1 + H)` of the current
+    /// strip only (the rows above it are already faulted), so no copy or
+    /// read of the whole cube is made. Every source read is checked to lie
+    /// inside the tile plus halo.
+    fn heave_in_place<T: Copy>(
+        &self,
+        data: &mut [T],
+        tile: [usize; 2],
+        mut f: impl FnMut(&FaultTile, &SrcWindow<'_, T>, &mut [T]),
+    ) {
+        let [ni, nj, nk] = self.shape;
+        let h = self.heave_halo();
+        let row = nj * nk;
+        let (ti, tj) = (tile[0].max(1), tile[1].max(1));
+        // Original rows [w0, w1) of the previous window.
+        let (mut w0, mut w1, mut buf): (usize, usize, Vec<T>) = (0, 0, Vec::new());
+        let mut i0 = 0;
+        while i0 < ni {
+            let i1 = (i0 + ti).min(ni);
+            let (n0, n1) = (i0.saturating_sub(h), (i1 + h).min(ni));
+            // Rows < i0 come from the previous window (already faulted in
+            // `data`); rows >= i0 are still original in `data`.
+            let mut next = Vec::with_capacity((n1 - n0) * row);
+            for r in n0..n1 {
+                if r < i0 {
+                    debug_assert!(r >= w0 && r < w1);
+                    next.extend_from_slice(&buf[(r - w0) * row..(r - w0 + 1) * row]);
+                } else {
+                    next.extend_from_slice(&data[r * row..(r + 1) * row]);
+                }
+            }
+            (w0, w1, buf) = (n0, n1, next);
+            let mut j0 = 0;
+            while j0 < nj {
+                let j1 = (j0 + tj).min(nj);
+                let t = self.compute_tile(i0, i1, j0, j1);
+                let win = SrcWindow {
+                    buf: &buf,
+                    w0,
+                    nj,
+                    nk,
+                    lo: [i0.saturating_sub(h), j0.saturating_sub(h)],
+                    hi: [(i1 + h).min(ni), (j1 + h).min(nj)],
+                };
+                f(&t, &win, data);
+                j0 = j1;
+            }
+            i0 = i1;
+        }
+        let _ = w1;
+    }
+
     /// Fault the whole cube tile by tile.
     ///
     /// * `labels` (u8, row-major `(ni,nj,nk)`) are remapped in place with
@@ -299,15 +496,14 @@ impl FaultModel {
         let mut ids = vec![0u8; labels.len()];
         let mut col = vec![0u8; nk];
         if self.has_heave() {
-            let src = labels.to_vec();
-            self.for_each_tile(tile, |t| {
+            self.heave_in_place(labels, tile, |t, src, labels| {
                 for i in t.i0..t.i1 {
                     for j in t.j0..t.j1 {
                         let g = (i * nj + j) * nk;
                         let l = t.col_offset(i, j);
                         for k in 0..nk {
                             let [si, sj, sk] = t.nearest_source(i, j, k, ni, nj);
-                            labels[g + k] = src[(si * nj + sj) * nk + sk];
+                            labels[g + k] = src.at(si, sj, sk);
                         }
                         mask[g..g + nk].copy_from_slice(&t.mask[l..l + nk]);
                         ids[g..g + nk].copy_from_slice(&t.segment_id[l..l + nk]);
@@ -341,15 +537,20 @@ impl FaultModel {
         let mut out = vec![0.0f32; nk];
         let mut lk = vec![0.0f64; nk];
         if self.has_heave() {
-            let src = vol.to_vec();
-            self.for_each_tile(tile, |t| {
+            self.heave_in_place(vol, tile, |t, src, vol| {
                 for i in t.i0..t.i1 {
                     for j in t.j0..t.j1 {
                         let g = (i * nj + j) * nk;
                         let l = t.col_offset(i, j);
                         for k in 0..nk {
                             let (x, y) = t.source_ij(i, j, k);
-                            vol[g + k] = trilinear(&src, [ni, nj, nk], x, y, t.lookup[l + k] as f64);
+                            vol[g + k] = trilinear_with(
+                                |a, b, c| src.at(a, b, c),
+                                [ni, nj, nk],
+                                x,
+                                y,
+                                t.lookup[l + k] as f64,
+                            );
                         }
                         mask[g..g + nk].copy_from_slice(&t.mask[l..l + nk]);
                     }
@@ -391,6 +592,31 @@ impl FaultModel {
             }
             i0 = i1;
         }
+    }
+}
+
+/// Original rows `[w0, w0 + len)` of a cube around one tile, with the
+/// tile-plus-halo bounds every read must stay in.
+pub struct SrcWindow<'a, T> {
+    buf: &'a [T],
+    w0: usize,
+    nj: usize,
+    nk: usize,
+    lo: [usize; 2],
+    hi: [usize; 2],
+}
+
+impl<T: Copy> SrcWindow<'_, T> {
+    /// Original sample `(i, j, k)`; panics outside the tile plus halo.
+    #[inline]
+    pub fn at(&self, i: usize, j: usize, k: usize) -> T {
+        assert!(
+            i >= self.lo[0] && i < self.hi[0] && j >= self.lo[1] && j < self.hi[1],
+            "heave source ({i}, {j}) outside tile + halo {:?}..{:?}",
+            self.lo,
+            self.hi
+        );
+        self.buf[((i - self.w0) * self.nj + j) * self.nk + k]
     }
 }
 
@@ -449,6 +675,20 @@ impl FaultTile {
 /// Trilinear sample of a row-major `(ni, nj, nk)` volume at a continuous
 /// position (clamped to the cube).
 pub fn trilinear(vol: &[f32], shape: [usize; 3], x: f64, y: f64, z: f64) -> f32 {
+    let nj = shape[1];
+    let nk = shape[2];
+    trilinear_with(|i, j, k| vol[(i * nj + j) * nk + k], shape, x, y, z)
+}
+
+/// [`trilinear`] reading samples through `at(i, j, k)`.
+#[inline]
+pub fn trilinear_with(
+    at: impl Fn(usize, usize, usize) -> f32,
+    shape: [usize; 3],
+    x: f64,
+    y: f64,
+    z: f64,
+) -> f32 {
     let [ni, nj, nk] = shape;
     let ax = |v: f64, n: usize| {
         let v = v.clamp(0.0, (n.max(1) - 1) as f64);
@@ -458,7 +698,7 @@ pub fn trilinear(vol: &[f32], shape: [usize; 3], x: f64, y: f64, z: f64) -> f32 
     let (i0, i1, wi) = ax(x, ni);
     let (j0, j1, wj) = ax(y, nj);
     let (k0, k1, wk) = ax(z, nk);
-    let at = |i: usize, j: usize, k: usize| vol[(i * nj + j) * nk + k] as f64;
+    let at = |i: usize, j: usize, k: usize| at(i, j, k) as f64;
     let lerp = |a: f64, b: f64, w: f64| if w == 0.0 { a } else { a + w * (b - a) };
     let c = |i: usize| {
         let a = lerp(at(i, j0, k0), at(i, j0, k1), wk);
