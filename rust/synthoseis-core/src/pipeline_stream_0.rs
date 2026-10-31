@@ -328,7 +328,7 @@ pub fn fault_kinematics(cfg: &E2eConfig) -> FaultKinematics {
         min_dip_deg: cfg.faults.min_dip_deg,
         dz_m: fold.dz_m,
         bin_m: fold.bin_m,
-        heave_scale: 1.0,
+        ..HeaveParams::default()
     })
 }
 

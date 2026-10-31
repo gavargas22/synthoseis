@@ -551,6 +551,8 @@ fn gather_cache_memory_is_bounded_by_the_tile() {
                 );
                 assert_eq!(x.lookup, y.lookup);
                 assert_eq!(x.src_ij, y.src_ij);
+                assert_eq!(x.mask, y.mask);
+                assert_eq!(x.segment_id, y.segment_id);
                 assert!(cached.gather_cache_bytes() <= bound, "pass {pass}");
             }
         }
