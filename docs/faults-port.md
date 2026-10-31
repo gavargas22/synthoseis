@@ -321,14 +321,21 @@ The same factor gates fault labels: a voxel is labelled only where taper·profil
 
 Flags: `--legacy-fault-profile` restores the 7a Gaussian throw exactly (96/96 parity vs
 #59 head 1ffac5d1). `--legacy-fault-kinematics` turns everything off (96/96 parity vs master).
-The two flags together, or `--legacy-fault-profile` without `--faults`, exit with code 2.
+`--legacy-fault-profile` without `--faults` exits with code 2. Passing it together with
+`--legacy-fault-kinematics` is accepted: legacy kinematics already implies the legacy profile, so
+the CLI prints a note and the output is byte-identical to `--legacy-fault-kinematics` alone.
 
 Ambiguities and the defaults picked:
 - δ_c is floored at `min_dip` so that sin δ_c > 0 when computing D_max.
 - The spec's "D·sinδ ≤ 1" label rule is implemented as vertical throw = taper·T_profile > 1 sample.
 - The ellipse is centred at the plane centre `c`, not at the max-throw point.
-- The D–L test regresses log(D_max/γ) on L measured by bisection; a plain log D–log L
-  fit is attenuated by the γ scatter (slope ≈ 0.4).
+- Realised aspect ≥ 2: the dip-direction taper multiplies the legacy vertical throw
+  profile (the 7a Gaussian in depth), so the slipping patch is no taller than L/2 and
+  usually shorter; A = 2 is the tip-line aspect, and the effective strike:dip aspect is ≥ 2.
+- D–L slope: n = 1 holds per fault (D_max = γL exactly). A naive population fit of
+  log D on log L gives slope ≈ 0.4 (Strata measured 0.38 over 122 faults), because γ spans
+  a decade (0.01–0.1) about as wide as D does, and that scatter dilutes the regression.
+  So the test regresses log(D_max/γ) on L measured by bisection, which does recover n.
 
 Numbers:
 - Closure kept volume (3 faults, 7b vs 7a): 97.98/98.34 % (32²×128), 98.93/98.99 (32²×256),

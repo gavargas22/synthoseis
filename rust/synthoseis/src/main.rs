@@ -1124,7 +1124,8 @@ fn main() {
 
 /// Fault configuration of `--faults N [--legacy-fault-kinematics |
 /// --fault-min-dip D]`. Errors (exit 2) for a dip outside 15-60, a dip with
-/// the legacy switch, or either switch without faults.
+/// the legacy switch, or any switch without faults. `--legacy-fault-profile`
+/// with `--legacy-fault-kinematics` is accepted with a note.
 pub fn parse_fault_kinematics(
     faults: usize,
     legacy: bool,
@@ -1135,7 +1136,8 @@ pub fn parse_fault_kinematics(
         return Err("--legacy-fault-kinematics / --fault-min-dip / --legacy-fault-profile have no effect without --faults".into());
     }
     if legacy && legacy_profile {
-        return Err("--legacy-fault-profile has no effect with --legacy-fault-kinematics (already legacy)".into());
+        // Accepted so sweep scripts can always pass the full legacy set.
+        eprintln!("note: --legacy-fault-kinematics implies the legacy fault profile; --legacy-fault-profile is redundant");
     }
     if legacy && min_dip.is_some() {
         return Err("--fault-min-dip has no effect with --legacy-fault-kinematics (no heave)".into());
@@ -1163,7 +1165,10 @@ mod tests {
         assert!(p(3, false, None, true).unwrap().legacy_profile);
         assert!(p(3, false, Some(45.0), true).unwrap().legacy_profile);
         assert!(p(0, false, None, true).is_err());
-        assert!(p(3, true, None, true).is_err());
+        // Legacy kinematics implies the legacy profile: the pair is accepted.
+        let both = p(3, true, None, true).unwrap();
+        assert!(both.legacy_kinematics && both.legacy_profile);
+        assert!(p(0, true, None, true).is_err());
     }
 
     /// Multi-process workers rebuild the closure options from these flags,
