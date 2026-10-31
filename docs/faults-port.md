@@ -259,8 +259,26 @@ footwall, a horizon map shows a gap (heave gap) along each fault.
   (maps bilinear; per-column draws at the nearest source column).
 - Fault labels are a closed-form band `|f − 1| / |∇f| ≤ 1` voxel around the
   surface (`LABEL_BAND_VOXELS`).
-- Tiles carry a lateral halo `ceil(t_max / tan δ_min,v) + 2` (19 at the
-  defaults), so the output does not depend on `--chunk-i/--chunk-j`.
+- Tiles carry a lateral halo `ceil(Σ t_max / tan δ_min,v) + 2` (19 for one
+  fault at the defaults; the throws of all faults are summed because a
+  gather path can cross several hanging walls), so the output does not
+  depend on `--chunk-i/--chunk-j`. Labels and volumes are faulted in place
+  strip by strip from a window of the unfaulted rows `[i0 − H, i1 + H)`;
+  every source read is asserted to lie in the tile plus halo, and the cube
+  is never copied whole.
+- Each tile is gathered once per run: the fault model lives in the
+  geometry cache with a per-tile gather cache, shared by the labels, rock
+  physics (`column_sources`), time-mode labels and partial voxels.
+- Salt is stationary: the body is emplaced after faulting (fault ∧ salt = 0
+  in every output), so the salt kind is decided at the output column while
+  the sediments next to it come from their source columns. Where a source
+  position lies inside the body (52k non-salt voxels on seed 1 at
+  128×128×256, 14k on seed 7, 53k on seed 13) the voxel takes the
+  salt-dragged layers that are normally hidden under the salt, which shows
+  as staircase fragments on the flanks (e.g. `seed1_inline`). Salt
+  properties still use the heaved burial depth. Faulting before the drag
+  (gathering the undragged stack and adding the drag at the output column)
+  is a follow-up. Test: `fault_heave.rs::salt_is_stationary_under_heave`.
 - Faults remain single-worker `--e2e --chunked` only.
 
 `--legacy-fault-kinematics` restores the vertical-only lookup of master

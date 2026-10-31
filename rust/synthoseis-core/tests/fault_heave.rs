@@ -283,3 +283,59 @@ fn burial_depth_reads_the_base_horizon_at_the_source_column() {
     assert!(tested > 200, "only {tested} displaced runs checked");
     println!("checked {tested} displaced runs");
 }
+
+/// Review S3: the salt body is stationary under heave. It is emplaced
+/// after faulting (every output already keeps fault ∧ salt = 0), so the
+/// salt kind is decided at the output column while the sediments around it
+/// are gathered from their source columns: the body is the same with and
+/// without heave, and a voxel is salt under heave exactly where the body
+/// holds it. Kills deciding salt at the source column. (The staircase
+/// fragments on the salt flanks of `seed1_inline` are sediment voxels whose
+/// source lies inside the body, where the salt-dragged horizons are
+/// normally hidden; see `docs/faults-port.md`.)
+#[test]
+fn salt_is_stationary_under_heave() {
+    let (mut tested, mut moved) = (0, 0usize);
+    for seed in [1u64, 7, 13] {
+        let body = |legacy: bool| {
+            let mut c = cfg(seed, [64, 64, 128], legacy);
+            c.rock_physics.salt = true;
+            c.with_geometry_cache()
+        };
+        let (c, cl) = (body(false), body(true));
+        let (Some(s), Some(sl)) = (
+            synthoseis_core::salt::salt_body(&c),
+            synthoseis_core::salt::salt_body(&cl),
+        ) else {
+            continue;
+        };
+        assert_eq!(s.runs, sl.runs, "seed {seed}: salt body moved");
+        let (labels, shape) = generate_labels(&c);
+        let [ni, nj, nk] = shape;
+        let ElasticModel::Rpm(m) = elastic_model(&c, &labels, shape) else {
+            panic!("rpm")
+        };
+        assert!(m.heave.is_some());
+        let mut scratch = synthoseis_core::rock_physics::ColumnScratch::default();
+        let (mut rho, mut vp, mut vs) = (vec![0f32; nk], vec![0f32; nk], vec![0f32; nk]);
+        let mut n = 0usize;
+        for i in 0..ni {
+            for j in 0..nj {
+                let q = i * nj + j;
+                let col = &labels[q * nk..(q + 1) * nk];
+                m.column(i, j, col, &mut scratch, &mut rho, &mut vp, &mut vs);
+                for k in 0..nk {
+                    let is_salt = format!("{:?}", scratch.kinds[k]) == "Salt";
+                    assert_eq!(is_salt, s.contains(q, k), "seed {seed} ({i},{j},{k})");
+                    n += is_salt as usize;
+                    let (x, y) = scratch.src_ij[k];
+                    moved += (is_salt && ((x - i as f64).abs() > 0.5 || (y - j as f64).abs() > 0.5)) as usize;
+                }
+            }
+        }
+        assert!(n > 1000, "seed {seed}: {n} salt voxels");
+        tested += 1;
+    }
+    assert!(tested >= 2, "{tested} seeds with salt");
+    assert!(moved > 100, "{moved} heaved salt voxels: test is vacuous");
+}
