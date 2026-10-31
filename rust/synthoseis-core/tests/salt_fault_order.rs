@@ -262,7 +262,10 @@ fn knot_misses(seed: u64, min_throw: usize) -> (usize, usize) {
 /// so no output run top sits more than 1 sample below its own drag target
 /// `a + D(a)` (`a` its faulted run top). The old pin-down clamp held such
 /// tops at the shallower boundary's target (seed 1 (25,15), label 9 at 56).
-/// Seeds 1, 4 and 6 had 2191, 2475 and 2683 inverted columns at 81d486a2.
+/// At 81d486a2 seeds 1, 4 and 6 fail with 2217, 330 and 4158 pinned tops
+/// (912, 330 and 1619 columns). It is the second M3 killer: knots from the
+/// unfaulted labels put the targets at unfaulted tops, so faulted tops land
+/// below theirs (with `drag_knots_are_faulted_run_tops`).
 #[test]
 fn drag_keeps_horizon_order() {
     let pinned: Vec<(u64, usize, usize)> = [1u64, 4, 6]
