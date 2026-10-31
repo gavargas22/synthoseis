@@ -22,9 +22,6 @@ pub(crate) struct Cached {
     /// Fault model of the run with its shared per-tile gather cache
     /// (heave only), keyed by [`fault_key`]; built on first use.
     pub faults: std::sync::OnceLock<(String, Option<synthoseis_geo::faults::FaultModel>)>,
-    /// Salt drag offsets of the undragged maps (post-fault drag only),
-    /// built on first use.
-    pub drag: std::sync::OnceLock<Option<Vec<f64>>>,
 }
 
 /// Every input of the fault model besides the geometry key.
@@ -102,7 +99,6 @@ impl GeometryCache {
             salt,
             unconf: Arc::new(unconf),
             faults: std::sync::OnceLock::new(),
-            drag: std::sync::OnceLock::new(),
         })))
     }
 }

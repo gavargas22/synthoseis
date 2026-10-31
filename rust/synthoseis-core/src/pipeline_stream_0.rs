@@ -96,18 +96,24 @@ pub fn generate_labels_warp(
     let (maps, nh) = toy_horizon_maps(cfg);
     let mut labels = fill_layer_labels(&maps, [ni, nj, nh], nk);
 
-    let as_i32: Vec<i32> = labels
-        .iter()
-        .map(|&v| if v == 255 { 0 } else { (v as i32) + 1 })
-        .collect();
-    let (_vals, relabeled) = relabel_consecutive(&as_i32);
-    let filtered = filter_labels_by_min_voxels(&relabeled, 1);
-    for (dst, &src) in labels.iter_mut().zip(filtered.iter()) {
-        *dst = if src == 0 {
-            255
-        } else {
-            (src - 1).clamp(0, 254) as u8
-        };
+    {
+        // Scoped: the voxel-sized i32 scratch is freed before the drag
+        // offsets and the warp allocate (peak RSS, #61 M2).
+        let as_i32: Vec<i32> = labels
+            .iter()
+            .map(|&v| if v == 255 { 0 } else { (v as i32) + 1 })
+            .collect();
+        let (_vals, relabeled) = relabel_consecutive(&as_i32);
+        drop(as_i32);
+        let filtered = filter_labels_by_min_voxels(&relabeled, 1);
+        drop(relabeled);
+        for (dst, &src) in labels.iter_mut().zip(filtered.iter()) {
+            *dst = if src == 0 {
+                255
+            } else {
+                (src - 1).clamp(0, 254) as u8
+            };
+        }
     }
     let raw = salt_drag_raw_intervals(cfg, &maps, nh, nk);
     apply_faults_to_labels(cfg, &maps, nh, &mut labels);
@@ -191,27 +197,17 @@ pub(crate) fn apply_salt_drag_warp(
 /// Drag offsets `D` of the undragged maps against the salt body
 /// ([`crate::salt::drag_offsets`]), `(ni, nj, nh)`; `None` without salt.
 pub fn salt_drag_offsets(cfg: &E2eConfig) -> Option<Vec<f64>> {
-    if let Some(c) = crate::geometry_cache::GeometryCache::get(cfg) {
-        if let Some(d) = c.drag.get() {
-            return d.clone();
-        }
-    }
-    let compute = || {
-        let base = layered_base_maps(cfg);
-        let (maps, nh) = (&base.0 .0, base.0 .1);
-        let body = crate::salt::salt_body_from_maps(cfg, maps, nh)?;
-        let [ni, nj, _] = cfg.shape();
-        Some(crate::salt::drag_offsets(
-            maps,
-            [ni, nj, nh],
-            &body,
-            cfg.rock_physics.salt_smooth_all_horizons,
-        ))
-    };
-    match crate::geometry_cache::GeometryCache::get(cfg) {
-        Some(c) => c.drag.get_or_init(compute).clone(),
-        None => compute(),
-    }
+    // Not cached: `(ni, nj, nh)` f64 would outlive the warp and grow the
+    // run's peak with the cube (Strata, #61 M2).
+    let (maps, nh) = toy_horizon_maps(cfg);
+    let body = crate::salt::salt_body_from_maps(cfg, &maps, nh)?;
+    let [ni, nj, _] = cfg.shape();
+    Some(crate::salt::drag_offsets(
+        &maps,
+        [ni, nj, nh],
+        &body,
+        cfg.rock_physics.salt_smooth_all_horizons,
+    ))
 }
 
 /// Toy horizon stack `(ni, nj, nh)` shared by label generation, the fault
