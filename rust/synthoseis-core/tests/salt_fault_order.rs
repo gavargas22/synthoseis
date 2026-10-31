@@ -261,7 +261,8 @@ fn knot_misses(seed: u64, min_throw: usize) -> (usize, usize) {
 /// mean lift in the first 3 columns off the flank ≥ 1 sample (measured
 /// 4.21), monotone in every column, no unset voxel (no interior water
 /// beyond master's, which has the same 0 on seed 1 and 2 seabed speckles
-/// on seed 10).
+/// on seed 10, at the same voxels (125,111,35) and (126,114,35) under post-fault
+/// drag; faults-off has none, so they come from faulting).
 #[test]
 fn drag_sense_and_warp_monotone() {
     let s = body(1).expect("seed 1 salt");
