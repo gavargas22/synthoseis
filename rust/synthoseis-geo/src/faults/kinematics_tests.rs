@@ -320,8 +320,26 @@ fn gather_leaves_no_voxel_unset() {
 /// ids, src_ij, gathered labels and volume).
 #[test]
 fn heave_tiles_equal_the_whole_cube() {
+    tiles_equal_the_whole_cube(false);
+}
+
+/// Row 9 with 7b tip lines on (the pipeline default).
+#[test]
+fn tipped_tiles_equal_the_whole_cube() {
+    tiles_equal_the_whole_cube(true);
+}
+
+fn tips(m: FaultModel, seed: u64, on: bool) -> FaultModel {
+    if on {
+        m.with_tips(seed, &TipParams::default())
+    } else {
+        m
+    }
+}
+
+fn tiles_equal_the_whole_cube(on: bool) {
     for seed in [1u64, 7] {
-        let m = heave(random_model(SHAPE, seed, 4));
+        let m = tips(heave(random_model(SHAPE, seed, 4)), seed, on);
         let [ni, nj, nk] = SHAPE;
         let whole = m.compute_tile(0, ni, 0, nj);
         let mut n_tiles = 0;
@@ -360,13 +378,23 @@ fn heave_tiles_equal_the_whole_cube() {
 /// faults at 128×128×256. Kills: dip floor removed.
 #[test]
 fn heave_stays_inside_the_halo_bound() {
+    stays_inside_the_halo_bound(false);
+}
+
+/// Row 10 with 7b tip lines on: the taper is ≤ 1, so the bound holds.
+#[test]
+fn tipped_heave_stays_inside_the_halo_bound() {
+    stays_inside_the_halo_bound(true);
+}
+
+fn stays_inside_the_halo_bound(on: bool) {
     let p = HeaveParams::default();
     let h = p.halo(RandomFaultConfig::default().throw_max) as f64;
     assert_eq!(h, 19.0);
     let shape = [128, 128, 256];
     let mut worst = 0f64;
     for seed in 1..=20u64 {
-        let m = heave(random_model(shape, seed, 4));
+        let m = tips(heave(random_model(shape, seed, 4)), seed, on);
         for i in (0..128).step_by(2) {
             for j in (0..128).step_by(2) {
                 for k in 0..256 {

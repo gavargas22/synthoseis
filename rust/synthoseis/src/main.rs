@@ -1156,6 +1156,16 @@ pub fn parse_fault_kinematics(
 mod tests {
     use synthoseis_core::{ClosureMinimum, RockPhysicsConfig};
 
+    #[test]
+    fn legacy_fault_profile_flag_parses_and_is_checked() {
+        use super::parse_fault_kinematics as p;
+        assert!(!p(3, false, None, false).unwrap().legacy_profile);
+        assert!(p(3, false, None, true).unwrap().legacy_profile);
+        assert!(p(3, false, Some(45.0), true).unwrap().legacy_profile);
+        assert!(p(0, false, None, true).is_err());
+        assert!(p(3, true, None, true).is_err());
+    }
+
     /// Multi-process workers rebuild the closure options from these flags,
     /// and clap accepts them.
     #[test]
