@@ -1384,6 +1384,37 @@ impl RpmModel {
         )
     }
 
+    /// All `nh` continuous horizons at `(x, y)`, appended to `out`; equal
+    /// to [`RpmModel::continuous_map_at`] per horizon (axis weights shared).
+    pub fn continuous_maps_at(
+        &self,
+        pm: &crate::partial_model::PartialModel,
+        x: f64,
+        y: f64,
+        out: &mut Vec<f64>,
+    ) {
+        let [ni, nj, _] = self.shape;
+        let nh = self.nh;
+        let ax = |v: f64, n: usize| {
+            let v = v.clamp(0.0, (n.max(1) - 1) as f64);
+            let a = v.floor() as usize;
+            (a, (a + 1).min(n - 1), v - a as f64)
+        };
+        let (i0, i1, wi) = ax(x, ni);
+        let (j0, j1, wj) = ax(y, nj);
+        let lerp = |a: f64, b: f64, w: f64| if w == 0.0 { a } else { a + w * (b - a) };
+        let base = |i: usize, j: usize| (i * nj + j) * nh;
+        let (o00, o01, o10, o11) = (base(i0, j0), base(i0, j1), base(i1, j0), base(i1, j1));
+        let at = |o: usize| self.maps[o] + pm.delta[o] as f64;
+        out.extend((0..nh).map(|h| {
+            lerp(
+                lerp(at(o00 + h), at(o01 + h), wj),
+                lerp(at(o10 + h), at(o11 + h), wj),
+                wi,
+            )
+        }));
+    }
+
     /// Continuous (partial-voxel) horizon `h` at `(x, y)`: bilinear in
     /// `maps + delta`, exact at integer positions.
     pub fn continuous_map_at(

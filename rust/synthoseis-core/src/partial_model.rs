@@ -270,6 +270,9 @@ impl RpmModel {
                     // break wherever the rounded source column changes.
                     ps.cell_horizons.clear();
                     let mut prev = None;
+                    // Bit-exact source of the previous cell: runs of cells
+                    // with one source reuse its horizons (same values).
+                    let mut last = None;
                     for k in 0..nk {
                         let (x, y) = t.source_ij(i, j, k);
                         let sc = self.nearest_column(x, y);
@@ -277,8 +280,14 @@ impl RpmModel {
                             ps.brk[k] = true;
                         }
                         prev = Some(sc);
-                        let at = |h: usize| self.continuous_map_at(pm, x, y, h);
-                        ps.cell_horizons.extend((0..nh).map(at));
+                        let bits = (x.to_bits(), y.to_bits());
+                        if last == Some(bits) {
+                            let n = ps.cell_horizons.len();
+                            ps.cell_horizons.extend_from_within(n - nh..n);
+                        } else {
+                            self.continuous_maps_at(pm, x, y, &mut ps.cell_horizons);
+                            last = Some(bits);
+                        }
                     }
                     source_intervals(lookup, &mut ps.brk, &mut ps.src);
                     column_parts_faulted_cells(
