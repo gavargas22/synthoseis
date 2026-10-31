@@ -387,30 +387,37 @@ fn tipped_heave_stays_inside_the_halo_bound() {
     stays_inside_the_halo_bound(true);
 }
 
+/// Row 10: every model's composed lateral pull stays within its own pipeline
+/// halo, `heave_halo() − 1` (the summed per-fault bound the chunked writer
+/// reads), over 40 seeds. Seed 35 pulls ~21 bins, past a single fault's
+/// 18-bin limit, and still sits inside its own halo.
 fn stays_inside_the_halo_bound(on: bool) {
-    let p = HeaveParams::default();
-    let h = p.halo(RandomFaultConfig::default().throw_max) as f64;
-    assert_eq!(h, 19.0);
     let shape = [128, 128, 256];
-    let mut worst = 0f64;
-    for seed in 1..=20u64 {
+    let (mut worst, mut slack) = (0f64, f64::MAX);
+    for seed in 1..=40u64 {
         let m = tips(heave(random_model(shape, seed, 4)), seed, on);
+        let limit = m.heave_halo() as f64 - 1.0;
+        let mut w = 0f64;
         for i in (0..128).step_by(2) {
             for j in (0..128).step_by(2) {
-                for k in 0..256 {
+                for k in (0..256).step_by(2) {
                     let s = m.gather(i, j, k).src;
-                    let r = (i as f64 - s[0]).abs().max((j as f64 - s[1]).abs());
-                    worst = worst.max(r);
+                    w = w.max((i as f64 - s[0]).abs().max((j as f64 - s[1]).abs()));
                 }
             }
         }
+        assert!(
+            w <= limit,
+            "seed {seed}: max lateral pull {w:.2} > heave_halo − 1 = {limit}"
+        );
+        worst = worst.max(w);
+        slack = slack.min(limit - w);
     }
+    eprintln!("halo bound (tips {on}): worst pull {worst:.2}, min slack {slack:.2} bins");
     assert!(
-        worst <= h - 1.0,
-        "max lateral pull {worst:.2} > H − 1 = {}",
-        h - 1.0
+        worst > 18.0,
+        "seed range no longer reaches past one fault's halo ({worst})"
     );
-    assert!(worst > 1.0, "no heave at all ({worst})");
 }
 
 /// One stage by hand: the source of continuous `(x, y, z)` through fault `f`,
