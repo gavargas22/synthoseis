@@ -3,7 +3,7 @@
 //! column of every displaced voxel, and the defaults turn heave on.
 
 use synthoseis_core::pipeline::{E2eConfig, FaultConfig};
-use synthoseis_core::rock_physics::elastic_model;
+use synthoseis_core::rock_physics::{elastic_model, ElasticModel};
 use synthoseis_core::{fault_model, generate_labels, generate_unconformity_labels};
 use synthoseis_geo::faults::DEFAULT_MIN_DIP_DEG;
 
@@ -196,8 +196,11 @@ fn ng_concordance(c: &E2eConfig, model_heave: bool) -> (f64, usize) {
 /// its output column. Over the voxel pairs where the two readings disagree
 /// on which voxel has the higher net-to-gross, Vp sides with the source
 /// reading in >= 70 % of pairs (0.97 / 0.92 / 0.76 for seeds 1 / 7 / 13);
-/// reading the output column's maps (the model without its heave columns,
-/// the "same-column maps" mutant) sides with it in <= 6 %.
+/// a model with its heave columns removed (every property, net-to-gross
+/// included, read at the output column) sides with it in <= 20 %. This is
+/// not the "same-column maps" mutant, which only moves the burial depth's
+/// base horizon; [`burial_depth_reads_the_base_horizon_at_the_source_column`]
+/// covers that one.
 #[test]
 fn sand_vp_follows_the_source_column_net_to_gross() {
     for seed in [1u64, 7, 13] {
@@ -214,4 +217,69 @@ fn sand_vp_follows_the_source_column_net_to_gross() {
             "seed {seed}: output-column model still follows the source ({out:.3})"
         );
     }
+}
+
+/// Every layer run's burial depth comes from its base horizon read at the
+/// run's *source* column: tv = zb(src) - z0 + (dk - dk0) with
+/// dk = e - floor(zb(src)). The same-column mutant keeps the integer part
+/// (dk absorbs it) but takes frac(zb) from the wrong column, so we require
+/// it to the sub-sample on runs whose source moved by >= 1 bin and whose
+/// two candidate bases differ in their fractional part by > 0.05 sample.
+#[test]
+fn burial_depth_reads_the_base_horizon_at_the_source_column() {
+    let mut tested = 0usize;
+    for seed in [1u64, 7, 13] {
+        let mut c = E2eConfig::tiny(seed);
+        (c.inline_count, c.crossline_count, c.samples) = (48, 48, 128);
+        c.faults = FaultConfig {
+            count: 4,
+            ..FaultConfig::default()
+        };
+        c.rock_physics.salt = false;
+        c.rock_physics.fluids = false;
+        let (labels, shape) = generate_labels(&c);
+        let [ni, nj, nk] = shape;
+        let ElasticModel::Rpm(m) = elastic_model(&c, &labels, shape) else {
+            panic!("rpm")
+        };
+        let hv = m.heave.as_ref().expect("heave on by default");
+        let (mut src, mut depth) = (Vec::new(), vec![0f32; nk]);
+        for i in 0..ni {
+            for j in 0..nj {
+                let col = &labels[(i * nj + j) * nk..(i * nj + j + 1) * nk];
+                hv.column_sources(i, j, nk, &mut src);
+                m.depth_trace_src(i, j, col, &src, &mut depth);
+                let z0 = m.maps[(i * nj + j) * m.nh];
+                let seabed = match col.iter().position(|&v| v != 255) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let dk0 = seabed as i64 - (z0.ceil() as i64).clamp(0, nk as i64);
+                let mut k = seabed;
+                while k < nk {
+                    let mut e = k + 1;
+                    while e < nk && col[e] == col[k] {
+                        e += 1;
+                    }
+                    let h = m.intervals.get(col[k] as usize).copied();
+                    if let Some(h) = h.filter(|&h| col[k] != 255 && h + 1 < m.nh) {
+                        let (sx, sy) = src[e - 1];
+                        let moved = (sx - i as f64).hypot(sy - j as f64) >= 1.0;
+                        let zs = m.map_at(sx, sy, h + 1);
+                        let zo = m.map_at(i as f64, j as f64, h + 1);
+                        if moved && (zs.fract() - zo.fract()).abs() > 0.05 {
+                            let dk = e as i64 - (zs.floor() as i64).clamp(0, nk as i64);
+                            let want = (zs as f32 - z0 as f32 + (dk - dk0) as f32) * m.step;
+                            assert!((depth[e - 1] - want).abs() <= 1e-3 * m.step.max(1.0),
+                            "seed {seed} ({i},{j}) run {k}..{e}: depth {} want {want} (source base {zs:.3}, own-column base {zo:.3})", depth[e - 1]);
+                            tested += 1;
+                        }
+                    }
+                    k = e;
+                }
+            }
+        }
+    }
+    assert!(tested > 200, "only {tested} displaced runs checked");
+    println!("checked {tested} displaced runs");
 }
