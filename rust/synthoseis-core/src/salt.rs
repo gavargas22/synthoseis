@@ -588,7 +588,9 @@ pub fn drag_offsets(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all
 /// Keying `D` by depth rather than by the run's horizon keeps the warp
 /// smooth where a fault juxtaposes horizons of very different `D` (the
 /// "stripes" of #61 review M1). Knots are made monotone
-/// `b_r = max(b_{r−1}, a_r + D)` between `0 → 0` and the end knot
+/// bottom-up, `b_r = min(a_r + D, b_{r+1})` (a deeper uplift pushes the
+/// shallower boundaries up with it, so horizon order never inverts),
+/// clamped at 0, between `0 → 0` and the end knot
 /// `n → n + D_c(n)` of the column padded below the cube by
 /// `P = ⌈max −D_c⌉ + 1` samples, so no output cell reads past the source.
 /// The pad continues the bottom run's interval: the undragged fill of
@@ -639,15 +641,20 @@ pub fn drag_warp_labels(
         pad_column(&mut src, n, mc, table, &inv);
         knots.clear();
         knots.push((0.0, 0.0));
-        let mut prev = 0.0f64;
         for k in 1..n {
             if src[k] != src[k - 1] {
-                let b = (k as f64 + depth_offset(mc, dc, k as f64)).max(prev);
-                knots.push((k as f64, b));
-                prev = b;
+                knots.push((k as f64, k as f64 + depth_offset(mc, dc, k as f64)));
             }
         }
-        knots.push((n as f64, (n as f64 + depth_offset(mc, dc, n as f64)).max(prev)));
+        knots.push((n as f64, n as f64 + depth_offset(mc, dc, n as f64)));
+        // Push-up clamp, bottom to top: a deeper boundary lifted above a
+        // shallower one carries it along (never the reverse), then >= 0.
+        for r in (1..knots.len() - 1).rev() {
+            knots[r].1 = knots[r].1.min(knots[r + 1].1);
+        }
+        for kn in knots.iter_mut().skip(1) {
+            kn.1 = kn.1.max(0.0);
+        }
         drag_warp_column(col, &knots, &src, &mut idx);
         if let Some(ix) = index.as_deref_mut() {
             ix[c * nk..(c + 1) * nk].copy_from_slice(&idx);
@@ -662,15 +669,17 @@ pub fn drag_column_active(dc: &[f64]) -> bool {
 }
 
 /// `D_c(z)`: the offsets `dc` interpolated linearly over the horizon depths
-/// `mc` (non-decreasing), constant outside them.
+/// `mc` (non-decreasing), constant outside them. At a depth shared by
+/// several (pinched) horizons the deepest one's offset is used.
 #[doc(hidden)]
 pub fn depth_offset(mc: &[f64], dc: &[f64], z: f64) -> f64 {
     let nh = mc.len();
-    if z <= mc[0] {
+    if z < mc[0] {
         return dc[0];
     }
-    // First horizon at or below z.
-    let h = mc.partition_point(|&m| m < z);
+    // First horizon strictly below z: ties (pinched horizons at z) take
+    // the deepest tied horizon's offset.
+    let h = mc.partition_point(|&m| m <= z);
     if h >= nh {
         return dc[nh - 1];
     }
