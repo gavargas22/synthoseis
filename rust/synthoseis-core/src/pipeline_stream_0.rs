@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use synthoseis_closures::{filter_labels_by_min_voxels, relabel_consecutive};
 use synthoseis_geo::faults::{
     sample_random_faults, FaultKinematics, FaultModel, FaultTile, HeaveParams, RandomFaultConfig,
-    ReachMode, Seabed,
+    ReachMode, Seabed, TipParams,
 };
 use synthoseis_geo::fill_layer_labels;
 use synthoseis_io::{CreateConfig, Dimension, MdioStore};
@@ -313,7 +313,12 @@ fn build_fault_model(cfg: &E2eConfig, maps: &[f64], nh: usize) -> Option<FaultMo
         ReachMode::FitColumn
     };
     let model = FaultModel::resolve_with_mode(shape, &params, &seabed, seed, mode);
-    Some(model.with_kinematics(fault_kinematics(cfg)))
+    let model = model.with_kinematics(fault_kinematics(cfg));
+    if cfg.faults.legacy_kinematics || cfg.faults.legacy_profile {
+        return Some(model);
+    }
+    // 7b: tip lines from their own sub-stream of the run seed.
+    Some(model.with_tips(cfg.seed, &TipParams::default()))
 }
 
 /// Fault kinematics of `cfg`: legacy vertical lookup under
@@ -328,7 +333,7 @@ pub fn fault_kinematics(cfg: &E2eConfig) -> FaultKinematics {
         min_dip_deg: cfg.faults.min_dip_deg,
         dz_m: fold.dz_m,
         bin_m: fold.bin_m,
-        heave_scale: 1.0,
+        ..HeaveParams::default()
     })
 }
 

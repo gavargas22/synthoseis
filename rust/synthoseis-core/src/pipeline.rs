@@ -268,6 +268,12 @@ pub struct FaultConfig {
     /// Physical dip floor of the heave in degrees (15–60, default 30).
     /// CLI `--fault-min-dip`.
     pub min_dip_deg: f64,
+    /// Legacy switch of 7b: keep the Gaussian lateral throw (with heave,
+    /// bit-identical to the 7a output). Default `false`: the throw tapers
+    /// to zero on an elliptical tip line sized by displacement–length
+    /// scaling (spec-fault-kinematics 7b). CLI `--legacy-fault-profile`.
+    /// Ignored under `legacy_kinematics`, which turns 7b off too.
+    pub legacy_profile: bool,
 }
 
 impl Default for FaultConfig {
@@ -280,6 +286,7 @@ impl Default for FaultConfig {
             overlap_legacy_no_fault_labels: false,
             legacy_kinematics: false,
             min_dip_deg: synthoseis_geo::faults::DEFAULT_MIN_DIP_DEG,
+            legacy_profile: false,
         }
     }
 }

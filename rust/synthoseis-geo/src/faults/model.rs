@@ -159,6 +159,9 @@ pub struct ResolvedFault {
     pub reach_rescued: bool,
     /// Python would add hockey-stick drag (deferred in this port).
     pub hockey_stick_deferred: bool,
+    /// 7b elliptical tip line (heave models only): when set, its taper
+    /// replaces the Gaussian lateral weight of the throw.
+    pub tip: Option<super::tips::TipLine>,
     lateral: LateralGaussian,
 }
 
@@ -635,6 +638,7 @@ pub fn resolve_fault_mode(
         seabed_ok: vp.seabed_ok,
         reach_rescued: vp.rescued,
         hockey_stick_deferred: params.is_hockey_stick(),
+        tip: None,
         lateral,
     })
 }

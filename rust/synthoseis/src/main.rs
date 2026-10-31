@@ -107,6 +107,13 @@ enum Commands {
         /// with --legacy-fault-kinematics.
         #[arg(long)]
         fault_min_dip: Option<f64>,
+        /// Legacy switch: keep the Gaussian lateral fault throw (with heave;
+        /// bit-identical to the 7a output). By default the throw tapers to
+        /// zero on an elliptical tip line sized by displacement-length
+        /// scaling (spec-fault-kinematics 7b). Requires --faults; rejected
+        /// with --legacy-fault-kinematics, which already turns it off.
+        #[arg(long, default_value_t = false)]
+        legacy_fault_profile: bool,
         /// Cube shape `NI,NJ,NK` for single-worker `--e2e --chunked` (default 8,8,8).
         #[arg(long)]
         shape: Option<String>,
@@ -778,6 +785,7 @@ fn main() {
             faults,
             legacy_fault_kinematics,
             fault_min_dip,
+            legacy_fault_profile,
             shape,
             bandpass,
             lateral_filter,
@@ -850,7 +858,12 @@ fn main() {
                 );
                 std::process::exit(2);
             }
-            let fault_cfg = parse_fault_kinematics(faults, legacy_fault_kinematics, fault_min_dip)
+            let fault_cfg = parse_fault_kinematics(
+                faults,
+                legacy_fault_kinematics,
+                fault_min_dip,
+                legacy_fault_profile,
+            )
                 .unwrap_or_else(|e| {
                     eprintln!("{e}");
                     std::process::exit(2);
@@ -1111,20 +1124,27 @@ fn main() {
 
 /// Fault configuration of `--faults N [--legacy-fault-kinematics |
 /// --fault-min-dip D]`. Errors (exit 2) for a dip outside 15-60, a dip with
-/// the legacy switch, or either switch without faults.
+/// the legacy switch, or any switch without faults. `--legacy-fault-profile`
+/// with `--legacy-fault-kinematics` is accepted with a note.
 pub fn parse_fault_kinematics(
     faults: usize,
     legacy: bool,
     min_dip: Option<f64>,
+    legacy_profile: bool,
 ) -> Result<synthoseis_core::FaultConfig, String> {
-    if faults == 0 && (legacy || min_dip.is_some()) {
-        return Err("--legacy-fault-kinematics / --fault-min-dip have no effect without --faults".into());
+    if faults == 0 && (legacy || min_dip.is_some() || legacy_profile) {
+        return Err("--legacy-fault-kinematics / --fault-min-dip / --legacy-fault-profile have no effect without --faults".into());
+    }
+    if legacy && legacy_profile {
+        // Accepted so sweep scripts can always pass the full legacy set.
+        eprintln!("note: --legacy-fault-kinematics implies the legacy fault profile; --legacy-fault-profile is redundant");
     }
     if legacy && min_dip.is_some() {
         return Err("--fault-min-dip has no effect with --legacy-fault-kinematics (no heave)".into());
     }
     let mut c = synthoseis_core::FaultConfig::with_count(faults);
     c.legacy_kinematics = legacy;
+    c.legacy_profile = legacy_profile;
     if let Some(d) = min_dip {
         if !(15.0..=60.0).contains(&d) {
             return Err(format!("--fault-min-dip {d} outside 15..=60 degrees"));
@@ -1137,6 +1157,19 @@ pub fn parse_fault_kinematics(
 #[cfg(test)]
 mod tests {
     use synthoseis_core::{ClosureMinimum, RockPhysicsConfig};
+
+    #[test]
+    fn legacy_fault_profile_flag_parses_and_is_checked() {
+        use super::parse_fault_kinematics as p;
+        assert!(!p(3, false, None, false).unwrap().legacy_profile);
+        assert!(p(3, false, None, true).unwrap().legacy_profile);
+        assert!(p(3, false, Some(45.0), true).unwrap().legacy_profile);
+        assert!(p(0, false, None, true).is_err());
+        // Legacy kinematics implies the legacy profile: the pair is accepted.
+        let both = p(3, true, None, true).unwrap();
+        assert!(both.legacy_kinematics && both.legacy_profile);
+        assert!(p(0, true, None, true).is_err());
+    }
 
     /// Multi-process workers rebuild the closure options from these flags,
     /// and clap accepts them.
