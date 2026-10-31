@@ -147,7 +147,16 @@ traveltime (depth-to-time §3.4). So:
   faulted labels (`apply_salt_drag_warp`; knots at the faulted run tops). So
   a horizon cut by a fault is dragged with its fault offset intact, and no
   sediment voxel gathers salt-dragged layers from inside the body (0 such
-  voxels on seeds 1–20 against 0.52% of non-salt on master). The salt body
+  voxels on seeds 1–20 against 0.52% of non-salt on master). Each run top
+  `a` moves by `D_c(a)`, the offsets interpolated over the undragged
+  horizon depths of the column (keyed by depth, not by the run's horizon,
+  so a fault juxtaposing horizons of different `D` leaves no stretched
+  stripe: > 5× stretch 0.009% of the band, from 2.05%). Columns are padded
+  below the cube by `⌈max −D⌉ + 1` samples continuing the bottom interval
+  instead of clamping to the last sample, and columns with `|D| < ½`
+  everywhere are left as they are (also in the partial-volume band). D is
+  computed when needed, not cached, so the warp adds no resident cube
+  (RSS within master's at chunk 32). The salt body
   itself is not faulted, as in legacy. `--legacy-salt-fault-order` restores
   the pre-fault drag of master 481805cc byte for byte.
 - **Gaps come from the labels.** A column is a gap when the closure unit's

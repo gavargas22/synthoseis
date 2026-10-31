@@ -282,8 +282,8 @@ footwall, a horizon map shows a gap (heave gap) along each fault.
   seeds 1–20 at 128×128×256, 4 faults (master: 414,581 voxels, mean 0.52% of
   non-salt; seed 1 1.30%). `--legacy-salt-fault-order` restores master
   481805cc. Tests: `fault_heave.rs::salt_is_stationary_under_heave`,
-  `salt_fault_order.rs` (exposure, stair index, drag knots, far field,
-  output masks).
+  `salt_fault_order.rs` (exposure, stair index, stretch, drag knots, far
+  field, Jaccard, output masks).
 - Faults remain single-worker `--e2e --chunked` only.
 
 `--legacy-fault-kinematics` restores the vertical-only lookup of master
@@ -339,9 +339,13 @@ Numbers:
 ## Deferred (follow-ups)
 
 - Salt-flank fragments under heave: done in roadmap 7d (drag after
-  faulting, `salt_fault_order.rs`). Open: stair index is 0.72× master over
-  seeds 1–20 (spec bar 0.25×) and drag-band Jaccard mean 0.944 (bar 0.95);
-  time-mode salt/fault label masks move by the velocity change above them.
+  faulting, `salt_fault_order.rs`). Open: stair index ≤ 1.2× faults-off
+  per seed misses on seed 15 (1.244; summed 0.971 ≤ 1.1 holds), a steep
+  but continuous flank dip in a hanging wall dropped by the fault; drag-band
+  Jaccard vs master outside master's exposed region is 0.8988 on seed 1
+  (bar 0.90; mean 0.963 ≥ 0.95 holds). Time-mode salt/fault label masks are
+  the depth masks through the new TWT
+  (`time_masks_are_depth_masks_through_new_twt`).
 - Hockey-stick drag zone (throw ≥ 29.75). Faults are flagged
   `hockey_stick_deferred`, and the default throw range 5–29 avoids it.
 - Fault intersections volume and dilation; `fault_intersections` output.
