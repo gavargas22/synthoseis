@@ -192,16 +192,8 @@ fn scaled_minimum_survival() {
     // (`--legacy-fault-profile`, #59 head); the 7b tip taper (default)
     // leaves more small closures where the throw fades out (measured in
     // the 7b PR: see `KEPT_7B`).
-    assert_kept_volume(
-        &[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)],
-        true,
-        0.98,
-    );
-    assert_kept_volume(
-        &[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)],
-        false,
-        KEPT_7B,
-    );
+    let cubes = [([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)];
+    assert_kept_volumes(&cubes);
 }
 
 /// Kept-closure-volume floor on the 7b default (tip-bounded throw). With
@@ -216,15 +208,23 @@ const KEPT_7B: f64 = 0.975;
 #[ignore = "nightly: 64^2/128^2 closure-minimum sweep (about 1 min optimized)"]
 fn scaled_minimum_survival_medium_cubes() {
     let cubes = [([64, 64, 256], 1..=12), ([128, 128, 256], 1..=12)];
-    assert_kept_volume(&cubes, true, 0.98);
-    assert_kept_volume(&cubes, false, KEPT_7B);
+    assert_kept_volumes(&cubes);
 }
 
-fn assert_kept_volume(
+/// Both gates, the 7a 98 % and the 7b `KEPT_7B`, each measured and
+/// reported before either fails (one miss must not hide the other).
+fn assert_kept_volumes(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
+    let mut misses = kept_volume_misses(cubes, true, 0.98);
+    misses.extend(kept_volume_misses(cubes, false, KEPT_7B));
+    assert!(misses.is_empty(), "kept closure volume below floor: {}", misses.join("; "));
+}
+
+fn kept_volume_misses(
     cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)],
     legacy_profile: bool,
     floor: f64,
-) {
+) -> Vec<String> {
+    let mut misses = Vec::new();
     for (shape, seeds) in cubes.iter().cloned() {
         for faults in [0, 3] {
             let (mut kept, mut total) = (0usize, 0usize);
@@ -241,9 +241,14 @@ fn assert_kept_volume(
                 "{shape:?} f{faults} legacy_profile={legacy_profile}: kept closure volume {:.2} %",
                 100.0 * frac
             );
-            assert!(frac >= floor, "{shape:?} f{faults}: {frac}");
+            if frac < floor {
+                misses.push(format!(
+                    "{shape:?} f{faults} legacy_profile={legacy_profile}: {frac} < {floor}"
+                ));
+            }
         }
     }
+    misses
 }
 
 /// §6.4: the salt case of `tests/rock_physics.rs` (24×20×128, seed 102, 4
