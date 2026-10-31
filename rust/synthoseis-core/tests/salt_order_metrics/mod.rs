@@ -70,6 +70,32 @@ pub fn run(c: &E2eConfig) -> Run {
     }
 }
 
+/// Undragged horizon maps `(ni, nj, nh)` of a post-fault drag run.
+pub fn maps(c: &E2eConfig) -> Vec<f64> {
+    synthoseis_core::pipeline_stream::salt_drag_maps(c)
+}
+
+/// The post-fault drag warp of `seed` applied to the unfaulted labels (the
+/// faults-off reference of the stretch bar: `--faults 0` drags the maps
+/// before filling, so it has no warp to measure).
+pub fn unfaulted_warp_run(seed: u64, shape: [usize; 3]) -> Run {
+    let c = cfg(seed, shape, 4, Mode::PostFault);
+    let mut labels = undragged(seed, shape);
+    let d = synthoseis_core::pipeline_stream::salt_drag_offsets(&c).expect("drag");
+    let table = synthoseis_core::pipeline_stream::salt_drag_label_table(&c).expect("table");
+    let maps = maps(&c);
+    let nh = d.len() / (shape[0] * shape[1]);
+    let mut warp = Vec::new();
+    synthoseis_core::salt::drag_warp_labels(&mut labels, shape, &d, &maps, nh, &table, Some(&mut warp));
+    Run {
+        shape,
+        labels,
+        warp,
+        src: None,
+        fault_id: Vec::new(),
+    }
+}
+
 /// Undragged, unfaulted labels of `seed` (no salt: the base maps).
 pub fn undragged(seed: u64, shape: [usize; 3]) -> Vec<u8> {
     let mut c = cfg(seed, shape, 0, Mode::FaultsOff);
@@ -119,9 +145,14 @@ fn near(x: f32, n: usize) -> usize {
 /// source (the warp, then the fault gather; nearest voxel) lies inside the
 /// salt body and whose label differs from the undragged label there.
 pub fn exposed(r: &Run, s: &SaltBody, und: &[u8]) -> usize {
+    exposed_mask(r, s, und).iter().filter(|&&x| x).count()
+}
+
+/// Per-voxel [`exposed`].
+pub fn exposed_mask(r: &Run, s: &SaltBody, und: &[u8]) -> Vec<bool> {
     let [ni, nj, nk] = r.shape;
-    let Some((ij, lk)) = &r.src else { return 0 };
-    let mut n = 0;
+    let mut out = vec![false; ni * nj * nk];
+    let Some((ij, lk)) = &r.src else { return out };
     for q in 0..ni * nj {
         for k in 0..nk {
             let v = q * nk + k;
@@ -133,16 +164,19 @@ pub fn exposed(r: &Run, s: &SaltBody, und: &[u8]) -> usize {
             } else {
                 r.warp[v] as usize
             };
+            if kw >= nk {
+                continue; // pad below the cube: no gather source
+            }
             let w = q * nk + kw;
             let sq = near(ij[w].0, ni) * nj + near(ij[w].1, nj);
             let sk = near(lk[w], nk);
             if !s.contains(sq, sk) {
                 continue;
             }
-            n += (r.labels[v] != und[sq * nk + sk]) as usize;
+            out[v] = r.labels[v] != und[sq * nk + sk];
         }
     }
-    n
+    out
 }
 
 /// Flank stair-step index (§4 row 2): fraction of the non-salt voxels
@@ -216,6 +250,12 @@ pub fn stair_index(r: &Run, s: &SaltBody) -> f64 {
 /// Near-salt layer-label Jaccard (§4 row 6): `Σ_l |A_l ∩ B_l| / Σ_l |A_l ∪
 /// B_l|` over the non-salt voxels within `BAND` columns of the footprint.
 pub fn jaccard(a: &Run, b: &Run, s: &SaltBody) -> f64 {
+    jaccard_outside(a, b, s, &[])
+}
+
+/// [`jaccard`] over the voxels not in `skip` (empty: none skipped), e.g.
+/// master's exposed region (#61 review: the bar applies outside it).
+pub fn jaccard_outside(a: &Run, b: &Run, s: &SaltBody, skip: &[bool]) -> f64 {
     let [ni, nj, nk] = a.shape;
     let fp = footprint(s, a.shape);
     let dist = distance(&fp, ni, nj, BAND);
@@ -229,6 +269,9 @@ pub fn jaccard(a: &Run, b: &Run, s: &SaltBody) -> f64 {
                 continue;
             }
             let v = q * nk + k;
+            if skip.get(v).copied().unwrap_or(false) {
+                continue;
+            }
             // Each voxel adds 1 to the intersection when equal, else 2 to
             // the union (one per label).
             if a.labels[v] == b.labels[v] {
@@ -281,4 +324,36 @@ pub fn warp_checks(r: &Run, s: &SaltBody) -> (i64, f64, usize, usize) {
         }
     }
     (worst, lift as f64 / moved.max(1) as f64, nonmono, unset)
+}
+
+/// Local stretch of the drag warp (#61 review M1c): per non-salt voxel of
+/// the columns within `BAND` of the footprint (footprint and under-salt
+/// columns included), output span over source span on a ±4-sample window
+/// (`∞` where the source span is 0). Returns the fractions above 2× and
+/// above 5×.
+pub fn stretch_fractions(r: &Run, s: &SaltBody) -> (f64, f64) {
+    let [ni, nj, nk] = r.shape;
+    let fp = footprint(s, r.shape);
+    let dist = distance(&fp, ni, nj, BAND);
+    let (mut n, mut over2, mut over5) = (0usize, 0usize, 0usize);
+    for q in 0..ni * nj {
+        if dist[q] > BAND {
+            continue;
+        }
+        for k in 0..nk {
+            if s.contains(q, k) {
+                continue;
+            }
+            n += 1;
+            if r.warp.is_empty() {
+                continue;
+            }
+            let (lo, hi) = (k.saturating_sub(4), (k + 4).min(nk - 1));
+            let span = r.warp[q * nk + hi] as f64 - r.warp[q * nk + lo] as f64;
+            let st = if span <= 0.0 { f64::INFINITY } else { (hi - lo) as f64 / span };
+            over2 += (st > 2.0) as usize;
+            over5 += (st > 5.0) as usize;
+        }
+    }
+    (over2 as f64 / n.max(1) as f64, over5 as f64 / n.max(1) as f64)
 }

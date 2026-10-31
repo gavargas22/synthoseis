@@ -19,7 +19,7 @@ fn main() {
     let (lo, hi) = (a[2].parse::<u64>().unwrap(), a[3].parse::<u64>().unwrap());
     let out = a.get(4);
     let shape = [128, 128, 256];
-    println!("seed\texp_post\texp_master\tmaster_frac\tstair_post\tstair_master\tstair_off\tpost/off\tpost/master\tjaccard\tworst\tmean_lift\tnonmono\tunset");
+    println!("seed\texp_post\texp_master\tmaster_frac\tstair_post\tstair_master\tstair_off\tpost/off\tpost/master\tjaccard\tworst\tmean_lift\tnonmono\tunset\tjaccard_out\tstretch2_post\tstretch2_off\tstretch5_post\tstretch5_off");
     for seed in lo..=hi {
         let cp = m::cfg(seed, shape, 4, Mode::PostFault);
         let Some(s) = m::salt(&cp) else {
@@ -39,8 +39,10 @@ fn main() {
         );
         let j = m::jaccard(&rp, &rm, &s);
         let (w, l, nm, un) = m::warp_checks(&rp, &s);
+        let jo = m::jaccard_outside(&rp, &rm, &s, &m::exposed_mask(&rm, &s, &und));
+        let ((p2, p5), (o2, o5)) = (m::stretch_fractions(&rp, &s), m::stretch_fractions(&m::unfaulted_warp_run(seed, shape), &s));
         println!(
-            "{seed}\t{ep}\t{em}\t{:.4}%\t{sp:.5}\t{sm:.5}\t{so:.5}\t{:.3}\t{:.3}\t{j:.4}\t{w}\t{l:.2}\t{nm}\t{un}",
+            "{seed}\t{ep}\t{em}\t{:.4}%\t{sp:.5}\t{sm:.5}\t{so:.5}\t{:.3}\t{:.3}\t{j:.4}\t{w}\t{l:.2}\t{nm}\t{un}\t{jo:.4}\t{p2:.5}\t{o2:.5}\t{p5:.5}\t{o5:.5}",
             100.0 * em as f64 / nonsalt as f64,
             sp / so,
             sp / sm
@@ -57,6 +59,9 @@ fn main() {
             w("master_labels.u8", &rm.labels);
             w("off_labels.u8", &ro.labels);
             w("faults.u8", &rp.fault_id);
+            let le = |v: &[u32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+            w("post_warp.u32", &le(&rp.warp));
+            w("off_warp.u32", &le(&m::unfaulted_warp_run(seed, shape).warp));
             let sm: Vec<u8> = (0..shape[0] * shape[1])
                 .flat_map(|q| (0..shape[2]).map(move |k| (q, k)))
                 .map(|(q, k)| s.contains(q, k) as u8)

@@ -127,7 +127,8 @@ fn drag_follows_faulted_horizons() {
     table[0] = 0;
     table[1] = 1;
     let d: Vec<f64> = (0..6).flat_map(|_| [0.0, -3.0]).collect();
-    synthoseis_core::salt::drag_warp_labels(&mut labels, shape, &d, nh, &table, None);
+    let maps: Vec<f64> = (0..6).flat_map(|_| [0.0, 20.0]).collect();
+    synthoseis_core::salt::drag_warp_labels(&mut labels, shape, &d, &maps, nh, &table, None);
     let top = |c: usize| (0..nk).find(|&k| labels[c * nk + k] == 1).unwrap() as i64;
     for c in 0..6 {
         let want = if c < 3 { 17 } else { 17 + t as i64 };
@@ -143,7 +144,7 @@ fn drag_follows_faulted_horizons() {
 
 /// Spec test 3 on a real cube: every output label-run top inside the drag
 /// band is the source run top (of the faulted labels) lifted by its own
-/// interval's offset, |k − a − D| ≤ 1 (`a` the faulted run top), or below
+/// offset at its depth, |k − a − D(a)| ≤ 1 (`a` the faulted run top), or below
 /// it where the monotone clamp binds. Kills knots taken from the unfaulted
 /// fill.
 #[test]
@@ -152,35 +153,45 @@ fn drag_knots_are_faulted_run_tops() {
     let r = m::run(&c);
     let d = synthoseis_core::pipeline_stream::salt_drag_offsets(&c).expect("drag");
     let table = synthoseis_core::pipeline_stream::salt_drag_label_table(&c).expect("table");
+    let maps = m::maps(&c);
     let [ni, nj, nk] = SHAPE;
     let nh = d.len() / (ni * nj);
     let (mut tops, mut bad) = (0usize, 0usize);
     for q in 0..ni * nj {
         let dc = &d[q * nh..(q + 1) * nh];
-        if dc.iter().all(|&x| x == 0.0) {
+        if !synthoseis_core::salt::drag_column_active(dc) {
             continue;
         }
+        let mc = &maps[q * nh..(q + 1) * nh];
+        let dz = |z: f64| synthoseis_core::salt::depth_offset(mc, dc, z);
         let mut prev_b = 0.0f64;
         for k in 1..nk {
             let v = q * nk + k;
             let (l, lp) = (r.labels[v], r.labels[v - 1]);
             // Skip run tops whose source is clamped to the last cell (the
             // run starts below the cube).
-            if l == lp || l == 255 || table[l as usize] == 255 || r.warp[v] as usize == nk - 1 {
+            if l == lp || l == 255 || table[l as usize] == 255 || r.warp[v] as usize >= nk - 1 {
                 continue;
             }
             // The faulted run top `a` lies in (w⁻¹(k − 1), w⁻¹(k)]: where the
             // warp stretches, output cells skip source cells.
             let (lo, hi) = (r.warp[v - 1] as f64 + 1.0, r.warp[v] as f64);
-            let dh = dc[table[l as usize] as usize];
-            let src = (k as f64 - dh).clamp(lo, hi);
-            let want = src + dh;
+            // The source top with its knot nearest to k (D varies with
+            // depth, so solve a + D(a) = k over the bracket).
+            let src = (0..=((hi - lo).max(0.0) * 4.0) as usize)
+                .map(|t| lo + t as f64 * 0.25)
+                .min_by(|a, b| {
+                    let e = |x: f64| (k as f64 - x - dz(x)).abs();
+                    e(*a).total_cmp(&e(*b))
+                })
+                .unwrap_or(lo);
+            let want = src + dz(src);
             // The monotone clamp only pushes a knot down (a pinched-out
             // interval between the two runs, or a lower b before it).
             let adjacent = lp != 255
                 && table[lp as usize] != 255
                 && table[l as usize] == table[lp as usize] + 1;
-            let clamped = !adjacent || want < prev_b - 1e-9 || lo + dh < prev_b - 1e-9;
+            let clamped = !adjacent || want < prev_b - 1e-9 || lo + dz(lo) < prev_b - 1e-9;
             if clamped && (k as f64) < want - 1.0 - 1e-9 {
                 bad += 1; // the clamp never lifts above the knot
             }
@@ -218,7 +229,11 @@ fn drag_sense_and_warp_monotone() {
         unset <= unset_master,
         "{unset} unset voxels (master {unset_master})"
     );
-    assert!(r.warp.iter().all(|&w| (w as usize) < SHAPE[2]));
+    // Sources may lie in the pad below the cube (at most ⌈max −D⌉ + 1).
+    let d = synthoseis_core::pipeline_stream::salt_drag_offsets(&m::cfg(1, SHAPE, 4, Mode::PostFault))
+        .expect("drag");
+    let pad = (-d.iter().copied().fold(0.0f64, f64::min)).ceil() as usize + 1;
+    assert!(r.warp.iter().all(|&w| (w as usize) < SHAPE[2] + pad));
 }
 
 /// Spec tests 6 and 7: the salt body and the fault ids are those of master

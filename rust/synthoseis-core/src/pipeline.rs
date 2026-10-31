@@ -786,7 +786,7 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     // --- faults (optional; no-op when cfg.faults.count == 0) ---
     let raw = crate::pipeline_stream::salt_drag_raw_intervals(cfg, &maps, nh, nk);
     crate::pipeline_stream::apply_faults_to_labels(cfg, &maps, nh, &mut labels);
-    crate::pipeline_stream::apply_salt_drag_warp(cfg, raw, &mut labels, None);
+    crate::pipeline_stream::apply_salt_drag_warp(cfg, &maps, raw, &mut labels, None);
 
     if cfg.time_enabled() {
         return time_tiny_cube(cfg, &labels, [ni, nj, nk]);

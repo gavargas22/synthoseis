@@ -117,7 +117,7 @@ pub fn generate_labels_warp(
     }
     let raw = salt_drag_raw_intervals(cfg, &maps, nh, nk);
     apply_faults_to_labels(cfg, &maps, nh, &mut labels);
-    apply_salt_drag_warp(cfg, raw, &mut labels, index);
+    apply_salt_drag_warp(cfg, &maps, raw, &mut labels, index);
     (labels, [ni, nj, nk])
 }
 
@@ -173,12 +173,19 @@ pub fn salt_drag_label_table(cfg: &E2eConfig) -> Option<[u8; 256]> {
     salt_drag_raw_intervals(cfg, &maps, nh, cfg.shape()[2])
 }
 
+/// Test hook: the undragged maps the post-fault drag keys `D` by.
+#[doc(hidden)]
+pub fn salt_drag_maps(cfg: &E2eConfig) -> Vec<f64> {
+    toy_horizon_maps(cfg).0
+}
+
 /// Post-fault salt drag (spec-salt-fault-order option B): stretch each
 /// output column of the faulted `labels` by the drag offsets of the
 /// undragged maps ([`crate::salt::drag_warp_labels`]). `table` maps layer
 /// labels to intervals, from [`salt_drag_raw_intervals`].
 pub(crate) fn apply_salt_drag_warp(
     cfg: &E2eConfig,
+    maps: &[f64],
     table: Option<[u8; 256]>,
     labels: &mut [u8],
     index: Option<&mut Vec<u32>>,
@@ -191,7 +198,7 @@ pub(crate) fn apply_salt_drag_warp(
     };
     let [ni, nj, nk] = cfg.shape();
     let nh = d.len() / (ni * nj);
-    crate::salt::drag_warp_labels(labels, [ni, nj, nk], &d, nh, &table, index);
+    crate::salt::drag_warp_labels(labels, [ni, nj, nk], &d, maps, nh, &table, index);
 }
 
 /// Drag offsets `D` of the undragged maps against the salt body
