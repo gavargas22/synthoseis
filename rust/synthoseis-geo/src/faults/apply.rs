@@ -320,6 +320,12 @@ impl FaultModel {
     }
 
     /// `(input index, reason)` for faults that were not inserted.
+    /// Mutable faults for [`Self::with_tips`] (drops the gather cache).
+    pub(crate) fn faults_mut_tips(&mut self) -> &mut Vec<ResolvedFault> {
+        self.cache = None;
+        &mut self.faults
+    }
+
     pub fn skipped(&self) -> &[(usize, FaultSkip)] {
         &self.skipped
     }

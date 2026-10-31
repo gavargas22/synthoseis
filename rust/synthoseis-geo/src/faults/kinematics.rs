@@ -114,7 +114,11 @@ fn stage_slip_pre(
         Some((v, _)) => v,
         None => f.geometry.value_at(x, y, z),
     };
-    let d = if v <= 1.0 { lat * f.profile[kk] } else { 0.0 };
+    let w = match &f.tip {
+        Some(t) => t.factor(x, y, z),
+        None => lat,
+    };
+    let d = if v <= 1.0 { w * f.profile[kk] } else { 0.0 };
     let a = (z - d).clamp(0.0, top);
     if d == 0.0 || p.heave_scale == 0.0 {
         return (a, [0.0, 0.0], d);
@@ -217,9 +221,19 @@ impl FaultModel {
         for step in 0..nf {
             let n = if oldest_first { step } else { nf - 1 - step };
             let f = &self.faults()[n];
-            let lat = f.lateral_at(x, y);
+            // 7b: the tip taper (evaluated per sample) replaces the
+            // Gaussian lateral weight.
+            let lat = if f.tip.is_some() {
+                0.0
+            } else {
+                f.lateral_at(x, y)
+            };
+            let wz = match &f.tip {
+                Some(t) => t.factor(x, y, z),
+                None => lat,
+            };
             let mut pre = None;
-            if id == 0 && lat * profile_at(f, z, top) > 1.0 {
+            if id == 0 && wz * profile_at(f, z, top) > 1.0 {
                 let g = f.geometry.gradient_at(x, y, z);
                 let gn = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
                 let v = f.geometry.value_at(x, y, z);

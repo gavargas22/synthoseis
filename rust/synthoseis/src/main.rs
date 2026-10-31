@@ -107,6 +107,13 @@ enum Commands {
         /// with --legacy-fault-kinematics.
         #[arg(long)]
         fault_min_dip: Option<f64>,
+        /// Legacy switch: keep the Gaussian lateral fault throw (with heave;
+        /// bit-identical to the 7a output). By default the throw tapers to
+        /// zero on an elliptical tip line sized by displacement-length
+        /// scaling (spec-fault-kinematics 7b). Requires --faults; rejected
+        /// with --legacy-fault-kinematics, which already turns it off.
+        #[arg(long, default_value_t = false)]
+        legacy_fault_profile: bool,
         /// Cube shape `NI,NJ,NK` for single-worker `--e2e --chunked` (default 8,8,8).
         #[arg(long)]
         shape: Option<String>,
@@ -778,6 +785,7 @@ fn main() {
             faults,
             legacy_fault_kinematics,
             fault_min_dip,
+            legacy_fault_profile,
             shape,
             bandpass,
             lateral_filter,
@@ -850,7 +858,12 @@ fn main() {
                 );
                 std::process::exit(2);
             }
-            let fault_cfg = parse_fault_kinematics(faults, legacy_fault_kinematics, fault_min_dip)
+            let fault_cfg = parse_fault_kinematics(
+                faults,
+                legacy_fault_kinematics,
+                fault_min_dip,
+                legacy_fault_profile,
+            )
                 .unwrap_or_else(|e| {
                     eprintln!("{e}");
                     std::process::exit(2);
@@ -1116,15 +1129,20 @@ pub fn parse_fault_kinematics(
     faults: usize,
     legacy: bool,
     min_dip: Option<f64>,
+    legacy_profile: bool,
 ) -> Result<synthoseis_core::FaultConfig, String> {
-    if faults == 0 && (legacy || min_dip.is_some()) {
-        return Err("--legacy-fault-kinematics / --fault-min-dip have no effect without --faults".into());
+    if faults == 0 && (legacy || min_dip.is_some() || legacy_profile) {
+        return Err("--legacy-fault-kinematics / --fault-min-dip / --legacy-fault-profile have no effect without --faults".into());
+    }
+    if legacy && legacy_profile {
+        return Err("--legacy-fault-profile has no effect with --legacy-fault-kinematics (already legacy)".into());
     }
     if legacy && min_dip.is_some() {
         return Err("--fault-min-dip has no effect with --legacy-fault-kinematics (no heave)".into());
     }
     let mut c = synthoseis_core::FaultConfig::with_count(faults);
     c.legacy_kinematics = legacy;
+    c.legacy_profile = legacy_profile;
     if let Some(d) = min_dip {
         if !(15.0..=60.0).contains(&d) {
             return Err(format!("--fault-min-dip {d} outside 15..=60 degrees"));

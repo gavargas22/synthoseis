@@ -20,6 +20,7 @@ mod kinematics;
 mod model;
 mod params;
 mod segments;
+mod tips;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -44,4 +45,5 @@ pub use params::{
     sample_random_faults, FaultParams, FaultRng, RandomFaultConfig, HOCKEY_STICK_MIN_THROW,
     LEGACY_INFILL_FACTOR, THROW_LUT_MAX, THROW_LUT_MIN,
 };
+pub use tips::{draw_gamma, TipLine, TipParams, TipTaper, TIP_SEED_SALT};
 pub use segments::{segment_block, SEG_HALF, SEG_ONE, SEG_ZERO};
