@@ -73,6 +73,35 @@ impl FaultGeometry {
     pub fn inside(&self, i: usize, j: usize, k: usize) -> bool {
         self.value(i, j, k) <= 1.0
     }
+
+    /// [`Self::value`] at a continuous voxel position (equal to it at
+    /// integer positions: same operations in the same order).
+    #[inline]
+    pub fn value_at(&self, x: f64, y: f64, z: f64) -> f64 {
+        let r = &self.rot;
+        let xr = r[0][0] * x + r[0][1] * y + r[0][2] * z;
+        let yr = r[1][0] * x + r[1][1] * y + r[1][2] * z;
+        let zr = r[2][0] * x + r[2][1] * y + r[2][2] * z;
+        (xr - self.origin[0]).powi(2) / self.axes[0]
+            + (yr - self.origin[1]).powi(2) / self.axes[1]
+            + (zr - self.origin[2]).powi(2) / self.axes[2]
+    }
+
+    /// Gradient `∇f` of the ellipsoid function at a continuous voxel
+    /// position (voxel units).
+    #[inline]
+    pub fn gradient_at(&self, x: f64, y: f64, z: f64) -> [f64; 3] {
+        let r = &self.rot;
+        let mut g = [0.0; 3];
+        for m in 0..3 {
+            let u = r[m][0] * x + r[m][1] * y + r[m][2] * z;
+            let c = 2.0 * (u - self.origin[m]) / self.axes[m];
+            for (a, ga) in g.iter_mut().enumerate() {
+                *ga += c * r[m][a];
+            }
+        }
+        g
+    }
 }
 
 /// Seabed (water-bottom) depth in samples, used to taper the vertical throw
@@ -131,6 +160,15 @@ impl ResolvedFault {
     #[inline]
     pub fn lateral(&self, i: usize, j: usize) -> f64 {
         self.lateral.eval(i, j, self.center)
+    }
+
+    /// [`Self::lateral`] at a continuous `(x, y)` (equal at integers).
+    #[inline]
+    pub fn lateral_at(&self, x: f64, y: f64) -> f64 {
+        let lg = &self.lateral;
+        let ur = lg.off[0] + x - self.center[0] as f64;
+        let uc = lg.off[1] + y - self.center[1] as f64;
+        lg.rotated(ur, uc)
     }
 
     /// `displacement_classification(i, j, k) = xy_dis(i, j) * z_shift(k)`.

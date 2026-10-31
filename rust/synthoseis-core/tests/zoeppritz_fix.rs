@@ -33,7 +33,7 @@ fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
         samples: 128,
         store_path: None,
         chunk_shape: Some([16, 16, 128]),
-        faults: FaultConfig::with_count(4),
+        faults: FaultConfig::legacy_with_count(4),
         filters: FilterConfig::default(),
         rock_physics,
     }
@@ -49,7 +49,7 @@ fn rich(rock: RockPhysicsConfig) -> E2eConfig {
         samples: 64,
         store_path: None,
         chunk_shape: Some([8, 5, 64]),
-        faults: FaultConfig::with_count(3),
+        faults: FaultConfig::legacy_with_count(3),
         filters: FilterConfig {
             noise: NoiseConfig {
                 snr_db: Some(12.5),

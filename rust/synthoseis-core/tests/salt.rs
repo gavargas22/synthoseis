@@ -507,6 +507,7 @@ fn demo(salt: bool) -> E2eConfig {
         samples: 128,
         faults: FaultConfig {
             count: 2,
+            legacy_kinematics: true,
             ..FaultConfig::default()
         },
         rock_physics: RockPhysicsConfig {
@@ -833,7 +834,7 @@ fn fault_labels_exclude_salt() {
         inline_count: 64,
         crossline_count: 64,
         samples: 256,
-        faults: FaultConfig::with_count(4),
+        faults: FaultConfig::legacy_with_count(4),
         geometry: ToyGeometry::Layered,
         ..E2eConfig::default()
     };
@@ -842,7 +843,7 @@ fn fault_labels_exclude_salt() {
         inline_count: 24,
         crossline_count: 24,
         samples: 128,
-        faults: FaultConfig::with_count(4),
+        faults: FaultConfig::legacy_with_count(4),
         rock_physics: RockPhysicsConfig {
             sand_layer_fraction: Some(0.4),
             ..RockPhysicsConfig::default()
@@ -903,7 +904,7 @@ fn salt_lift_only_far_field_label_change_under_0_1_pct() {
         inline_count: 64,
         crossline_count: 64,
         samples: 256,
-        faults: FaultConfig::with_count(3),
+        faults: FaultConfig::legacy_with_count(3),
         rock_physics: RockPhysicsConfig {
             salt,
             ..RockPhysicsConfig::default()
@@ -976,7 +977,7 @@ fn salt_drag_modes_invariant_across_paths() {
             inline_count: 24,
             crossline_count: 20,
             samples: 128,
-            faults: FaultConfig::with_count(4),
+            faults: FaultConfig::legacy_with_count(4),
             rock_physics: RockPhysicsConfig {
                 sand_layer_fraction: Some(0.4),
                 salt_smooth_all_horizons: smooth_all,
@@ -1042,7 +1043,7 @@ fn salt_vs_2600_label_identity() {
                 inline_count: 32,
                 crossline_count: 32,
                 samples: 128,
-                faults: FaultConfig::with_count(faults),
+                faults: FaultConfig::legacy_with_count(faults),
                 rock_physics: RockPhysicsConfig {
                     salt_legacy_vs: legacy_vs,
                     partial_voxels: pv,
@@ -1093,7 +1094,7 @@ fn salt_vs_2600_stack_change() {
         inline_count: 32,
         crossline_count: 32,
         samples: 128,
-        faults: FaultConfig::with_count(3),
+        faults: FaultConfig::legacy_with_count(3),
         rock_physics: RockPhysicsConfig {
             salt_legacy_vs: legacy_vs,
             ..RockPhysicsConfig::default()
@@ -1186,7 +1187,7 @@ fn salt_vs_modes_invariant_across_paths() {
             inline_count: 24,
             crossline_count: 20,
             samples: 128,
-            faults: FaultConfig::with_count(4),
+            faults: FaultConfig::legacy_with_count(4),
             rock_physics: RockPhysicsConfig {
                 sand_layer_fraction: Some(0.4),
                 salt_legacy_vs: legacy_vs,

@@ -59,7 +59,9 @@ impl PvReflectivity {
         match s {
             "subcell" => Ok(PvReflectivity::Subcell),
             "cell" => Ok(PvReflectivity::Cell),
-            other => Err(format!("--partial-voxel-reflectivity expects subcell or cell, got {other:?}")),
+            other => Err(format!(
+                "--partial-voxel-reflectivity expects subcell or cell, got {other:?}"
+            )),
         }
     }
 }
@@ -379,8 +381,16 @@ pub fn source_intervals(lookup: &[f32], brk: &mut [bool], out: &mut Vec<(f64, f6
     }
     for k in 0..nz {
         let s = sigma(k);
-        let below = if !brk[k + 1] { Some(sigma(k + 1) - s) } else { None };
-        let above = if !brk[k] { Some(s - sigma(k - 1)) } else { None };
+        let below = if !brk[k + 1] {
+            Some(sigma(k + 1) - s)
+        } else {
+            None
+        };
+        let above = if !brk[k] {
+            Some(s - sigma(k - 1))
+        } else {
+            None
+        };
         let lo = match above {
             Some(_) => 0.5 * (sigma(k - 1) + s),
             None => s - 0.5 * below.unwrap_or(1.0),
@@ -424,6 +434,21 @@ impl ColumnGeometry<'_> {
 /// `EPS_FRAC` snapping). A degenerate cell (`g ≤ EPS_FRAC`) is one part
 /// classified at its centre.
 pub fn column_parts_faulted(geom: &ColumnGeometry, src: &[(f64, f64)], out: &mut ColumnParts) {
+    column_parts_faulted_cells(geom, None, src, out)
+}
+
+/// [`column_parts_faulted`] with per-cell source horizons: with fault heave
+/// cell k pulls back into another column, so `cell_horizons[k * nh..][..nh]`
+/// (nh = `geom.horizons.len()`) replaces `geom.horizons` for cell k
+/// (spec-fault-kinematics §7: source intervals in k at x_0, i and j from
+/// `src_ij`). `None` is exactly [`column_parts_faulted`].
+pub fn column_parts_faulted_cells(
+    geom: &ColumnGeometry,
+    cell_horizons: Option<&[f64]>,
+    src: &[(f64, f64)],
+    out: &mut ColumnParts,
+) {
+    let nh = geom.horizons.len();
     out.parts.clear();
     out.offsets.clear();
     out.offsets.push(0);
@@ -431,9 +456,22 @@ pub fn column_parts_faulted(geom: &ColumnGeometry, src: &[(f64, f64)], out: &mut
         .salt
         .filter(|(lo, hi)| lo <= hi)
         .map_or(Vec::new(), |(lo, hi)| vec![lo + 0.5, hi + 0.5]);
-    let contacts: Vec<f64> = geom.contacts.iter().map(|&c| c as f64).filter(|c| c.is_finite()).collect();
+    let contacts: Vec<f64> = geom
+        .contacts
+        .iter()
+        .map(|&c| c as f64)
+        .filter(|c| c.is_finite())
+        .collect();
     let ev = &mut out.events;
     for (k, &(slo, shi)) in src.iter().enumerate() {
+        let gk = match cell_horizons {
+            Some(hz) => ColumnGeometry {
+                horizons: &hz[k * nh..(k + 1) * nh],
+                ..*geom
+            },
+            None => *geom,
+        };
+        let geom = &gk;
         let kf = k as f64;
         let start = out.parts.len();
         let g = shi - slo;
@@ -446,7 +484,11 @@ pub fn column_parts_faulted(geom: &ColumnGeometry, src: &[(f64, f64)], out: &mut
         ev.clear();
         let mut push = |x: f64| {
             if x.is_finite() && x > 0.0 && x < 1.0 {
-                let x = if x < EPS_FRAC || 1.0 - x < EPS_FRAC { x.round() } else { x };
+                let x = if x < EPS_FRAC || 1.0 - x < EPS_FRAC {
+                    x.round()
+                } else {
+                    x
+                };
                 if x > 0.0 && x < 1.0 {
                     ev.push(x);
                 }
@@ -465,11 +507,21 @@ pub fn column_parts_faulted(geom: &ColumnGeometry, src: &[(f64, f64)], out: &mut
                 continue;
             }
             let m = 0.5 * (a + b);
-            push_part(&mut out.parts, start, geom.classify_mapped(kf + m, slo + m * g), b - a);
+            push_part(
+                &mut out.parts,
+                start,
+                geom.classify_mapped(kf + m, slo + m * g),
+                b - a,
+            );
             a = b;
         }
         let m = 0.5 * (a + 1.0);
-        push_part(&mut out.parts, start, geom.classify_mapped(kf + m, slo + m * g), 1.0 - a);
+        push_part(
+            &mut out.parts,
+            start,
+            geom.classify_mapped(kf + m, slo + m * g),
+            1.0 - a,
+        );
         out.offsets.push(out.parts.len());
     }
 }

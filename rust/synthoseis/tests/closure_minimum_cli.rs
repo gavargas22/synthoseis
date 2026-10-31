@@ -21,7 +21,7 @@ fn run(args: &[&str], store: &Path) -> Output {
 fn run_folded(args: &[&str], store: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_synthoseis"))
         .args(["run", "--e2e", "--chunked"])
-        .args(args)
+        .args(legacy_kinematics(args))
         .arg("--store")
         .arg(store)
         .output()
@@ -239,7 +239,7 @@ fn min_closure_voxels_equals_library_fixed() {
         inline_count: 24,
         crossline_count: 20,
         samples: 128,
-        faults: synthoseis_core::FaultConfig::with_count(4),
+        faults: synthoseis_core::FaultConfig::legacy_with_count(4),
         rock_physics: synthoseis_core::RockPhysicsConfig {
             sand_layer_fraction: Some(0.4),
             closure_minimum: synthoseis_core::ClosureMinimum::Fixed(100),
@@ -476,7 +476,7 @@ fn summary_closure_counter_matches_model_unsegmented_and_per_layer() {
             inline_count: 32,
             crossline_count: 32,
             samples: 128,
-            faults: synthoseis_core::FaultConfig::with_count(4),
+            faults: synthoseis_core::FaultConfig::legacy_with_count(4),
             rock_physics: synthoseis_core::RockPhysicsConfig {
                 sand_layer_fraction: Some(0.5),
                 sand_layer_thickness: thickness,
@@ -498,4 +498,19 @@ fn summary_closure_counter_matches_model_unsegmented_and_per_layer() {
             "{mode}: summary `{line}` vs model kept {k} of {c}"
         );
     }
+}
+
+/// Every pin of this file predates fault heave (fault-kinematics spec 7a):
+/// faulted runs add `--legacy-fault-kinematics` unless they pick the
+/// kinematics themselves.
+fn legacy_kinematics<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut v = args.to_vec();
+    let faulted = args.windows(2).any(|w| w[0] == "--faults" && w[1] != "0");
+    let picks = args
+        .iter()
+        .any(|a| *a == "--legacy-fault-kinematics" || *a == "--fault-min-dip");
+    if faulted && !picks {
+        v.push("--legacy-fault-kinematics");
+    }
+    v
 }

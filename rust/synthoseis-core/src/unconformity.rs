@@ -71,14 +71,24 @@ pub struct UnconformityConfig {
 
 impl Default for UnconformityConfig {
     fn default() -> Self {
-        Self { count: 1, position: None, level: None, relief_m: None, max_dip: 1.0, fill_ratio: 2.0 }
+        Self {
+            count: 1,
+            position: None,
+            level: None,
+            relief_m: None,
+            max_dip: 1.0,
+            fill_ratio: 2.0,
+        }
     }
 }
 
 impl UnconformityConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.count > 2 {
-            return Err(format!("--unconformities must be 0, 1 or 2, got {}", self.count));
+            return Err(format!(
+                "--unconformities must be 0, 1 or 2, got {}",
+                self.count
+            ));
         }
         let chk = |name: &str, v: f64, lo: f64, hi: f64| -> Result<(), String> {
             if v.is_finite() && (lo..=hi).contains(&v) {
@@ -130,7 +140,10 @@ impl UnconformityRecord {
     /// One summary line (horizon, level, relief, eroded and filled extent).
     pub fn summary(&self) -> String {
         if !self.applied {
-            return format!("unconformity {} skipped (nothing to erode at horizon {})", self.number, self.s);
+            return format!(
+                "unconformity {} skipped (nothing to erode at horizon {})",
+                self.number, self.s
+            );
         }
         format!(
             "unconformity {}: horizon {} from the seabed, level {:.1} samples (q={:.2}), relief {:.1} samples (drawn {:.1}), \
@@ -174,7 +187,9 @@ pub fn surface_indices(seed: u64, nh: usize, cfg: &UnconformityConfig) -> Vec<us
         let f = cfg.position.unwrap_or_else(|| 0.3 + 0.4 * draw(seed, 0, 0));
         return vec![((f * span).round() as usize).clamp(lo, hi)];
     }
-    let f1 = cfg.position.unwrap_or_else(|| 0.2 + 0.25 * draw(seed, 0, 0));
+    let f1 = cfg
+        .position
+        .unwrap_or_else(|| 0.2 + 0.25 * draw(seed, 0, 0));
     let f2 = 0.55 + 0.25 * draw(seed, 1, 0);
     let s1 = ((f1 * span).round() as usize).clamp(lo, hi - MIN_SEPARATION);
     let s2 = ((f2 * span).round() as usize).clamp(s1 + MIN_SEPARATION, hi);
@@ -188,8 +203,16 @@ pub fn slope_max(map: &[f64], ni: usize, nj: usize) -> f64 {
     for i in 0..ni {
         for j in 0..nj {
             let v = map[i * nj + j];
-            let dx = if i + 1 < ni { map[(i + 1) * nj + j] - v } else { 0.0 };
-            let dy = if j + 1 < nj { map[i * nj + j + 1] - v } else { 0.0 };
+            let dx = if i + 1 < ni {
+                map[(i + 1) * nj + j] - v
+            } else {
+                0.0
+            };
+            let dy = if j + 1 < nj {
+                map[i * nj + j + 1] - v
+            } else {
+                0.0
+            };
             g = g.max(dx.hypot(dy));
         }
     }
@@ -217,7 +240,10 @@ pub fn relief_map(seed: u64, m: u64, ni: usize, nj: usize) -> Vec<f64> {
     let az = std::f64::consts::TAU * draw(seed, m, 3);
     let (ca, sa) = (az.cos(), az.sin());
     let norm = ca.abs() + sa.abs();
-    let (hi, hj) = (0.5 * (ni.max(1) as f64 - 1.0), 0.5 * (nj.max(1) as f64 - 1.0));
+    let (hi, hj) = (
+        0.5 * (ni.max(1) as f64 - 1.0),
+        0.5 * (nj.max(1) as f64 - 1.0),
+    );
     let mut r = vec![0.0f64; n];
     for i in 0..ni {
         let x = if hi > 0.0 { (i as f64 - hi) / hi } else { 0.0 };
@@ -254,10 +280,17 @@ pub fn apply_one(
     let u = nh - 1 - s;
     let n = ni * nj;
     let q = cfg.level.unwrap_or_else(|| 0.35 + 0.30 * draw(seed, m, 1));
-    let drawn = cfg.relief_m.map_or_else(|| (0.02 + 0.03 * draw(seed, m, 2)) * nk as f64, |r| r / DZ_M);
+    let drawn = cfg.relief_m.map_or_else(
+        || (0.02 + 0.03 * draw(seed, m, 2)) * nk as f64,
+        |r| r / DZ_M,
+    );
     let r = relief_map(seed, m, ni, nj);
     let gmax = slope_max(&r, ni, nj);
-    let a = if gmax > 0.0 { drawn.min(cfg.max_dip / gmax) } else { drawn };
+    let a = if gmax > 0.0 {
+        drawn.min(cfg.max_dip / gmax)
+    } else {
+        drawn
+    };
     let p = stack[u].clone();
     let level = quantile(&p, q);
     let mut e_bar = vec![0.0f64; n];
@@ -379,35 +412,51 @@ pub fn label_tile(
     fault_tile: Option<&synthoseis_geo::faults::FaultTile>,
     salt: Option<&crate::salt::SaltBody>,
 ) -> Vec<u8> {
-    let [_, nj, nk] = shape;
+    let [ni, nj, nk] = shape;
     let tj = j1 - j0;
     let mut out = vec![0u8; (i1 - i0) * tj * nk];
     for i in i0..i1 {
         for j in j0..j1 {
             let c = i * nj + j;
             let col = &mut out[((i - i0) * tj + (j - j0)) * nk..][..nk];
-            for r in records.iter().filter(|r| r.applied) {
-                let z = maps[c * nh + r.s];
-                if z < 0.0 || z >= nk as f64 {
-                    continue;
+            if let Some(t) = fault_tile.filter(|t| t.src_ij.is_some()) {
+                // Heave: the crossing rule at each voxel's source column
+                // (the surface mark of the column the voxel came from).
+                for r in records.iter().filter(|r| r.applied) {
+                    let hit = (0..nk).position(|k| {
+                        let [si, sj, sk] = t.nearest_source(i, j, k, ni, nj);
+                        let z = maps[(si * nj + sj) * nh + r.s];
+                        z >= 0.0 && z < nk as f64 && sk >= z as usize
+                    });
+                    if let Some(k) = hit {
+                        col[k] = r.number;
+                    }
                 }
-                let kmark = z as usize;
-                match fault_tile {
-                    None => col[kmark] = r.number,
-                    Some(t) => {
-                        // Crossing rule: the first output sample whose
-                        // nearest source sample (the one the layer labels
-                        // take) is at or below the surface voxel. Exactly
-                        // one per column, wherever a fault gap or overlap
-                        // moves the surface voxel (a nearest-voxel match
-                        // can miss it or hit it twice).
-                        let look = &t.lookup[t.col_offset(i, j)..][..nk];
-                        let at_or_below = |&x: &f32| {
-                            let src = ((x as f64) + 0.5).floor().clamp(0.0, (nk - 1) as f64) as usize;
-                            src >= kmark
-                        };
-                        if let Some(k) = look.iter().position(at_or_below) {
-                            col[k] = r.number;
+            } else {
+                for r in records.iter().filter(|r| r.applied) {
+                    let z = maps[c * nh + r.s];
+                    if z < 0.0 || z >= nk as f64 {
+                        continue;
+                    }
+                    let kmark = z as usize;
+                    match fault_tile {
+                        None => col[kmark] = r.number,
+                        Some(t) => {
+                            // Crossing rule: the first output sample whose
+                            // nearest source sample (the one the layer labels
+                            // take) is at or below the surface voxel. Exactly
+                            // one per column, wherever a fault gap or overlap
+                            // moves the surface voxel (a nearest-voxel match
+                            // can miss it or hit it twice).
+                            let look = &t.lookup[t.col_offset(i, j)..][..nk];
+                            let at_or_below = |&x: &f32| {
+                                let src =
+                                    ((x as f64) + 0.5).floor().clamp(0.0, (nk - 1) as f64) as usize;
+                                src >= kmark
+                            };
+                            if let Some(k) = look.iter().position(at_or_below) {
+                                col[k] = r.number;
+                            }
                         }
                     }
                 }

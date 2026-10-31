@@ -39,7 +39,7 @@ fn cfg(seed: u64, shape: [usize; 3], chunks: [usize; 3], faults: usize) -> E2eCo
         samples: shape[2],
         store_path: None,
         chunk_shape: Some(chunks),
-        faults: FaultConfig::with_count(faults),
+        faults: FaultConfig::legacy_with_count(faults),
         filters: FilterConfig::default(),
         rock_physics: Default::default(),
     }

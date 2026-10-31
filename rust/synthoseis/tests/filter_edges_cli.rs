@@ -11,7 +11,7 @@ use std::process::{Command, Output};
 fn run(args: &[&str], store: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_synthoseis"))
         .args(["run", "--e2e"])
-        .args(args)
+        .args(legacy_kinematics(args))
         .arg("--store")
         .arg(store)
         .output()
@@ -539,4 +539,19 @@ fn legacy_axis_has_no_filter_edge_line() {
         &p,
     );
     assert_eq!(out.status.code(), Some(2), "{out:?}");
+}
+
+/// Every pin of this file predates fault heave (fault-kinematics spec 7a):
+/// faulted runs add `--legacy-fault-kinematics` unless they pick the
+/// kinematics themselves.
+fn legacy_kinematics<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut v = args.to_vec();
+    let faulted = args.windows(2).any(|w| w[0] == "--faults" && w[1] != "0");
+    let picks = args
+        .iter()
+        .any(|a| *a == "--legacy-fault-kinematics" || *a == "--fault-min-dip");
+    if faulted && !picks {
+        v.push("--legacy-fault-kinematics");
+    }
+    v
 }

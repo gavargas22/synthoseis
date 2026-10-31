@@ -72,7 +72,7 @@ fn legacy_closures<'a>(args: &[&'a str]) -> Vec<&'a str> {
 fn run_time(args: &[&str], store: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_synthoseis"))
         .args(["run", "--e2e", "--chunked"])
-        .args(whole_voxels(args))
+        .args(legacy_kinematics(&whole_voxels(args)))
         .arg("--store")
         .arg(store)
         .output()
@@ -1041,4 +1041,19 @@ fn salt_legacy_vs_reproduces_f15b87ac_demo() {
     assert!(String::from_utf8_lossy(&out.stdout)
         .contains("salt properties: rho 2.17, Vp 4500, Vs 2600"));
     assert_ne!(store_hash(&neu), store_hash(&legacy));
+}
+
+/// Every pin of this file predates fault heave (fault-kinematics spec 7a):
+/// faulted runs add `--legacy-fault-kinematics` unless they pick the
+/// kinematics themselves.
+fn legacy_kinematics<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut v = args.to_vec();
+    let faulted = args.windows(2).any(|w| w[0] == "--faults" && w[1] != "0");
+    let picks = args
+        .iter()
+        .any(|a| *a == "--legacy-fault-kinematics" || *a == "--fault-min-dip");
+    if faulted && !picks {
+        v.push("--legacy-fault-kinematics");
+    }
+    v
 }

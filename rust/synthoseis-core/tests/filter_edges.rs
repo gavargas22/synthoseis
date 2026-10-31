@@ -36,7 +36,7 @@ fn demo(seed: u64, faults: usize) -> E2eConfig {
         inline_count: 32,
         crossline_count: 32,
         samples: 128,
-        faults: FaultConfig::with_count(faults),
+        faults: FaultConfig::legacy_with_count(faults),
         geometry: ToyGeometry::Layered,
         ..E2eConfig::default()
     }

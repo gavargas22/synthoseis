@@ -38,7 +38,7 @@ fn demo(seed: u64, shape: [usize; 3], faults: usize) -> E2eConfig {
         samples: shape[2],
         store_path: None,
         chunk_shape: Some([16, 16, shape[2]]),
-        faults: FaultConfig::with_count(faults),
+        faults: FaultConfig::legacy_with_count(faults),
         filters: FilterConfig::default(),
         // Goldens of the layered geometry before the Markov lithology (and
         // before 3D closure segmentation, which changes the faulted cube).

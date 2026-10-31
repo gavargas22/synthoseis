@@ -64,8 +64,8 @@ use synthoseis_seismic::splitmix64;
 pub use synthoseis_rpm::{Elastic32, Fluid, MixingMethod};
 pub use synthoseis_seismic::ZoeppritzForm;
 
-use crate::pipeline::E2eConfig;
 pub use crate::lithology::ToyLithology;
+use crate::pipeline::E2eConfig;
 
 /// Net-to-gross of sand layers.
 #[derive(Debug, Clone, PartialEq)]
@@ -368,7 +368,11 @@ impl RockPhysicsConfig {
     /// `--legacy-unconformity`, `--legacy-fold-geometry`,
     /// `--legacy-toy-depth` or `--unconformities 0`.
     pub fn unconformity_config(&self) -> Option<&crate::unconformity::UnconformityConfig> {
-        if self.legacy_unconformity || self.legacy_fold_geometry || self.legacy_toy_depth || self.unconformity.count == 0 {
+        if self.legacy_unconformity
+            || self.legacy_fold_geometry
+            || self.legacy_toy_depth
+            || self.unconformity.count == 0
+        {
             None
         } else {
             Some(&self.unconformity)
@@ -386,14 +390,21 @@ impl RockPhysicsConfig {
             self.phys.validate()?;
         }
         if !(self.depth_step_m.is_finite() && self.depth_step_m > 0.0) {
-            return Err(format!("depth_step_m must be > 0, got {}", self.depth_step_m));
+            return Err(format!(
+                "depth_step_m must be > 0, got {}",
+                self.depth_step_m
+            ));
         }
         if !(self.max_column_m.is_finite() && self.max_column_m >= 0.0) {
-            return Err(format!("max_column_m must be >= 0, got {}", self.max_column_m));
+            return Err(format!(
+                "max_column_m must be >= 0, got {}",
+                self.max_column_m
+            ));
         }
         // Worst case of the legacy draw is its upper bound.
         crate::lithology::validate(
-            self.sand_layer_fraction.unwrap_or(crate::lithology::SAND_LAYER_FRACTION[1]),
+            self.sand_layer_fraction
+                .unwrap_or(crate::lithology::SAND_LAYER_FRACTION[1]),
             self.sand_layer_thickness,
         )?;
         match &self.net_to_gross {
@@ -401,9 +412,14 @@ impl RockPhysicsConfig {
                 Err(format!("net-to-gross must be in [0, 1], got {v}"))
             }
             NetToGross::Legacy { avg, stdev, .. }
-                if !(avg[0] <= avg[1] && stdev[0] <= stdev[1] && avg[0] >= 0.0 && avg[1] <= 1.0) =>
+                if !(avg[0] <= avg[1]
+                    && stdev[0] <= stdev[1]
+                    && avg[0] >= 0.0
+                    && avg[1] <= 1.0) =>
             {
-                Err(format!("invalid net-to-gross ranges avg={avg:?} stdev={stdev:?}"))
+                Err(format!(
+                    "invalid net-to-gross ranges avg={avg:?} stdev={stdev:?}"
+                ))
             }
             _ => Ok(()),
         }
@@ -501,9 +517,8 @@ pub fn fbm_map(ni: usize, nj: usize, octaves: usize, parts: &[u64]) -> Vec<f64> 
     for o in 0..octaves.max(1) {
         // Lattice value at (x, y): keyed by (parts.., octave, x, y), in [-1, 1).
         let prefix = key_step(key(parts), o as u64);
-        let lattice = |x: f64, y: f64| {
-            2.0 * unit_of(key_step(key_step(prefix, x as u64), y as u64)) - 1.0
-        };
+        let lattice =
+            |x: f64, y: f64| 2.0 * unit_of(key_step(key_step(prefix, x as u64), y as u64)) - 1.0;
         for i in 0..ni {
             let x = i as f64 / ni as f64 * freq;
             let (x0, tx) = (x.floor(), smooth(x - x.floor()));
@@ -524,7 +539,13 @@ pub fn fbm_map(ni: usize, nj: usize, octaves: usize, parts: &[u64]) -> Vec<f64> 
 
 /// Net-to-gross map of Rust layer `layer` (legacy
 /// `create_random_net_over_gross_map`), float32 like the legacy cube.
-pub fn net_to_gross_map(seed: u64, ng: &NetToGross, ni: usize, nj: usize, layer: usize) -> Vec<f32> {
+pub fn net_to_gross_map(
+    seed: u64,
+    ng: &NetToGross,
+    ni: usize,
+    nj: usize,
+    layer: usize,
+) -> Vec<f32> {
     match *ng {
         NetToGross::Constant(v) => vec![v; ni * nj],
         NetToGross::Legacy {
@@ -541,7 +562,11 @@ pub fn net_to_gross_map(seed: u64, ng: &NetToGross, ni: usize, nj: usize, layer:
             let var = m.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n;
             let sd = var.sqrt();
             for v in &mut m {
-                let z = if sd > 0.0 { (*v - mean) * (std_t / sd) } else { 0.0 };
+                let z = if sd > 0.0 {
+                    (*v - mean) * (std_t / sd)
+                } else {
+                    0.0
+                };
                 *v = (z + mean_t).clamp(avg[0], avg[1]);
             }
             m.into_iter().map(|v| v as f32).collect()
@@ -591,6 +616,32 @@ pub fn layer_depth_trace(
     step: f32,
     depth: &mut [f32],
 ) -> usize {
+    layer_depth_trace_with(
+        col,
+        maps_col[0],
+        maps_col.len(),
+        |h, _| maps_col[h],
+        intervals,
+        step,
+        depth,
+    )
+}
+
+/// [`layer_depth_trace`] with the unfaulted base of each run read through
+/// `zb(h, k_last)` (horizon `h` at the source column of the run's last
+/// sample `k_last`; fault heave, spec-fault-kinematics §7). `z0` is the
+/// output column's seabed (the seabed is never faulted), `nh` the number of
+/// horizons. Identical to [`layer_depth_trace`] when `zb` reads the
+/// column's own maps.
+pub fn layer_depth_trace_with(
+    col: &[u8],
+    z0: f64,
+    nh: usize,
+    zb_at: impl Fn(usize, usize) -> f64,
+    intervals: &[usize],
+    step: f32,
+    depth: &mut [f32],
+) -> usize {
     let nk = col.len();
     assert_eq!(depth.len(), nk);
     let seabed = col.iter().position(|&v| v != 255).unwrap_or(nk);
@@ -598,7 +649,6 @@ pub fn layer_depth_trace(
     if seabed == nk {
         return seabed;
     }
-    let z0 = maps_col[0];
     let dk0 = seabed as i64 - (z0.ceil() as i64).clamp(0, nk as i64);
     let mut k = seabed;
     while k < nk {
@@ -609,8 +659,8 @@ pub fn layer_depth_trace(
         }
         let h = intervals.get(lab as usize).copied();
         match h {
-            Some(h) if lab != 255 && h + 1 < maps_col.len() => {
-                let zb = maps_col[h + 1];
+            Some(h) if lab != 255 && h + 1 < nh => {
+                let zb = zb_at(h + 1, e - 1);
                 let expect = (zb.floor() as i64).clamp(0, nk as i64);
                 let dk = e as i64 - expect;
                 let mut tv = zb as f32 - z0 as f32;
@@ -696,7 +746,9 @@ pub fn sand_unit_fluids(
     max_column: f64,
     min_voxels: usize,
 ) -> Vec<(usize, LayerFluids)> {
-    sand_unit_fluids_salt(labels, shape, intervals, sand, seed, max_column, min_voxels, None)
+    sand_unit_fluids_salt(
+        labels, shape, intervals, sand, seed, max_column, min_voxels, None,
+    )
 }
 
 /// [`sand_unit_fluids`] with legacy salt walls.
@@ -741,7 +793,10 @@ pub fn sand_unit_fluids_salt(
 /// First sample and end of the first run of labels in `unit` in `col`.
 pub(crate) fn first_unit_run(col: &[u8], unit: &[bool; 256]) -> Option<(usize, usize)> {
     let a = col.iter().position(|&v| unit[v as usize])?;
-    let b = col[a..].iter().position(|&v| !unit[v as usize]).map_or(col.len(), |n| a + n);
+    let b = col[a..]
+        .iter()
+        .position(|&v| !unit[v as usize])
+        .map_or(col.len(), |n| a + n);
     Some((a, b))
 }
 
@@ -763,7 +818,9 @@ pub fn unit_fluids(
     max_column: f64,
     min_voxels: usize,
 ) -> LayerFluids {
-    unit_fluids_salt(labels, shape, members, layer, seed, max_column, min_voxels, None)
+    unit_fluids_salt(
+        labels, shape, members, layer, seed, max_column, min_voxels, None,
+    )
 }
 
 /// [`unit_fluids`] with legacy salt walls
@@ -838,12 +895,19 @@ pub fn unit_fluids_salt(
                 }
             }
         }
-        let spill = cells.iter().map(|&c| filled[c]).fold(f64::NEG_INFINITY, f64::max);
+        let spill = cells
+            .iter()
+            .map(|&c| filled[c])
+            .fold(f64::NEG_INFINITY, f64::max);
         let crest = cells.iter().map(|&c| top[c]).fold(f64::INFINITY, f64::min);
         let contact = spill.min(crest + max_column);
         let voxels: usize = cells
             .iter()
-            .map(|&c| (contact.ceil().max(0.0) as usize).min(base[c]).saturating_sub(top[c] as usize))
+            .map(|&c| {
+                (contact.ceil().max(0.0) as usize)
+                    .min(base[c])
+                    .saturating_sub(top[c] as usize)
+            })
             .sum();
         let this = rank;
         rank += 1;
@@ -855,7 +919,8 @@ pub fn unit_fluids_salt(
             out.contact[c] = contact as f32;
             out.fluid[c] = fluid;
         }
-        out.closures.push((fluid, crest, contact, cells.len(), voxels));
+        out.closures
+            .push((fluid, crest, contact, cells.len(), voxels));
     }
     out
 }
@@ -914,6 +979,31 @@ pub struct RpmModel {
     /// Unconformities whose eroded thickness is added to the burial of the
     /// layers below (empty with `--no-exhumation-burial`).
     pub exhumation: std::sync::Arc<Vec<crate::unconformity::UnconformityRecord>>,
+    /// Fault model with heave (`None` without faults or under
+    /// `--legacy-fault-kinematics`): voxels read the maps, net-to-gross and
+    /// exhumation of their source column (spec-fault-kinematics §7).
+    pub heave: Option<HeaveColumns>,
+}
+
+/// Shared fault model used to find each voxel's source column under heave.
+#[derive(Debug, Clone)]
+pub struct HeaveColumns(pub std::sync::Arc<synthoseis_geo::faults::FaultModel>);
+
+impl PartialEq for HeaveColumns {
+    fn eq(&self, o: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &o.0)
+    }
+}
+
+impl HeaveColumns {
+    /// Continuous source `(i, j)` of every sample of column `(i, j)`.
+    pub fn column_sources(&self, i: usize, j: usize, nk: usize, out: &mut Vec<(f64, f64)>) {
+        out.clear();
+        out.extend((0..nk).map(|k| {
+            let g = self.0.gather(i, j, k);
+            (g.src[0], g.src[1])
+        }));
+    }
 }
 
 /// Elastic properties used by every fuse path.
@@ -950,8 +1040,13 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
         }
         model.unconformities = recs;
     }
+    model.heave = crate::pipeline_stream::fault_model(cfg)
+        .filter(|m| m.has_heave())
+        .map(|m| HeaveColumns(std::sync::Arc::new(m)));
     if let Some(r) = cfg.effective_partial_voxels() {
-        model.partial = Some(Box::new(crate::partial_model::PartialModel::build(cfg, &model, &rp, &sand, r)));
+        model.partial = Some(Box::new(crate::partial_model::PartialModel::build(
+            cfg, &model, &rp, &sand, r,
+        )));
     }
     ElasticModel::Rpm(Box::new(model))
 }
@@ -1009,17 +1104,35 @@ pub fn closure_census(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Opti
             .enumerate()
             .filter(|&(lab, &h)| lab < 255 && sand.get(h).copied().unwrap_or(false))
             .flat_map(|(lab, &h)| {
-                unit_fluids_salt(labels, shape, &[lab as u8], h, cfg.seed, max_column, 1, salt.as_ref())
-                    .closures
-                    .into_iter()
-                    .map(|c| c.4)
+                unit_fluids_salt(
+                    labels,
+                    shape,
+                    &[lab as u8],
+                    h,
+                    cfg.seed,
+                    max_column,
+                    1,
+                    salt.as_ref(),
+                )
+                .closures
+                .into_iter()
+                .map(|c| c.4)
             })
             .collect()
     } else if rp.closures_unsegmented {
-        sand_unit_fluids_salt(labels, shape, &intervals, &sand, cfg.seed, max_column, 1, salt.as_ref())
-            .into_iter()
-            .flat_map(|(_, f)| f.closures.into_iter().map(|c| c.4))
-            .collect()
+        sand_unit_fluids_salt(
+            labels,
+            shape,
+            &intervals,
+            &sand,
+            cfg.seed,
+            max_column,
+            1,
+            salt.as_ref(),
+        )
+        .into_iter()
+        .flat_map(|(_, f)| f.closures.into_iter().map(|c| c.4))
+        .collect()
     } else {
         crate::closure_segments::segmented_sand_unit_fluids_with(
             labels,
@@ -1048,16 +1161,24 @@ pub fn closure_census(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Opti
 /// `closure_minimum: "scaled-area"`, in [`ClosureMinimum::Scaled`] mode
 /// only (with fluids on and not `legacy_toy_depth`), so `Fixed` runs
 /// (`--legacy-closure-minimum`, `--min-closure-voxels`) keep master bytes.
-pub fn write_closure_attrs(store: &synthoseis_io::MdioStore, cfg: &E2eConfig) -> Result<(), String> {
+pub fn write_closure_attrs(
+    store: &synthoseis_io::MdioStore,
+    cfg: &E2eConfig,
+) -> Result<(), String> {
     let rp = &cfg.rock_physics;
     if rp.legacy_toy_depth || !rp.fluids || rp.closure_minimum != ClosureMinimum::Scaled {
         return Ok(());
     }
-    let t = rp.closure_minimum.voxels(cfg.inline_count, cfg.crossline_count);
+    let t = rp
+        .closure_minimum
+        .voxels(cfg.inline_count, cfg.crossline_count);
     store
         .set_root_attrs(&[
             ("closure_min_voxels", serde_json::json!(t)),
-            ("closure_minimum", serde_json::json!(ClosureMinimum::Scaled.as_str())),
+            (
+                "closure_minimum",
+                serde_json::json!(ClosureMinimum::Scaled.as_str()),
+            ),
         ])
         .map_err(|e| e.to_string())
 }
@@ -1183,6 +1304,7 @@ impl RpmModel {
             rock: rp.rock_model(),
             unconformities: Default::default(),
             exhumation: Default::default(),
+            heave: None,
         }
     }
 
@@ -1210,7 +1332,93 @@ impl RpmModel {
     pub fn depth_trace(&self, i: usize, j: usize, col: &[u8], depth: &mut [f32]) -> usize {
         let nj = self.shape[1];
         let c = i * nj + j;
-        layer_depth_trace(col, &self.maps[c * self.nh..(c + 1) * self.nh], &self.intervals, self.step, depth)
+        layer_depth_trace(
+            col,
+            &self.maps[c * self.nh..(c + 1) * self.nh],
+            &self.intervals,
+            self.step,
+            depth,
+        )
+    }
+
+    /// [`Self::depth_trace`] reading each run's base at its source column
+    /// `src[k]` (bilinear in the maps; fault heave).
+    pub fn depth_trace_src(
+        &self,
+        i: usize,
+        j: usize,
+        col: &[u8],
+        src: &[(f64, f64)],
+        depth: &mut [f32],
+    ) -> usize {
+        let c = i * self.shape[1] + j;
+        let zb = |h: usize, k: usize| self.map_at(src[k].0, src[k].1, h);
+        layer_depth_trace_with(
+            col,
+            self.maps[c * self.nh],
+            self.nh,
+            zb,
+            &self.intervals,
+            self.step,
+            depth,
+        )
+    }
+
+    /// Horizon `h` (samples) at a continuous column `(x, y)`: bilinear in
+    /// the maps, exact at integer positions.
+    pub fn map_at(&self, x: f64, y: f64, h: usize) -> f64 {
+        let [ni, nj, _] = self.shape;
+        let ax = |v: f64, n: usize| {
+            let v = v.clamp(0.0, (n.max(1) - 1) as f64);
+            let a = v.floor() as usize;
+            (a, (a + 1).min(n - 1), v - a as f64)
+        };
+        let (i0, i1, wi) = ax(x, ni);
+        let (j0, j1, wj) = ax(y, nj);
+        let at = |i: usize, j: usize| self.maps[(i * nj + j) * self.nh + h];
+        let lerp = |a: f64, b: f64, w: f64| if w == 0.0 { a } else { a + w * (b - a) };
+        lerp(
+            lerp(at(i0, j0), at(i0, j1), wj),
+            lerp(at(i1, j0), at(i1, j1), wj),
+            wi,
+        )
+    }
+
+    /// Continuous (partial-voxel) horizon `h` at `(x, y)`: bilinear in
+    /// `maps + delta`, exact at integer positions.
+    pub fn continuous_map_at(
+        &self,
+        pm: &crate::partial_model::PartialModel,
+        x: f64,
+        y: f64,
+        h: usize,
+    ) -> f64 {
+        let [ni, nj, _] = self.shape;
+        let ax = |v: f64, n: usize| {
+            let v = v.clamp(0.0, (n.max(1) - 1) as f64);
+            let a = v.floor() as usize;
+            (a, (a + 1).min(n - 1), v - a as f64)
+        };
+        let (i0, i1, wi) = ax(x, ni);
+        let (j0, j1, wj) = ax(y, nj);
+        let at = |i: usize, j: usize| {
+            let o = (i * nj + j) * self.nh + h;
+            self.maps[o] + pm.delta[o] as f64
+        };
+        let lerp = |a: f64, b: f64, w: f64| if w == 0.0 { a } else { a + w * (b - a) };
+        lerp(
+            lerp(at(i0, j0), at(i0, j1), wj),
+            lerp(at(i1, j0), at(i1, j1), wj),
+            wi,
+        )
+    }
+
+    /// Nearest column index of a continuous source `(x, y)`.
+    #[inline]
+    pub fn nearest_column(&self, x: f64, y: f64) -> usize {
+        let [ni, nj, _] = self.shape;
+        let r = |v: f64, n: usize| (v + 0.5).floor().clamp(0.0, (n.max(1) - 1) as f64) as usize;
+        r(x, ni) * nj + r(y, nj)
     }
 
     /// Elastic properties of column `(i, j)` from its labels `col`.
@@ -1231,9 +1439,23 @@ impl RpmModel {
         let c = i * nj + j;
         scratch.depth.resize(nk, 0.0);
         scratch.kinds.clear();
-        let seabed = self.depth_trace(i, j, col, &mut scratch.depth);
+        let seabed = match &self.heave {
+            Some(hv) => {
+                hv.column_sources(i, j, nk, &mut scratch.src_ij);
+                let src = std::mem::take(&mut scratch.src_ij);
+                let s = self.depth_trace_src(i, j, col, &src, &mut scratch.depth);
+                scratch.src_ij = src;
+                s
+            }
+            None => self.depth_trace(i, j, col, &mut scratch.depth),
+        };
         let salt = self.salt.as_ref().filter(|s| s.runs[c].1 > s.runs[c].0);
         for (k, &lab) in col.iter().enumerate() {
+            // Source column of the voxel (its own without heave).
+            let cs = match &self.heave {
+                Some(_) => self.nearest_column(scratch.src_ij[k].0, scratch.src_ij[k].1),
+                None => c,
+            };
             let kind = if salt.is_some_and(|s| s.contains(c, k)) {
                 VoxelKind::Salt
             } else if k < seabed {
@@ -1244,7 +1466,7 @@ impl RpmModel {
                         Some(f) if (k as f32) < f.contact[c] => f.fluid[c],
                         _ => Fluid::Brine,
                     };
-                    (l.ng[c], fluid)
+                    (l.ng[cs], fluid)
                 } else {
                     (0.0, Fluid::Brine)
                 };
@@ -1252,7 +1474,7 @@ impl RpmModel {
                     layer: lab as usize,
                     ng,
                     fluid,
-                    extra_m: self.exhumation_m(c, l.interval),
+                    extra_m: self.exhumation_m(cs, l.interval),
                 }
             } else {
                 VoxelKind::Unfilled
@@ -1290,6 +1512,8 @@ impl RpmModel {
 #[derive(Debug, Default, Clone)]
 pub struct ColumnScratch {
     pub depth: Vec<f32>,
+    /// Source `(i, j)` per sample under fault heave (empty otherwise).
+    pub src_ij: Vec<(f64, f64)>,
     pub kinds: Vec<VoxelKind>,
     /// Partial-voxel scratch ([`RpmModel::column_partial`]).
     pub partial: crate::partial_model::PartialScratch,
@@ -1307,7 +1531,9 @@ impl ElasticModel {
 
     /// Whether an unconformity was applied (`unconformity_labels` exist).
     pub fn has_unconformity(&self) -> bool {
-        crate::unconformity::applied(self.unconformities()).next().is_some()
+        crate::unconformity::applied(self.unconformities())
+            .next()
+            .is_some()
     }
 
     /// Unfaulted production horizon maps `(ni*nj, nh)` of the model (`None`
@@ -1369,7 +1595,9 @@ impl ElasticModel {
                         .sum::<usize>()
                     + m.shifts.len() * std::mem::size_of::<LayerShifts>()
                     + m.salt.as_ref().map_or(0, |s| s.runs.len() * 8)
-                    + m.partial.as_ref().map_or(0, |p| p.delta.len() * 4 + p.salt_bounds.len() * 24)
+                    + m.partial
+                        .as_ref()
+                        .map_or(0, |p| p.delta.len() * 4 + p.salt_bounds.len() * 24)
             }
         }
     }

@@ -19,6 +19,7 @@
 
 use super::model::{FaultSkip, ReachMode, ResolvedFault, Seabed};
 use super::params::{FaultParams, FaultRng};
+use super::kinematics::FaultKinematics;
 use super::segments::{segment_block, SEG_ZERO};
 
 /// A set of resolved faults over one model cube.
@@ -30,6 +31,8 @@ pub struct FaultModel {
     mode: ReachMode,
     /// Seabed for the `FitColumn` mask clamp (`None` = no clamp).
     clamp: Option<Seabed>,
+    /// Legacy vertical lookup or heave (spec-fault-kinematics 7a).
+    kinematics: FaultKinematics,
 }
 
 /// Default tile used for the global survey pass (does not affect results).
@@ -75,6 +78,7 @@ impl FaultModel {
             skipped,
             mode,
             clamp,
+            kinematics: FaultKinematics::Legacy,
         }
     }
 
@@ -86,7 +90,24 @@ impl FaultModel {
             skipped: Vec::new(),
             mode: ReachMode::default(),
             clamp: None,
+            kinematics: FaultKinematics::Legacy,
         }
+    }
+
+    /// The same model with other kinematics (no RNG draws).
+    pub fn with_kinematics(mut self, kinematics: FaultKinematics) -> Self {
+        self.kinematics = kinematics;
+        self
+    }
+
+    /// Kinematics the tiles are computed with.
+    pub fn kinematics(&self) -> FaultKinematics {
+        self.kinematics
+    }
+
+    /// Whether the model moves rock sideways (`FaultTile::src_ij` is set).
+    pub fn has_heave(&self) -> bool {
+        matches!(self.kinematics, FaultKinematics::Heave(_)) && !self.faults.is_empty()
     }
 
     /// Reach mode the model was resolved with.
@@ -124,6 +145,9 @@ impl FaultModel {
             i0 <= i1 && i1 <= ni && j0 <= j1 && j1 <= nj,
             "tile out of range"
         );
+        if self.has_heave() {
+            return self.compute_tile_heave(i0, i1, j0, j1);
+        }
         let (ti, tj) = (i1 - i0, j1 - j0);
         let n = ti * tj * nk;
         let mut lookup = vec![0.0f32; n];
@@ -217,6 +241,48 @@ impl FaultModel {
             lookup,
             mask,
             segment_id,
+            src_ij: None,
+        }
+    }
+
+    /// [`Self::compute_tile`] with heave: every voxel gathers its 3-D
+    /// source (see [`super::kinematics`]); `src_ij` holds the source
+    /// `(i, j)` and `lookup` the source `k`.
+    fn compute_tile_heave(&self, i0: usize, i1: usize, j0: usize, j1: usize) -> FaultTile {
+        let [_, nj, nk] = self.shape;
+        let (ti, tj) = (i1 - i0, j1 - j0);
+        let n = ti * tj * nk;
+        let mut lookup = vec![0.0f32; n];
+        let mut src_ij = vec![(0.0f32, 0.0f32); n];
+        let mut mask = vec![0u8; n];
+        let mut segment_id = vec![0u8; n];
+        for di in 0..ti {
+            for dj in 0..tj {
+                let (i, j) = (i0 + di, j0 + dj);
+                let base = (di * tj + dj) * nk;
+                let wb = self.clamp.as_ref().map(|sb| sb.at(i, j, nj));
+                for k in 0..nk {
+                    let g = self.gather(i, j, k);
+                    lookup[base + k] = g.src[2] as f32;
+                    src_ij[base + k] = (g.src[0] as f32, g.src[1] as f32);
+                    let on = g.id != 0 && !wb.is_some_and(|w| (k as f64) < w);
+                    if on {
+                        mask[base + k] = 1;
+                        segment_id[base + k] = g.id;
+                    }
+                }
+            }
+        }
+        FaultTile {
+            i0,
+            i1,
+            j0,
+            j1,
+            nk,
+            lookup,
+            mask,
+            segment_id,
+            src_ij: Some(src_ij),
         }
     }
 
@@ -232,6 +298,24 @@ impl FaultModel {
         let mut mask = vec![0u8; labels.len()];
         let mut ids = vec![0u8; labels.len()];
         let mut col = vec![0u8; nk];
+        if self.has_heave() {
+            let src = labels.to_vec();
+            self.for_each_tile(tile, |t| {
+                for i in t.i0..t.i1 {
+                    for j in t.j0..t.j1 {
+                        let g = (i * nj + j) * nk;
+                        let l = t.col_offset(i, j);
+                        for k in 0..nk {
+                            let [si, sj, sk] = t.nearest_source(i, j, k, ni, nj);
+                            labels[g + k] = src[(si * nj + sj) * nk + sk];
+                        }
+                        mask[g..g + nk].copy_from_slice(&t.mask[l..l + nk]);
+                        ids[g..g + nk].copy_from_slice(&t.segment_id[l..l + nk]);
+                    }
+                }
+            });
+            return (mask, ids);
+        }
         self.for_each_tile(tile, |t| {
             for i in t.i0..t.i1 {
                 for j in t.j0..t.j1 {
@@ -256,6 +340,23 @@ impl FaultModel {
         let mut col = vec![0.0f32; nk];
         let mut out = vec![0.0f32; nk];
         let mut lk = vec![0.0f64; nk];
+        if self.has_heave() {
+            let src = vol.to_vec();
+            self.for_each_tile(tile, |t| {
+                for i in t.i0..t.i1 {
+                    for j in t.j0..t.j1 {
+                        let g = (i * nj + j) * nk;
+                        let l = t.col_offset(i, j);
+                        for k in 0..nk {
+                            let (x, y) = t.source_ij(i, j, k);
+                            vol[g + k] = trilinear(&src, [ni, nj, nk], x, y, t.lookup[l + k] as f64);
+                        }
+                        mask[g..g + nk].copy_from_slice(&t.mask[l..l + nk]);
+                    }
+                }
+            });
+            return mask;
+        }
         self.for_each_tile(tile, |t| {
             for i in t.i0..t.i1 {
                 for j in t.j0..t.j1 {
@@ -307,6 +408,9 @@ pub struct FaultTile {
     pub mask: Vec<u8>,
     /// 1-based active-fault id at mask voxels (last writer wins), else 0.
     pub segment_id: Vec<u8>,
+    /// Source `(i, j)` of every voxel with heave; `None` = the voxel's own
+    /// column (legacy vertical lookup).
+    pub src_ij: Option<Vec<(f32, f32)>>,
 }
 
 impl FaultTile {
@@ -315,6 +419,53 @@ impl FaultTile {
     pub fn col_offset(&self, i: usize, j: usize) -> usize {
         ((i - self.i0) * (self.j1 - self.j0) + (j - self.j0)) * self.nk
     }
+
+    /// Nearest source voxel `(i, j, k)` of output voxel `(i, j, k)` (round
+    /// in `i`, `j`; legacy `floor(k + ½)` in `k`), clamped to the cube.
+    #[inline]
+    pub fn nearest_source(&self, i: usize, j: usize, k: usize, ni: usize, nj: usize) -> [usize; 3] {
+        let o = self.col_offset(i, j) + k;
+        let r = |x: f64, n: usize| (x + 0.5).floor().clamp(0.0, (n.max(1) - 1) as f64) as usize;
+        let sk = r(self.lookup[o] as f64, self.nk);
+        match &self.src_ij {
+            None => [i, j, sk],
+            Some(s) => [r(s[o].0 as f64, ni), r(s[o].1 as f64, nj), sk],
+        }
+    }
+
+    /// Continuous source `(i, j)` of output voxel `(i, j, k)`.
+    #[inline]
+    pub fn source_ij(&self, i: usize, j: usize, k: usize) -> (f64, f64) {
+        match &self.src_ij {
+            None => (i as f64, j as f64),
+            Some(s) => {
+                let v = s[self.col_offset(i, j) + k];
+                (v.0 as f64, v.1 as f64)
+            }
+        }
+    }
+}
+
+/// Trilinear sample of a row-major `(ni, nj, nk)` volume at a continuous
+/// position (clamped to the cube).
+pub fn trilinear(vol: &[f32], shape: [usize; 3], x: f64, y: f64, z: f64) -> f32 {
+    let [ni, nj, nk] = shape;
+    let ax = |v: f64, n: usize| {
+        let v = v.clamp(0.0, (n.max(1) - 1) as f64);
+        let a = v.floor() as usize;
+        (a, (a + 1).min(n - 1), v - a as f64)
+    };
+    let (i0, i1, wi) = ax(x, ni);
+    let (j0, j1, wj) = ax(y, nj);
+    let (k0, k1, wk) = ax(z, nk);
+    let at = |i: usize, j: usize, k: usize| vol[(i * nj + j) * nk + k] as f64;
+    let lerp = |a: f64, b: f64, w: f64| if w == 0.0 { a } else { a + w * (b - a) };
+    let c = |i: usize| {
+        let a = lerp(at(i, j0, k0), at(i, j0, k1), wk);
+        let b = lerp(at(i, j1, k0), at(i, j1, k1), wk);
+        lerp(a, b, wj)
+    };
+    lerp(c(i0), c(i1), wi) as f32
 }
 
 /// `np.interp(x, arange(len(fp)), fp)` for a single `x` (numpy semantics:

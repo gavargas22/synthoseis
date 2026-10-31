@@ -365,7 +365,7 @@ fn seed4_demo_sanity() {
             inline_count: 64,
             crossline_count: 64,
             samples: 256,
-            faults: FaultConfig::with_count(4),
+            faults: FaultConfig::legacy_with_count(4),
             ..E2eConfig::default()
         };
         c.rock_physics.legacy_fold_geometry = legacy;
@@ -402,7 +402,7 @@ fn closures_seeds_1_to_20() {
                 inline_count: 64,
                 crossline_count: 64,
                 samples: 256,
-                faults: FaultConfig::with_count(4),
+                faults: FaultConfig::legacy_with_count(4),
                 ..E2eConfig::default()
             };
             c.rock_physics.legacy_unconformity = legacy_unconformity;
@@ -431,7 +431,7 @@ fn geometry_cache_is_transparent() {
         inline_count: 24,
         crossline_count: 20,
         samples: 96,
-        faults: FaultConfig::with_count(2),
+        faults: FaultConfig::legacy_with_count(2),
         ..E2eConfig::default()
     };
     c.rock_physics.salt = true;

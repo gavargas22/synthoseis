@@ -3,17 +3,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use synthoseis_closures::{filter_labels_by_min_voxels, relabel_consecutive};
 use synthoseis_geo::faults::{
-    sample_random_faults, FaultModel, FaultTile, RandomFaultConfig, ReachMode, Seabed,
+    sample_random_faults, FaultKinematics, FaultModel, FaultTile, HeaveParams, RandomFaultConfig,
+    ReachMode, Seabed,
 };
 use synthoseis_geo::fill_layer_labels;
 use synthoseis_io::{CreateConfig, Dimension, MdioStore};
 use synthoseis_rpm::RpmExampleTrends;
 
 use crate::parity;
+use crate::pipeline::{E2eConfig, E2eReport, E2eVolumes, DEPTH_PER_SAMPLE};
 use crate::rock_physics::{elastic_model, ElasticModel};
-use crate::pipeline::{
-    E2eConfig, E2eReport, E2eVolumes, DEPTH_PER_SAMPLE,
-};
 
 /// Peak temporary buffer bytes during fused generation / streaming write.
 #[derive(Debug, Clone, Default)]
@@ -116,7 +115,9 @@ pub(crate) fn toy_horizon_maps(cfg: &E2eConfig) -> (Vec<f64>, usize) {
         crate::toy_geometry::ToyGeometry::Planar => {
             crate::toy_geometry::planar_horizon_maps(cfg.seed, cfg.shape())
         }
-        crate::toy_geometry::ToyGeometry::Layered => toy_horizon_maps_from(cfg, &layered_base_maps(cfg)),
+        crate::toy_geometry::ToyGeometry::Layered => {
+            toy_horizon_maps_from(cfg, &layered_base_maps(cfg))
+        }
     }
 }
 
@@ -140,7 +141,9 @@ pub(crate) fn layered_base_maps(cfg: &E2eConfig) -> BaseMaps {
 /// Unconformity records of `cfg` (shallowest first; empty without any, with
 /// the planar geometry, or when every unconformity was skipped for lack of
 /// room). From the geometry cache when it is built.
-pub fn unconformity_records(cfg: &E2eConfig) -> std::sync::Arc<Vec<crate::unconformity::UnconformityRecord>> {
+pub fn unconformity_records(
+    cfg: &E2eConfig,
+) -> std::sync::Arc<Vec<crate::unconformity::UnconformityRecord>> {
     if let Some(c) = crate::geometry_cache::GeometryCache::get(cfg) {
         return c.unconf.clone();
     }
@@ -160,7 +163,9 @@ pub fn unconformity_records(cfg: &E2eConfig) -> std::sync::Arc<Vec<crate::unconf
 pub fn unconformity_applied(cfg: &E2eConfig) -> bool {
     cfg.rock_physics.unconformity_config().is_some()
         && cfg.effective_geometry() == crate::toy_geometry::ToyGeometry::Layered
-        && crate::unconformity::applied(&unconformity_records(cfg)).next().is_some()
+        && crate::unconformity::applied(&unconformity_records(cfg))
+            .next()
+            .is_some()
 }
 
 /// `interval_sand` of `cfg` with the shale seal of its unconformities
@@ -174,7 +179,9 @@ pub fn sealed_interval_sand(cfg: &E2eConfig, n: usize) -> Vec<bool> {
         rp.sand_layer_fraction,
         rp.sand_layer_thickness,
     );
-    if rp.unconformity_shale != crate::lithology::UnconformityShale::None && rp.unconformity_config().is_some() {
+    if rp.unconformity_shale != crate::lithology::UnconformityShale::None
+        && rp.unconformity_config().is_some()
+    {
         let recs = unconformity_records(cfg);
         let surfaces: Vec<usize> = crate::unconformity::applied(&recs).map(|r| r.s).collect();
         crate::lithology::apply_unconformity_seal(&mut sand, &surfaces, rp.unconformity_shale);
@@ -191,7 +198,12 @@ pub(crate) fn toy_horizon_maps_from(cfg: &E2eConfig, base: &BaseMaps) -> (Vec<f6
                 None => (maps, nh),
                 Some(body) => {
                     let [ni, nj, _] = cfg.shape();
-                    let mut dragged = crate::salt::drag_horizon_maps(&maps, [ni, nj, nh], &body, cfg.rock_physics.salt_smooth_all_horizons);
+                    let mut dragged = crate::salt::drag_horizon_maps(
+                        &maps,
+                        [ni, nj, nh],
+                        &body,
+                        cfg.rock_physics.salt_smooth_all_horizons,
+                    );
                     // Whole samples, as the layered geometry (see
                     // `layered_horizon_maps`); rounding keeps the order.
                     for v in &mut dragged {
@@ -233,7 +245,11 @@ pub fn toy_horizon_maps_continuous(cfg: &E2eConfig) -> Option<(Vec<f64>, usize)>
 
 /// [`toy_horizon_maps_continuous`] of the layered geometry from its base
 /// maps and production maps.
-pub(crate) fn toy_horizon_maps_continuous_from(cfg: &E2eConfig, base: &BaseMaps, prod: &[f64]) -> (Vec<f64>, usize) {
+pub(crate) fn toy_horizon_maps_continuous_from(
+    cfg: &E2eConfig,
+    base: &BaseMaps,
+    prod: &[f64],
+) -> (Vec<f64>, usize) {
     {
         {
             let (maps, nh) = (&base.0 .0, base.0 .1);
@@ -243,7 +259,8 @@ pub(crate) fn toy_horizon_maps_continuous_from(cfg: &E2eConfig, base: &BaseMaps,
                     let [ni, nj, _] = cfg.shape();
                     let smooth_all = cfg.rock_physics.salt_smooth_all_horizons;
                     if cfg.rock_physics.salt_legacy_pv_maps {
-                        let mut dragged = crate::salt::drag_horizon_maps(maps, [ni, nj, nh], &body, smooth_all);
+                        let mut dragged =
+                            crate::salt::drag_horizon_maps(maps, [ni, nj, nh], &body, smooth_all);
                         crate::toy_geometry::min_cascade(&mut dragged, nh);
                         return (dragged, nh);
                     }
@@ -259,7 +276,9 @@ pub(crate) fn toy_horizon_maps_continuous_from(cfg: &E2eConfig, base: &BaseMaps,
                     }
                     // Order holds without a second cascade: each value sits
                     // in its own rounding cell and production is ordered.
-                    debug_assert!(z.chunks_exact(nh).all(|c| (2..nh).all(|h| c[h - 1] <= c[h])));
+                    debug_assert!(z
+                        .chunks_exact(nh)
+                        .all(|c| (2..nh).all(|h| c[h - 1] <= c[h])));
                     (z, nh)
                 }
             }
@@ -293,7 +312,24 @@ fn build_fault_model(cfg: &E2eConfig, maps: &[f64], nh: usize) -> Option<FaultMo
     } else {
         ReachMode::FitColumn
     };
-    Some(FaultModel::resolve_with_mode(shape, &params, &seabed, seed, mode))
+    let model = FaultModel::resolve_with_mode(shape, &params, &seabed, seed, mode);
+    Some(model.with_kinematics(fault_kinematics(cfg)))
+}
+
+/// Fault kinematics of `cfg`: legacy vertical lookup under
+/// `--legacy-fault-kinematics`, else heave with the `--fault-min-dip` floor
+/// and the geometry's bin / depth step (spec-fault-kinematics 7a).
+pub fn fault_kinematics(cfg: &E2eConfig) -> FaultKinematics {
+    if cfg.faults.legacy_kinematics {
+        return FaultKinematics::Legacy;
+    }
+    let fold = &cfg.rock_physics.fold;
+    FaultKinematics::Heave(HeaveParams {
+        min_dip_deg: cfg.faults.min_dip_deg,
+        dz_m: fold.dz_m,
+        bin_m: fold.bin_m,
+        heave_scale: 1.0,
+    })
 }
 
 /// Resolved fault model for `cfg` (`None` when `cfg.faults.count == 0`).
@@ -383,7 +419,18 @@ pub fn generate_unconformity_labels(cfg: &E2eConfig) -> Option<Vec<u8>> {
     };
     match fault_model(cfg) {
         Some(model) => model.for_each_tile(fault_tile(cfg), |t| {
-            let lab = crate::unconformity::label_tile(&recs, &maps, nh, [ni, nj, nk], t.i0, t.i1, t.j0, t.j1, Some(t), salt.as_ref());
+            let lab = crate::unconformity::label_tile(
+                &recs,
+                &maps,
+                nh,
+                [ni, nj, nk],
+                t.i0,
+                t.i1,
+                t.j0,
+                t.j1,
+                Some(t),
+                salt.as_ref(),
+            );
             put(&lab, t.i0, t.i1, t.j0, t.j1);
         }),
         None => {
@@ -392,7 +439,18 @@ pub fn generate_unconformity_labels(cfg: &E2eConfig) -> Option<Vec<u8>> {
                 let i1 = (i0 + ci.max(1)).min(ni);
                 for j0 in (0..nj).step_by(cj.max(1)) {
                     let j1 = (j0 + cj.max(1)).min(nj);
-                    let lab = crate::unconformity::label_tile(&recs, &maps, nh, [ni, nj, nk], i0, i1, j0, j1, None, salt.as_ref());
+                    let lab = crate::unconformity::label_tile(
+                        &recs,
+                        &maps,
+                        nh,
+                        [ni, nj, nk],
+                        i0,
+                        i1,
+                        j0,
+                        j1,
+                        None,
+                        salt.as_ref(),
+                    );
                     put(&lab, i0, i1, j0, j1);
                 }
             }
