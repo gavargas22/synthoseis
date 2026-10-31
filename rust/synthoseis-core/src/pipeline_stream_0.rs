@@ -92,7 +92,23 @@ pub fn generate_labels_warp(
     GENERATE_LABELS_CALLS.fetch_add(1, Ordering::SeqCst);
     let [ni, nj, nk] = cfg.shape();
     assert!(nk >= 2, "need at least 2 samples for reflectivity");
+    let (mut labels, maps, _nh, raw) = faulted_labels_before_drag(cfg);
+    apply_salt_drag_warp(cfg, &maps, raw, &mut labels, index);
+    (labels, [ni, nj, nk])
+}
 
+/// The faulted labels before the post-fault salt drag warp (the warp's
+/// source; tests only).
+#[doc(hidden)]
+pub fn faulted_labels_undragged(cfg: &E2eConfig) -> Vec<u8> {
+    faulted_labels_before_drag(cfg).0
+}
+
+#[allow(clippy::type_complexity)]
+fn faulted_labels_before_drag(
+    cfg: &E2eConfig,
+) -> (Vec<u8>, Vec<f64>, usize, Option<[u8; 256]>) {
+    let [ni, nj, nk] = cfg.shape();
     let (maps, nh) = toy_horizon_maps(cfg);
     let mut labels = fill_layer_labels(&maps, [ni, nj, nh], nk);
 
@@ -117,8 +133,7 @@ pub fn generate_labels_warp(
     }
     let raw = salt_drag_raw_intervals(cfg, &maps, nh, nk);
     apply_faults_to_labels(cfg, &maps, nh, &mut labels);
-    apply_salt_drag_warp(cfg, &maps, raw, &mut labels, index);
-    (labels, [ni, nj, nk])
+    (labels, maps, nh, raw)
 }
 
 /// Label → interval table for [`apply_salt_drag_warp`] (`None` unless

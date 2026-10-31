@@ -257,6 +257,63 @@ fn knot_misses(seed: u64, min_throw: usize) -> (usize, usize) {
     (tops, bad)
 }
 
+/// No column leaves the drag with inverted horizon order (#61 delta): a
+/// deeper boundary lifted above a shallower one pushes that one up with it,
+/// so no output run top sits more than 1 sample below its own drag target
+/// `a + D(a)` (`a` its faulted run top). The old pin-down clamp held such
+/// tops at the shallower boundary's target (seed 1 (25,15), label 9 at 56).
+/// Seeds 1, 4 and 6 had 2191, 2475 and 2683 inverted columns at 81d486a2.
+#[test]
+fn drag_keeps_horizon_order() {
+    let pinned: Vec<(u64, usize, usize)> = [1u64, 4, 6]
+        .into_iter()
+        .map(|s| {
+            let (tops, cols) = pinned_tops(s);
+            (s, tops, cols)
+        })
+        .filter(|&(_, t, _)| t > 0)
+        .collect();
+    assert!(pinned.is_empty(), "(seed, tops, columns) pinned below their target: {pinned:?}");
+}
+
+/// `(run tops, columns)` of `seed` whose output position lies more than 1
+/// sample below their drag target `a + D(a)`: `a` a run top of the faulted
+/// labels before the warp, its output position the first cell whose
+/// source is at or below `a`.
+fn pinned_tops(seed: u64) -> (usize, usize) {
+    let c = m::cfg(seed, SHAPE, 4, Mode::PostFault);
+    let r = m::run(&c);
+    let src = synthoseis_core::pipeline_stream::faulted_labels_undragged(&c);
+    let d = synthoseis_core::pipeline_stream::salt_drag_offsets(&c).expect("drag");
+    let maps = m::maps(&c);
+    let [ni, nj, nk] = SHAPE;
+    let nh = d.len() / (ni * nj);
+    let (mut tops, mut cols) = (0usize, 0usize);
+    for q in 0..ni * nj {
+        let dc = &d[q * nh..(q + 1) * nh];
+        if !synthoseis_core::salt::drag_column_active(dc) {
+            continue;
+        }
+        let mc = &maps[q * nh..(q + 1) * nh];
+        let (col, w) = (&src[q * nk..(q + 1) * nk], &r.warp[q * nk..(q + 1) * nk]);
+        let before = tops;
+        for a in 1..nk {
+            if col[a] == col[a - 1] {
+                continue;
+            }
+            let target = a as f64 + synthoseis_core::salt::depth_offset(mc, dc, a as f64);
+            let Some(y) = w.iter().position(|&x| x as usize >= a) else {
+                continue;
+            };
+            if y as f64 > target + 1.0 + 1e-9 {
+                tops += 1;
+            }
+        }
+        cols += usize::from(tops > before);
+    }
+    (tops, cols)
+}
+
 /// Spec tests 4 and 5 on seed 1: the warp only lifts (`k − w⁻¹(k) ≤ 0`),
 /// mean lift in the first 3 columns off the flank ≥ 1 sample (measured
 /// 4.21), monotone in every column, no unset voxel (no interior water
