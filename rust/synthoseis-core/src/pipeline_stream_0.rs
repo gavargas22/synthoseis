@@ -367,6 +367,11 @@ pub(crate) fn toy_horizon_maps_continuous_from(
         {
             let (maps, nh) = (&base.0 .0, base.0 .1);
             if cfg.salt_post_fault_drag() {
+                // The drag is applied later to the faulted labels; the
+                // legacy rounded maps stay whole samples everywhere.
+                if cfg.rock_physics.salt_legacy_pv_maps {
+                    return (maps.clone(), nh);
+                }
                 return base.1.clone();
             }
             match crate::salt::salt_body_from_maps(cfg, maps, nh) {
