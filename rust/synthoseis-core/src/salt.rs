@@ -575,11 +575,110 @@ pub fn drag_horizon_maps_before_pushdown(
 /// cell under lift-only. Used only by the partial-voxel maps; production
 /// keeps [`drag_horizon_maps`] (in smooth-all mode `R + D` can differ from
 /// `G(R+L)` in the last bit).
-pub fn drag_offsets(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all: bool) -> Vec<f64> {
+pub fn drag_offsets(
+    maps: &[f64],
+    shape: [usize; 3],
+    salt: &SaltBody,
+    smooth_all: bool,
+) -> Vec<f64> {
     drag_loop(maps, shape, salt, smooth_all, true)
 }
 
-fn drag_loop(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all: bool, offsets: bool) -> Vec<f64> {
+/// Post-fault salt drag of the layer labels (spec-salt-fault-order option
+/// B, §2.3–2.5). Per output column `c` of the faulted `labels`
+/// `(ni, nj, nk)`: the label-run tops `a_r` are the knots; each moves by the
+/// drag offset of its interval's top horizon, `D(c, h_r)` from `d`
+/// `(ni, nj, nh)` (`table[label]` is the interval, 255 = none: offset 0),
+/// made monotone `b_r = max(b_{r−1}, a_r + D)`, between the end knots
+/// `0 → 0` and `nk → nk + D(c, nh − 1)`. The stretch `w` is piecewise linear between knots and
+/// output cell `k` takes the label at `floor(w⁻¹(k + ½))` (clamped). Columns
+/// without drag are untouched. With `index`, it receives the source cell
+/// of every output cell (`(ni, nj, nk)`, the identity off the drag band).
+pub fn drag_warp_labels(
+    labels: &mut [u8],
+    shape: [usize; 3],
+    d: &[f64],
+    nh: usize,
+    table: &[u8; 256],
+    mut index: Option<&mut Vec<u32>>,
+) {
+    let [ni, nj, nk] = shape;
+    assert_eq!(labels.len(), ni * nj * nk);
+    assert_eq!(d.len(), ni * nj * nh);
+    let mut knots: Vec<(f64, f64)> = Vec::new();
+    let mut src = vec![0u8; nk];
+    let mut idx = vec![0u32; nk];
+    if let Some(ix) = index.as_deref_mut() {
+        ix.clear();
+        ix.extend((0..ni * nj).flat_map(|_| 0..nk as u32));
+    }
+    for c in 0..ni * nj {
+        let dc = &d[c * nh..(c + 1) * nh];
+        if dc.iter().all(|&v| v == 0.0) {
+            continue;
+        }
+        let col = &mut labels[c * nk..(c + 1) * nk];
+        let off = |l: u8| -> f64 {
+            let h = table[l as usize];
+            if l == 255 || h == 255 {
+                0.0
+            } else {
+                dc[h as usize]
+            }
+        };
+        knots.clear();
+        // Knot 0 -> max(0, D(c, 0)) = 0 (D <= 0), then one per run top.
+        knots.push((0.0, 0.0));
+        let mut prev = 0.0f64;
+        for k in 1..nk {
+            if col[k] != col[k - 1] {
+                let b = (k as f64 + off(col[k])).max(prev);
+                knots.push((k as f64, b));
+                prev = b;
+            }
+        }
+        knots.push((nk as f64, (nk as f64 + dc[nh - 1]).max(prev)));
+        drag_warp_column(col, &knots, &mut src, &mut idx);
+        if let Some(ix) = index.as_deref_mut() {
+            ix[c * nk..(c + 1) * nk].copy_from_slice(&idx);
+        }
+    }
+}
+
+/// `col[k] = col_in[floor(w⁻¹(k + ½))]` for the knots `(a_r, b_r)` (`a`
+/// strictly and `b` weakly increasing). Outside the knots `w` translates.
+fn drag_warp_column(col: &mut [u8], knots: &[(f64, f64)], src: &mut [u8], idx: &mut [u32]) {
+    let nk = col.len();
+    src.copy_from_slice(col);
+    let mut r = 0;
+    for (k, out) in col.iter_mut().enumerate() {
+        let y = k as f64 + 0.5;
+        while r + 1 < knots.len() && knots[r + 1].1 <= y {
+            r += 1;
+        }
+        let (a0, b0) = knots[r];
+        let x = if y < b0 {
+            y - (b0 - a0)
+        } else if r + 1 < knots.len() {
+            let (a1, b1) = knots[r + 1];
+            // b1 > y >= b0 here, so the segment is not collapsed.
+            a0 + (y - b0) * (a1 - a0) / (b1 - b0)
+        } else {
+            y - (b0 - a0)
+        };
+        let s = (x.floor() as isize).clamp(0, nk as isize - 1) as usize;
+        *out = src[s];
+        idx[k] = s as u32;
+    }
+}
+
+fn drag_loop(
+    maps: &[f64],
+    shape: [usize; 3],
+    salt: &SaltBody,
+    smooth_all: bool,
+    offsets: bool,
+) -> Vec<f64> {
     let [ni, nj, nh] = shape;
     let n = ni * nj;
     assert_eq!(maps.len(), n * nh);
@@ -611,7 +710,11 @@ fn drag_loop(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all: bool,
             }
             let s = gaussian_filter_sigma3(&m, ni, nj);
             for c in 0..n {
-                out[c * nh + h] = if offsets { s[c] - maps[c * nh + h] } else { s[c] };
+                out[c * nh + h] = if offsets {
+                    s[c] - maps[c * nh + h]
+                } else {
+                    s[c]
+                };
             }
         } else {
             let s = gaussian_filter_sigma3(&lift, ni, nj);

@@ -566,6 +566,18 @@ impl E2eConfig {
         })
     }
 
+    /// Salt drag after faulting (spec-salt-fault-order option B): salt
+    /// present, heave faults enabled, neither `--legacy-salt-fault-order`
+    /// nor `--legacy-fault-kinematics`. The horizon maps are then the
+    /// undragged ones and [`crate::salt::drag_warp_labels`] stretches the
+    /// faulted layer labels per output column.
+    pub fn salt_post_fault_drag(&self) -> bool {
+        self.effective_salt()
+            && self.faults.enabled()
+            && !self.faults.legacy_kinematics
+            && !self.rock_physics.legacy_salt_fault_order
+    }
+
     /// Fault labels are masked by the salt body (`fault AND NOT salt`):
     /// salt present, faults enabled and no `--fault-labels-through-salt`.
     pub fn effective_fault_salt_mask(&self) -> bool {
@@ -772,7 +784,9 @@ pub fn generate_tiny_cube(cfg: &E2eConfig) -> E2eVolumes {
     }
 
     // --- faults (optional; no-op when cfg.faults.count == 0) ---
+    let raw = crate::pipeline_stream::salt_drag_raw_intervals(cfg, &maps, nh, nk);
     crate::pipeline_stream::apply_faults_to_labels(cfg, &maps, nh, &mut labels);
+    crate::pipeline_stream::apply_salt_drag_warp(cfg, raw, &mut labels, None);
 
     if cfg.time_enabled() {
         return time_tiny_cube(cfg, &labels, [ni, nj, nk]);

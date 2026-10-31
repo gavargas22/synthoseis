@@ -79,6 +79,16 @@ pub fn default_subvolume_chunks(shape: [usize; 3]) -> [usize; 3] {
 /// Label generation — bit-identical to the geo+closures section of
 /// [`crate::pipeline::generate_tiny_cube`].
 pub fn generate_labels(cfg: &E2eConfig) -> (Vec<u8>, [usize; 3]) {
+    generate_labels_warp(cfg, None)
+}
+
+/// [`generate_labels`]; with `index` (post-fault salt drag only, see
+/// [`E2eConfig::salt_post_fault_drag`]) it also returns the source cell of
+/// the drag warp per output voxel (`(ni, nj, nk)`; left empty otherwise).
+pub fn generate_labels_warp(
+    cfg: &E2eConfig,
+    index: Option<&mut Vec<u32>>,
+) -> (Vec<u8>, [usize; 3]) {
     GENERATE_LABELS_CALLS.fetch_add(1, Ordering::SeqCst);
     let [ni, nj, nk] = cfg.shape();
     assert!(nk >= 2, "need at least 2 samples for reflectivity");
@@ -99,8 +109,107 @@ pub fn generate_labels(cfg: &E2eConfig) -> (Vec<u8>, [usize; 3]) {
             (src - 1).clamp(0, 254) as u8
         };
     }
+    let raw = salt_drag_raw_intervals(cfg, &maps, nh, nk);
     apply_faults_to_labels(cfg, &maps, nh, &mut labels);
+    apply_salt_drag_warp(cfg, raw, &mut labels, index);
     (labels, [ni, nj, nk])
+}
+
+/// Label → interval table for [`apply_salt_drag_warp`] (`None` unless
+/// [`E2eConfig::salt_post_fault_drag`]): the relabelled `labels` against
+/// the raw interval fill of `maps`.
+pub(crate) fn salt_drag_raw_intervals(
+    cfg: &E2eConfig,
+    maps: &[f64],
+    nh: usize,
+    nk: usize,
+) -> Option<Vec<u8>> {
+    if !cfg.salt_post_fault_drag() {
+        return None;
+    }
+    let [ni, nj, _] = cfg.shape();
+    Some(fill_layer_labels(maps, [ni, nj, nh], nk))
+}
+
+/// Label → interval table of a raw interval fill: the faulting gather only
+/// moves labels, so the table of the unfaulted fill (same transform as
+/// [`generate_labels`]) holds after it. 255 = no interval.
+fn drag_label_table(raw: &[u8]) -> [u8; 256] {
+    let mut table = [u8::MAX; 256];
+    let as_i32: Vec<i32> = raw
+        .iter()
+        .map(|&v| if v == 255 { 0 } else { (v as i32) + 1 })
+        .collect();
+    let (_vals, relabeled) = relabel_consecutive(&as_i32);
+    let filtered = filter_labels_by_min_voxels(&relabeled, 1);
+    for (&r, &f) in raw.iter().zip(filtered.iter()) {
+        let l = if f == 0 {
+            255
+        } else {
+            (f - 1).clamp(0, 254) as u8
+        };
+        if l != 255 && r != 255 {
+            table[l as usize] = r;
+        }
+    }
+    table
+}
+
+/// Test hook: the layer label → interval (top horizon) table the post-fault
+/// drag uses, `None` unless [`E2eConfig::salt_post_fault_drag`].
+#[doc(hidden)]
+pub fn salt_drag_label_table(cfg: &E2eConfig) -> Option<[u8; 256]> {
+    let (maps, nh) = toy_horizon_maps(cfg);
+    let raw = salt_drag_raw_intervals(cfg, &maps, nh, cfg.shape()[2])?;
+    Some(drag_label_table(&raw))
+}
+
+/// Post-fault salt drag (spec-salt-fault-order option B): stretch each
+/// output column of the faulted `labels` by the drag offsets of the
+/// undragged maps ([`crate::salt::drag_warp_labels`]). `raw` is the interval
+/// fill before relabelling, from [`salt_drag_raw_intervals`].
+pub(crate) fn apply_salt_drag_warp(
+    cfg: &E2eConfig,
+    raw: Option<Vec<u8>>,
+    labels: &mut [u8],
+    index: Option<&mut Vec<u32>>,
+) {
+    let Some(raw) = raw else {
+        return;
+    };
+    let table = drag_label_table(&raw);
+    let Some(d) = salt_drag_offsets(cfg) else {
+        return;
+    };
+    let [ni, nj, nk] = cfg.shape();
+    let nh = d.len() / (ni * nj);
+    crate::salt::drag_warp_labels(labels, [ni, nj, nk], &d, nh, &table, index);
+}
+
+/// Drag offsets `D` of the undragged maps against the salt body
+/// ([`crate::salt::drag_offsets`]), `(ni, nj, nh)`; `None` without salt.
+pub fn salt_drag_offsets(cfg: &E2eConfig) -> Option<Vec<f64>> {
+    if let Some(c) = crate::geometry_cache::GeometryCache::get(cfg) {
+        if let Some(d) = c.drag.get() {
+            return d.clone();
+        }
+    }
+    let compute = || {
+        let base = layered_base_maps(cfg);
+        let (maps, nh) = (&base.0 .0, base.0 .1);
+        let body = crate::salt::salt_body_from_maps(cfg, maps, nh)?;
+        let [ni, nj, _] = cfg.shape();
+        Some(crate::salt::drag_offsets(
+            maps,
+            [ni, nj, nh],
+            &body,
+            cfg.rock_physics.salt_smooth_all_horizons,
+        ))
+    };
+    match crate::geometry_cache::GeometryCache::get(cfg) {
+        Some(c) => c.drag.get_or_init(compute).clone(),
+        None => compute(),
+    }
 }
 
 /// Toy horizon stack `(ni, nj, nh)` shared by label generation, the fault
@@ -194,6 +303,10 @@ pub(crate) fn toy_horizon_maps_from(cfg: &E2eConfig, base: &BaseMaps) -> (Vec<f6
     {
         {
             let (maps, nh) = base.0.clone();
+            if cfg.salt_post_fault_drag() {
+                // Drag comes after faulting (`apply_salt_drag_warp`).
+                return (maps, nh);
+            }
             match crate::salt::salt_body_from_maps(cfg, &maps, nh) {
                 None => (maps, nh),
                 Some(body) => {
@@ -253,6 +366,9 @@ pub(crate) fn toy_horizon_maps_continuous_from(
     {
         {
             let (maps, nh) = (&base.0 .0, base.0 .1);
+            if cfg.salt_post_fault_drag() {
+                return base.1.clone();
+            }
             match crate::salt::salt_body_from_maps(cfg, maps, nh) {
                 None => base.1.clone(),
                 Some(body) => {

@@ -311,6 +311,13 @@ enum Commands {
         /// See docs/salt-bodies.md.
         #[arg(long, default_value_t = false)]
         fault_labels_through_salt: bool,
+        /// Legacy switch: drag horizons against salt before faulting (master
+        /// 481805cc, bit for bit). By default the layer labels are faulted
+        /// from undragged maps and the salt drag is applied afterwards per
+        /// output column (spec-salt-fault-order). Implied by
+        /// --legacy-fault-kinematics.
+        #[arg(long, default_value_t = false)]
+        legacy_salt_fault_order: bool,
         /// Opt out of partial voxels (on by default since PR B2): whole-voxel
         /// rasterisation, byte for byte as master d8b96e69's default. Stacks
         /// change by default without it. Rejected with --toy-geometry planar
@@ -824,6 +831,7 @@ fn main() {
             twt_kernel,
             legacy_filter_edges,
             fault_labels_through_salt,
+            legacy_salt_fault_order,
             legacy_whole_voxels,
             partial_voxel_reflectivity,
         }) => {
@@ -950,6 +958,7 @@ fn main() {
                 eprintln!("{e}");
                 std::process::exit(2);
             });
+            let rock = apply_salt_fault_order(rock, legacy_salt_fault_order, legacy_fault_kinematics);
             let (inline_count, crossline_count, samples) = if let Some(ref s) = shape {
                 parse_shape(s).unwrap_or_else(|e| {
                     eprintln!("{e}");
@@ -1126,6 +1135,20 @@ fn main() {
 /// --fault-min-dip D]`. Errors (exit 2) for a dip outside 15-60, a dip with
 /// the legacy switch, or any switch without faults. `--legacy-fault-profile`
 /// with `--legacy-fault-kinematics` is accepted with a note.
+/// `--legacy-salt-fault-order`, implied by `--legacy-fault-kinematics`
+/// (both accepted, with a note).
+fn apply_salt_fault_order(
+    mut rock: synthoseis_core::RockPhysicsConfig,
+    legacy_salt_fault_order: bool,
+    legacy_fault_kinematics: bool,
+) -> synthoseis_core::RockPhysicsConfig {
+    if legacy_salt_fault_order && legacy_fault_kinematics {
+        eprintln!("note: --legacy-fault-kinematics already implies --legacy-salt-fault-order");
+    }
+    rock.legacy_salt_fault_order = legacy_salt_fault_order || legacy_fault_kinematics;
+    rock
+}
+
 pub fn parse_fault_kinematics(
     faults: usize,
     legacy: bool,

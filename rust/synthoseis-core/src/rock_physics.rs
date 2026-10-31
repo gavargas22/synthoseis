@@ -64,8 +64,8 @@ use synthoseis_seismic::splitmix64;
 pub use synthoseis_rpm::{Elastic32, Fluid, MixingMethod};
 pub use synthoseis_seismic::ZoeppritzForm;
 
-use crate::pipeline::E2eConfig;
 pub use crate::lithology::ToyLithology;
+use crate::pipeline::E2eConfig;
 
 /// Net-to-gross of sand layers.
 #[derive(Debug, Clone, PartialEq)]
@@ -251,6 +251,15 @@ pub struct RockPhysicsConfig {
     /// salt and have no seismic expression inside it. CLI
     /// `--fault-labels-through-salt`. See `docs/salt-bodies.md`.
     pub fault_labels_through_salt: bool,
+    /// Legacy switch: drag the horizons against salt before faulting
+    /// (master 481805cc). By default, with salt and heave faults
+    /// ([`crate::pipeline::E2eConfig::salt_post_fault_drag`]), the layer
+    /// labels are built from the undragged maps, faulted, and then
+    /// stretched per output column by the drag offsets (spec-salt-fault-order
+    /// option B), so faults never expose strata lifted inside the salt.
+    /// CLI `--legacy-salt-fault-order` (implied by
+    /// `--legacy-fault-kinematics`).
+    pub legacy_salt_fault_order: bool,
     /// Partial voxels (spec-partial-voxels; **on by default** since PR B2):
     /// exact vertical volume fractions with Backus mixing (cell mode) or
     /// sub-cell reflectivity (time mode). Opt out with
@@ -310,6 +319,7 @@ impl Default for RockPhysicsConfig {
             salt_legacy_vs: false,
             salt_legacy_pv_maps: false,
             fault_labels_through_salt: false,
+            legacy_salt_fault_order: false,
             partial_voxels: crate::partial_voxels::PartialVoxelConfig::default(),
             legacy_rock_physics: false,
             phys: PhysParams::default(),
@@ -368,7 +378,11 @@ impl RockPhysicsConfig {
     /// `--legacy-unconformity`, `--legacy-fold-geometry`,
     /// `--legacy-toy-depth` or `--unconformities 0`.
     pub fn unconformity_config(&self) -> Option<&crate::unconformity::UnconformityConfig> {
-        if self.legacy_unconformity || self.legacy_fold_geometry || self.legacy_toy_depth || self.unconformity.count == 0 {
+        if self.legacy_unconformity
+            || self.legacy_fold_geometry
+            || self.legacy_toy_depth
+            || self.unconformity.count == 0
+        {
             None
         } else {
             Some(&self.unconformity)
@@ -386,14 +400,21 @@ impl RockPhysicsConfig {
             self.phys.validate()?;
         }
         if !(self.depth_step_m.is_finite() && self.depth_step_m > 0.0) {
-            return Err(format!("depth_step_m must be > 0, got {}", self.depth_step_m));
+            return Err(format!(
+                "depth_step_m must be > 0, got {}",
+                self.depth_step_m
+            ));
         }
         if !(self.max_column_m.is_finite() && self.max_column_m >= 0.0) {
-            return Err(format!("max_column_m must be >= 0, got {}", self.max_column_m));
+            return Err(format!(
+                "max_column_m must be >= 0, got {}",
+                self.max_column_m
+            ));
         }
         // Worst case of the legacy draw is its upper bound.
         crate::lithology::validate(
-            self.sand_layer_fraction.unwrap_or(crate::lithology::SAND_LAYER_FRACTION[1]),
+            self.sand_layer_fraction
+                .unwrap_or(crate::lithology::SAND_LAYER_FRACTION[1]),
             self.sand_layer_thickness,
         )?;
         match &self.net_to_gross {
@@ -401,9 +422,14 @@ impl RockPhysicsConfig {
                 Err(format!("net-to-gross must be in [0, 1], got {v}"))
             }
             NetToGross::Legacy { avg, stdev, .. }
-                if !(avg[0] <= avg[1] && stdev[0] <= stdev[1] && avg[0] >= 0.0 && avg[1] <= 1.0) =>
+                if !(avg[0] <= avg[1]
+                    && stdev[0] <= stdev[1]
+                    && avg[0] >= 0.0
+                    && avg[1] <= 1.0) =>
             {
-                Err(format!("invalid net-to-gross ranges avg={avg:?} stdev={stdev:?}"))
+                Err(format!(
+                    "invalid net-to-gross ranges avg={avg:?} stdev={stdev:?}"
+                ))
             }
             _ => Ok(()),
         }
@@ -501,9 +527,8 @@ pub fn fbm_map(ni: usize, nj: usize, octaves: usize, parts: &[u64]) -> Vec<f64> 
     for o in 0..octaves.max(1) {
         // Lattice value at (x, y): keyed by (parts.., octave, x, y), in [-1, 1).
         let prefix = key_step(key(parts), o as u64);
-        let lattice = |x: f64, y: f64| {
-            2.0 * unit_of(key_step(key_step(prefix, x as u64), y as u64)) - 1.0
-        };
+        let lattice =
+            |x: f64, y: f64| 2.0 * unit_of(key_step(key_step(prefix, x as u64), y as u64)) - 1.0;
         for i in 0..ni {
             let x = i as f64 / ni as f64 * freq;
             let (x0, tx) = (x.floor(), smooth(x - x.floor()));
@@ -524,7 +549,13 @@ pub fn fbm_map(ni: usize, nj: usize, octaves: usize, parts: &[u64]) -> Vec<f64> 
 
 /// Net-to-gross map of Rust layer `layer` (legacy
 /// `create_random_net_over_gross_map`), float32 like the legacy cube.
-pub fn net_to_gross_map(seed: u64, ng: &NetToGross, ni: usize, nj: usize, layer: usize) -> Vec<f32> {
+pub fn net_to_gross_map(
+    seed: u64,
+    ng: &NetToGross,
+    ni: usize,
+    nj: usize,
+    layer: usize,
+) -> Vec<f32> {
     match *ng {
         NetToGross::Constant(v) => vec![v; ni * nj],
         NetToGross::Legacy {
@@ -541,7 +572,11 @@ pub fn net_to_gross_map(seed: u64, ng: &NetToGross, ni: usize, nj: usize, layer:
             let var = m.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n;
             let sd = var.sqrt();
             for v in &mut m {
-                let z = if sd > 0.0 { (*v - mean) * (std_t / sd) } else { 0.0 };
+                let z = if sd > 0.0 {
+                    (*v - mean) * (std_t / sd)
+                } else {
+                    0.0
+                };
                 *v = (z + mean_t).clamp(avg[0], avg[1]);
             }
             m.into_iter().map(|v| v as f32).collect()
@@ -721,7 +756,9 @@ pub fn sand_unit_fluids(
     max_column: f64,
     min_voxels: usize,
 ) -> Vec<(usize, LayerFluids)> {
-    sand_unit_fluids_salt(labels, shape, intervals, sand, seed, max_column, min_voxels, None)
+    sand_unit_fluids_salt(
+        labels, shape, intervals, sand, seed, max_column, min_voxels, None,
+    )
 }
 
 /// [`sand_unit_fluids`] with legacy salt walls.
@@ -766,7 +803,10 @@ pub fn sand_unit_fluids_salt(
 /// First sample and end of the first run of labels in `unit` in `col`.
 pub(crate) fn first_unit_run(col: &[u8], unit: &[bool; 256]) -> Option<(usize, usize)> {
     let a = col.iter().position(|&v| unit[v as usize])?;
-    let b = col[a..].iter().position(|&v| !unit[v as usize]).map_or(col.len(), |n| a + n);
+    let b = col[a..]
+        .iter()
+        .position(|&v| !unit[v as usize])
+        .map_or(col.len(), |n| a + n);
     Some((a, b))
 }
 
@@ -788,7 +828,9 @@ pub fn unit_fluids(
     max_column: f64,
     min_voxels: usize,
 ) -> LayerFluids {
-    unit_fluids_salt(labels, shape, members, layer, seed, max_column, min_voxels, None)
+    unit_fluids_salt(
+        labels, shape, members, layer, seed, max_column, min_voxels, None,
+    )
 }
 
 /// [`unit_fluids`] with legacy salt walls
@@ -863,12 +905,19 @@ pub fn unit_fluids_salt(
                 }
             }
         }
-        let spill = cells.iter().map(|&c| filled[c]).fold(f64::NEG_INFINITY, f64::max);
+        let spill = cells
+            .iter()
+            .map(|&c| filled[c])
+            .fold(f64::NEG_INFINITY, f64::max);
         let crest = cells.iter().map(|&c| top[c]).fold(f64::INFINITY, f64::min);
         let contact = spill.min(crest + max_column);
         let voxels: usize = cells
             .iter()
-            .map(|&c| (contact.ceil().max(0.0) as usize).min(base[c]).saturating_sub(top[c] as usize))
+            .map(|&c| {
+                (contact.ceil().max(0.0) as usize)
+                    .min(base[c])
+                    .saturating_sub(top[c] as usize)
+            })
             .sum();
         let this = rank;
         rank += 1;
@@ -880,7 +929,8 @@ pub fn unit_fluids_salt(
             out.contact[c] = contact as f32;
             out.fluid[c] = fluid;
         }
-        out.closures.push((fluid, crest, contact, cells.len(), voxels));
+        out.closures
+            .push((fluid, crest, contact, cells.len(), voxels));
     }
     out
 }
@@ -1001,7 +1051,9 @@ pub fn elastic_model(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Elast
         .filter(|m| m.has_heave())
         .map(|m| HeaveColumns(std::sync::Arc::new(m)));
     if let Some(r) = cfg.effective_partial_voxels() {
-        model.partial = Some(Box::new(crate::partial_model::PartialModel::build(cfg, &model, &rp, &sand, r)));
+        model.partial = Some(Box::new(crate::partial_model::PartialModel::build(
+            cfg, &model, &rp, &sand, r,
+        )));
     }
     ElasticModel::Rpm(Box::new(model))
 }
@@ -1059,17 +1111,35 @@ pub fn closure_census(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Opti
             .enumerate()
             .filter(|&(lab, &h)| lab < 255 && sand.get(h).copied().unwrap_or(false))
             .flat_map(|(lab, &h)| {
-                unit_fluids_salt(labels, shape, &[lab as u8], h, cfg.seed, max_column, 1, salt.as_ref())
-                    .closures
-                    .into_iter()
-                    .map(|c| c.4)
+                unit_fluids_salt(
+                    labels,
+                    shape,
+                    &[lab as u8],
+                    h,
+                    cfg.seed,
+                    max_column,
+                    1,
+                    salt.as_ref(),
+                )
+                .closures
+                .into_iter()
+                .map(|c| c.4)
             })
             .collect()
     } else if rp.closures_unsegmented {
-        sand_unit_fluids_salt(labels, shape, &intervals, &sand, cfg.seed, max_column, 1, salt.as_ref())
-            .into_iter()
-            .flat_map(|(_, f)| f.closures.into_iter().map(|c| c.4))
-            .collect()
+        sand_unit_fluids_salt(
+            labels,
+            shape,
+            &intervals,
+            &sand,
+            cfg.seed,
+            max_column,
+            1,
+            salt.as_ref(),
+        )
+        .into_iter()
+        .flat_map(|(_, f)| f.closures.into_iter().map(|c| c.4))
+        .collect()
     } else {
         crate::closure_segments::segmented_sand_unit_fluids_with(
             labels,
@@ -1098,16 +1168,24 @@ pub fn closure_census(cfg: &E2eConfig, labels: &[u8], shape: [usize; 3]) -> Opti
 /// `closure_minimum: "scaled-area"`, in [`ClosureMinimum::Scaled`] mode
 /// only (with fluids on and not `legacy_toy_depth`), so `Fixed` runs
 /// (`--legacy-closure-minimum`, `--min-closure-voxels`) keep master bytes.
-pub fn write_closure_attrs(store: &synthoseis_io::MdioStore, cfg: &E2eConfig) -> Result<(), String> {
+pub fn write_closure_attrs(
+    store: &synthoseis_io::MdioStore,
+    cfg: &E2eConfig,
+) -> Result<(), String> {
     let rp = &cfg.rock_physics;
     if rp.legacy_toy_depth || !rp.fluids || rp.closure_minimum != ClosureMinimum::Scaled {
         return Ok(());
     }
-    let t = rp.closure_minimum.voxels(cfg.inline_count, cfg.crossline_count);
+    let t = rp
+        .closure_minimum
+        .voxels(cfg.inline_count, cfg.crossline_count);
     store
         .set_root_attrs(&[
             ("closure_min_voxels", serde_json::json!(t)),
-            ("closure_minimum", serde_json::json!(ClosureMinimum::Scaled.as_str())),
+            (
+                "closure_minimum",
+                serde_json::json!(ClosureMinimum::Scaled.as_str()),
+            ),
         ])
         .map_err(|e| e.to_string())
 }
@@ -1261,7 +1339,13 @@ impl RpmModel {
     pub fn depth_trace(&self, i: usize, j: usize, col: &[u8], depth: &mut [f32]) -> usize {
         let nj = self.shape[1];
         let c = i * nj + j;
-        layer_depth_trace(col, &self.maps[c * self.nh..(c + 1) * self.nh], &self.intervals, self.step, depth)
+        layer_depth_trace(
+            col,
+            &self.maps[c * self.nh..(c + 1) * self.nh],
+            &self.intervals,
+            self.step,
+            depth,
+        )
     }
 
     /// [`Self::depth_trace`] reading each run's base at its source column
@@ -1485,7 +1569,9 @@ impl ElasticModel {
 
     /// Whether an unconformity was applied (`unconformity_labels` exist).
     pub fn has_unconformity(&self) -> bool {
-        crate::unconformity::applied(self.unconformities()).next().is_some()
+        crate::unconformity::applied(self.unconformities())
+            .next()
+            .is_some()
     }
 
     /// Unfaulted production horizon maps `(ni*nj, nh)` of the model (`None`
@@ -1547,7 +1633,9 @@ impl ElasticModel {
                         .sum::<usize>()
                     + m.shifts.len() * std::mem::size_of::<LayerShifts>()
                     + m.salt.as_ref().map_or(0, |s| s.runs.len() * 8)
-                    + m.partial.as_ref().map_or(0, |p| p.delta.len() * 4 + p.salt_bounds.len() * 24)
+                    + m.partial
+                        .as_ref()
+                        .map_or(0, |p| p.delta.len() * 4 + p.salt_bounds.len() * 24)
             }
         }
     }

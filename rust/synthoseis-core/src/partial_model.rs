@@ -55,6 +55,10 @@ pub struct PartialModel {
     pub hidden: Vec<LayerModel>,
     /// Shifts of the labelled layers followed by those of `hidden`.
     pub shifts: Vec<LayerShifts>,
+    /// Columns stretched by the post-fault salt drag
+    /// ([`E2eConfig::salt_post_fault_drag`]; empty otherwise): whole voxels
+    /// there, since the continuous maps do not follow the label warp.
+    pub drag_band: Vec<bool>,
 }
 
 impl PartialEq for PartialModel {
@@ -66,6 +70,7 @@ impl PartialEq for PartialModel {
             && self.interval_layer == o.interval_layer
             && self.hidden == o.hidden
             && self.shifts == o.shifts
+            && self.drag_band == o.drag_band
     }
 }
 
@@ -121,7 +126,17 @@ impl PartialModel {
             .copied()
             .chain(hidden.iter().map(|l: &LayerModel| l.shifts))
             .collect();
+        let drag_band = if cfg.salt_post_fault_drag() {
+            crate::pipeline_stream::salt_drag_offsets(cfg).map_or(Vec::new(), |d| {
+                d.chunks_exact(nh)
+                    .map(|c| c.iter().any(|&v| v != 0.0))
+                    .collect()
+            })
+        } else {
+            Vec::new()
+        };
         Self {
+            drag_band,
             reflectivity,
             delta,
             salt_bounds,
@@ -235,6 +250,26 @@ impl RpmModel {
             partial: ps,
             ..
         } = scratch;
+        if pm.drag_band.get(c).copied().unwrap_or(false) {
+            // Whole voxels: one full-cell layer per cell.
+            ps.sub.clear();
+            ps.sub_off.clear();
+            ps.sub_off.push(0);
+            for k in 0..nk {
+                if matches!(kinds[k], VoxelKind::Layer { .. }) {
+                    ps.stats.sediment += 1;
+                }
+                ps.stats.cells += 1;
+                ps.sub.push(SubLayer {
+                    frac: 1.0,
+                    vp: vp[k],
+                    vs: vs[k],
+                    rho: rho[k],
+                });
+                ps.sub_off.push(ps.sub.len());
+            }
+            return;
+        }
         ps.horizons.clear();
         ps.horizons
             .extend((0..nh).map(|h| self.maps[c * nh + h] + pm.delta[c * nh + h] as f64));
