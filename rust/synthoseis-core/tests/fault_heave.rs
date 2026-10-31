@@ -360,6 +360,9 @@ fn heave_at_peak_throw_matches_the_spec() {
     for seed in 1..=20 {
         let mut c = cfg(seed, [128, 128, 256], false);
         c.rock_physics = E2eConfig::default().rock_physics;
+        // The spec §2 figures are for the 7a (Gaussian) throw; the 7b tip
+        // taper gives p5/50/95/max 1.19/4.25/11.12/14.47 bins.
+        c.faults.legacy_profile = true;
         let m = fault_model(&c).expect("faults");
         let FaultKinematics::Heave(p) = m.kinematics() else {
             panic!("heave")
