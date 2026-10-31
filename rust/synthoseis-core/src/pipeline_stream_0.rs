@@ -117,39 +117,38 @@ pub fn generate_labels_warp(
 
 /// Label → interval table for [`apply_salt_drag_warp`] (`None` unless
 /// [`E2eConfig::salt_post_fault_drag`]): the relabelled `labels` against
-/// the raw interval fill of `maps`.
+/// the raw interval fill of `maps`. The faulting gather only moves labels,
+/// so the table of the unfaulted fill holds after it. 255 = no interval.
 pub(crate) fn salt_drag_raw_intervals(
     cfg: &E2eConfig,
     maps: &[f64],
     nh: usize,
     nk: usize,
-) -> Option<Vec<u8>> {
+) -> Option<[u8; 256]> {
     if !cfg.salt_post_fault_drag() {
         return None;
     }
     let [ni, nj, _] = cfg.shape();
-    Some(fill_layer_labels(maps, [ni, nj, nh], nk))
+    Some(drag_label_table(&fill_layer_labels(maps, [ni, nj, nh], nk)))
 }
 
-/// Label → interval table of a raw interval fill: the faulting gather only
-/// moves labels, so the table of the unfaulted fill (same transform as
-/// [`generate_labels`]) holds after it. 255 = no interval.
+/// The table of [`generate_labels`]' relabelling (`v + 1`, 255 → 0,
+/// consecutive ranks, no size filter at 1 voxel, then `− 1`) from the set
+/// of values present, without a voxel-sized scratch copy.
 fn drag_label_table(raw: &[u8]) -> [u8; 256] {
+    let mut present = [false; 256];
+    for &v in raw {
+        present[v as usize] = true;
+    }
+    // Rank of `v + 1` among the present codes; code 0 (raw 255) ranks first.
+    let mut rank = usize::from(present[255]);
     let mut table = [u8::MAX; 256];
-    let as_i32: Vec<i32> = raw
-        .iter()
-        .map(|&v| if v == 255 { 0 } else { (v as i32) + 1 })
-        .collect();
-    let (_vals, relabeled) = relabel_consecutive(&as_i32);
-    let filtered = filter_labels_by_min_voxels(&relabeled, 1);
-    for (&r, &f) in raw.iter().zip(filtered.iter()) {
-        let l = if f == 0 {
-            255
-        } else {
-            (f - 1).clamp(0, 254) as u8
-        };
-        if l != 255 && r != 255 {
-            table[l as usize] = r;
+    for r in 0..255usize {
+        if present[r] {
+            if rank >= 1 {
+                table[(rank - 1).min(254)] = r as u8;
+            }
+            rank += 1;
         }
     }
     table
@@ -160,24 +159,22 @@ fn drag_label_table(raw: &[u8]) -> [u8; 256] {
 #[doc(hidden)]
 pub fn salt_drag_label_table(cfg: &E2eConfig) -> Option<[u8; 256]> {
     let (maps, nh) = toy_horizon_maps(cfg);
-    let raw = salt_drag_raw_intervals(cfg, &maps, nh, cfg.shape()[2])?;
-    Some(drag_label_table(&raw))
+    salt_drag_raw_intervals(cfg, &maps, nh, cfg.shape()[2])
 }
 
 /// Post-fault salt drag (spec-salt-fault-order option B): stretch each
 /// output column of the faulted `labels` by the drag offsets of the
-/// undragged maps ([`crate::salt::drag_warp_labels`]). `raw` is the interval
-/// fill before relabelling, from [`salt_drag_raw_intervals`].
+/// undragged maps ([`crate::salt::drag_warp_labels`]). `table` maps layer
+/// labels to intervals, from [`salt_drag_raw_intervals`].
 pub(crate) fn apply_salt_drag_warp(
     cfg: &E2eConfig,
-    raw: Option<Vec<u8>>,
+    table: Option<[u8; 256]>,
     labels: &mut [u8],
     index: Option<&mut Vec<u32>>,
 ) {
-    let Some(raw) = raw else {
+    let Some(table) = table else {
         return;
     };
-    let table = drag_label_table(&raw);
     let Some(d) = salt_drag_offsets(cfg) else {
         return;
     };
