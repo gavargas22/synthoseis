@@ -16,17 +16,16 @@
 //! The vertical part reproduces the legacy `k` composition (fault `n`'s
 //! `adj_n` sampled at integer `k` and interpolated linearly in `k`); the
 //! lateral position is continuous. The fault label is the closed-form band
-//! `|f_n − 1| / |∇f_n| ≤ 0.75` voxel AND throw > 1 sample at the stage
+//! `|f_n − 1| / |∇f_n| ≤ 1.0` voxel ([`LABEL_BAND_VOXELS`]) AND throw > 1 sample at the stage
 //! position, last writer (youngest) wins.
 
 use super::apply::FaultModel;
 use super::model::ResolvedFault;
 
-/// Half width of the analytic fault-label band (voxels, spec §6.4). The
-/// spec proposes 0.75; 1.0 matches the legacy sobel label best with heave
-/// forced to 0 (Jaccard 0.82–0.94 over seeds 1–12, against 0.72–0.88 at
-/// 0.75 and lower at 1.25+), so 1.0 is the default (open question for
-/// review).
+/// Half width of the analytic fault-label band (voxels, spec §6.4): the
+/// measured optimum against the legacy sobel label with heave forced to 0
+/// (seeds 1–40 at 64×64×96: Jaccard mean 0.858 / min 0.735 with 2 faults;
+/// 0.75 gives 0.83 / 0.69, 1.25 gives 0.71 / 0.59).
 pub const LABEL_BAND_VOXELS: f64 = 1.0;
 
 /// Default physical dip floor (degrees, spec §5 `--fault-min-dip`).

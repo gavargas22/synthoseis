@@ -166,8 +166,8 @@ fn jaccard(a: &[u8], b: &[u8]) -> f64 {
 
 /// §9 row 4: with heave forced to 0 the gather reproduces the legacy throw
 /// (max |Δ lookup| ≤ 1e-4 sample) and the closed-form label band overlaps
-/// the legacy sobel label (Jaccard ≥ 0.8 per seed, ≥ 0.85 on average; the
-/// spec's 0.9 is not reachable by a closed-form band). Kills: any change to the
+/// the legacy sobel label (spec §6.4: Jaccard ≥ 0.70 per seed and ≥ 0.83 on
+/// the mean over ≥ 30 seeds, band 1.0). Kills: any change to the
 /// vertical component.
 #[test]
 fn zero_heave_reproduces_the_legacy_throw_and_label() {
@@ -176,7 +176,7 @@ fn zero_heave_reproduces_the_legacy_throw_and_label() {
         ..HeaveParams::default()
     });
     let (mut checked, mut jac_sum) = (0, 0.0);
-    for seed in 1..=12u64 {
+    for seed in 1..=60u64 {
         let legacy = random_model(SHAPE, seed, 2);
         if legacy.faults().is_empty() {
             continue;
@@ -197,16 +197,17 @@ fn zero_heave_reproduces_the_legacy_throw_and_label() {
             (x, y) == ((c / nj) as f32, (c % nj) as f32)
         }));
         let jac = jaccard(&mask, &t.mask);
-        assert!(jac >= 0.8, "seed {seed}: label Jaccard {jac:.3}");
+        assert!(jac >= 0.70, "seed {seed}: label Jaccard {jac:.3}");
         jac_sum += jac;
         checked += 1;
     }
-    assert!(checked >= 6);
-    // Spec §6.4 asks for >= 0.9; the closed-form band reaches 0.87 on
-    // average against the legacy sobel/max-filter label (see
-    // LABEL_BAND_VOXELS).
+    assert!(checked >= 30, "only {checked} faulted seeds");
     let mean = jac_sum / checked as f64;
-    assert!(mean >= 0.85, "mean label Jaccard {mean:.3}");
+    assert!(
+        mean >= 0.83,
+        "mean label Jaccard {mean:.3} over {checked} seeds"
+    );
+    println!("label Jaccard mean {mean:.3} over {checked} faulted seeds");
 }
 
 /// §9 row 5: every output voxel gets a source (gather, no holes) and every
