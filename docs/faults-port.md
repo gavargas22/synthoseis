@@ -305,6 +305,38 @@ throw over seeds 1-20 (`heave_at_peak_throw`, spec §2/§6.4) is
 p5/50/95/max 1.2/4.9/11.3/14.5 bins after the 30° floor; checked by
 `fault_heave.rs::heave_at_peak_throw_matches_the_spec` (`--ignored`).
 
+## Fault tips and D–L scaling (default; spec-fault-kinematics 7b)
+
+Every fault (when heave is on) gets an elliptical tip line centred on its plane
+centre `c`, measured in the physical tangent basis (strike `s`, dip-direction `t`):
+
+    r² = (s/R_s)² + (t/R_t)²,  R_s = L/2,  R_t = R_s/A (A = 2)
+    taper(r) = cos²(πr/2) for r < 1, else 0
+    throw(i,j,k) = taper · T_profile[k]          (replaces the 7a Gaussian lateral factor)
+    L = (D_max/γ)^(1/n), n = 1,  D_max = T·dz / sin δ_c,  γ ~ logU(0.01, 0.1)
+
+γ is drawn from `FaultRng::new(seed ^ 0xFA17_0000_0000_0002).fork(n+1)`, a stream
+separate from the fault-parameter draws, so existing draws are unchanged (this is tested).
+The same factor gates fault labels: a voxel is labelled only where taper·profile > 1 sample.
+
+Flags: `--legacy-fault-profile` restores the 7a Gaussian throw exactly (96/96 parity vs
+#59 head 1ffac5d1). `--legacy-fault-kinematics` turns everything off (96/96 parity vs master).
+The two flags together, or `--legacy-fault-profile` without `--faults`, exit with code 2.
+
+Ambiguities and the defaults picked:
+- δ_c is floored at `min_dip` so that sin δ_c > 0 when computing D_max.
+- The spec's "D·sinδ ≤ 1" label rule is implemented as vertical throw = taper·T_profile > 1 sample.
+- The ellipse is centred at the plane centre `c`, not at the max-throw point.
+- The D–L test regresses log(D_max/γ) on L measured by bisection; a plain log D–log L
+  fit is attenuated by the γ scatter (slope ≈ 0.4).
+
+Numbers:
+- Closure kept volume (3 faults, 7b vs 7a): 97.98/98.34 % (32²×128), 98.93/98.99 (32²×256),
+  99.43/99.49 (64²×256), 99.01/98.90 (128²×256). The 98 % gate is pinned on 7a and the 7b floor is 97.5 %.
+- Evidence, 7a→7b, seeds 1/7/13: fault-label Jaccard 0.61/0.75/0.27; 92–96 % of stack voxels change.
+- Tip lengths L range from 1.5 to 15 km; seed 7 fault 2 shows both tips inside the cube.
+- Tile invariance: chunk 32 vs default chunks give identical decoded arrays for seeds 1/7/13 at 128²×256.
+
 ## Deferred (follow-ups)
 
 - Salt-flank fragments under heave (PR #59 review S3; no GitHub issue,
