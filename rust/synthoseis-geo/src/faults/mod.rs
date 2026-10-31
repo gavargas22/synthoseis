@@ -32,7 +32,7 @@ pub use apply::{
     FaultModel, FaultTile, SURVEY_TILE,
 };
 pub use kinematics::{
-    heave_vector, stage_slip, FaultKinematics, Gathered, HeaveParams, DEFAULT_MIN_DIP_DEG,
+    heave_at_peak_throw, heave_vector, stage_slip, FaultKinematics, Gathered, HeaveParams, DEFAULT_MIN_DIP_DEG,
     LABEL_BAND_VOXELS,
 };
 pub use model::{

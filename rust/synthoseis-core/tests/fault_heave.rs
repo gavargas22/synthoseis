@@ -329,7 +329,8 @@ fn salt_is_stationary_under_heave() {
                     assert_eq!(is_salt, s.contains(q, k), "seed {seed} ({i},{j},{k})");
                     n += is_salt as usize;
                     let (x, y) = scratch.src_ij[k];
-                    moved += (is_salt && ((x - i as f64).abs() > 0.5 || (y - j as f64).abs() > 0.5)) as usize;
+                    moved += (is_salt && ((x - i as f64).abs() > 0.5 || (y - j as f64).abs() > 0.5))
+                        as usize;
                 }
             }
         }
@@ -338,4 +339,44 @@ fn salt_is_stationary_under_heave() {
     }
     assert!(tested >= 2, "{tested} seeds with salt");
     assert!(moved > 100, "{moved} heaved salt voxels: test is vacuous");
+}
+
+fn pct(v: &mut [f64], q: f64) -> f64 {
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let r = q / 100.0 * (v.len() - 1) as f64;
+    let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
+    v[lo] + (r - lo as f64) * (v[hi] - v[lo])
+}
+
+/// Spec §2 / §6.4 figures (review S6): heave at peak throw over the surface
+/// voxels of seeds 1-20 at 128×128×256 with 4 faults is p50 4.9, p95 11.3,
+/// max 14.5 bins after the 30° floor (± 0.1). Slow: `--ignored`.
+#[test]
+#[ignore]
+fn heave_at_peak_throw_matches_the_spec() {
+    use synthoseis_geo::faults::{heave_at_peak_throw, FaultKinematics};
+    let mut h = Vec::new();
+    let mut faults = 0;
+    for seed in 1..=20 {
+        let mut c = cfg(seed, [128, 128, 256], false);
+        c.rock_physics = E2eConfig::default().rock_physics;
+        let m = fault_model(&c).expect("faults");
+        let FaultKinematics::Heave(p) = m.kinematics() else {
+            panic!("heave")
+        };
+        faults += m.faults().len();
+        h.extend(heave_at_peak_throw(&m, &p));
+    }
+    let (p50, p95, max) = (pct(&mut h, 50.0), pct(&mut h, 95.0), pct(&mut h, 100.0));
+    eprintln!(
+        "faults {faults} voxels {} p5 {:.2} p50 {p50:.2} p95 {p95:.2} max {max:.2}",
+        h.len(),
+        pct(&mut h, 5.0)
+    );
+    for (got, want) in [(p50, 4.9), (p95, 11.3), (max, 14.5)] {
+        assert!(
+            (got - want).abs() <= 0.1,
+            "heave at peak throw {got:.2} vs spec {want}"
+        );
+    }
 }

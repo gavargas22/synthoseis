@@ -287,7 +287,10 @@ without `--faults`, or a dip outside 15-60 exits with status 2.
 
 Evidence (seeds 1, 7, 13, 128x128x256, `--faults 4`):
 `cargo run --release -p synthoseis-core --example heave_evidence` and
-`examples/plot_heave_evidence.py` (see the example header).
+`examples/plot_heave_evidence.py` (see the example header). Heave at peak
+throw over seeds 1-20 (`heave_at_peak_throw`, spec §2/§6.4) is
+p5/50/95/max 1.2/4.9/11.3/14.5 bins after the 30° floor; checked by
+`fault_heave.rs::heave_at_peak_throw_matches_the_spec` (`--ignored`).
 
 ## Deferred (follow-ups)
 

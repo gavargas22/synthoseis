@@ -1,7 +1,8 @@
-seed 13: runtime legacy 27.7 s, heave 64.8 s, ratio heave/legacy 2.34
+seed 13: runtime (single run, Oct 30 2026, load ~1.2) legacy 20.2 s, heave 17.4 s, ratio heave/legacy 0.86
 fault 1: n=6078 throw p5/50/95/max 1.3/7.9/17.2/17.7 samples, heave p5/50/95/max 0.7/4.3/9.5/9.8 bins, at peak throw 17.7 -> heave 9.8
 fault 2: n=26523 throw p5/50/95/max 3.9/7.8/10.8/11.2 samples, heave p5/50/95/max 2.2/4.3/6.0/6.2 bins, at peak throw 11.2 -> heave 6.2
 fault 3: n=1896 throw p5/50/95/max 8.9/14.7/15.4/15.5 samples, heave p5/50/95/max 4.6/7.6/8.0/8.1 bins, at peak throw 15.5 -> heave 8.0
 all: n=34497 throw p5/50/95/max 3.0/8.0/15.1/17.7, heave p5/50/95/max 1.6/4.4/7.9/9.8
+heave at peak throw (spec §2; seeds 1-20 give 1.2/4.9/11.3/14.5): n=79603 p5/50/95/max 6.2/6.2/9.8/9.8 bins
 model/store fault-label agreement 0.9691
 stack voxels changed 0.9484; layer labels changed 0.1481; fault-label Jaccard vs legacy 0.1118

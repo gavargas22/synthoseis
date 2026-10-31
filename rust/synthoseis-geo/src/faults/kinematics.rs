@@ -252,3 +252,43 @@ impl FaultModel {
         Gathered { src: [x, y, z], id }
     }
 }
+
+/// Heave at peak throw (spec-fault-kinematics §2, §6.4): for every surface
+/// voxel of a fault (`|f − 1| / |∇f| ≤ LABEL_BAND_VOXELS`), the heave
+/// `T / max(tan δ_v, tan δ_min,v)` in bins that the fault's peak throw `T`
+/// would give at that voxel's dip. `T` is the largest throw (samples) the
+/// kernel applies on the fault's surface voxels; faults whose surface never
+/// moves more than one sample are left out.
+pub fn heave_at_peak_throw(m: &FaultModel, p: &HeaveParams) -> Vec<f64> {
+    let [ni, nj, nk] = m.shape();
+    let top = (nk - 1) as f64;
+    let mut out = Vec::new();
+    for f in m.faults() {
+        let (mut t, mut tans) = (0.0f64, Vec::new());
+        for i in 0..ni {
+            for j in 0..nj {
+                let lat = f.lateral(i, j);
+                for k in 0..nk {
+                    let (x, y, z) = (i as f64, j as f64, k as f64);
+                    let g = f.geometry.gradient_at(x, y, z);
+                    let gn = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
+                    if !(gn > 0.0)
+                        || (f.geometry.value_at(x, y, z) - 1.0).abs() / gn
+                            > super::LABEL_BAND_VOXELS
+                    {
+                        continue;
+                    }
+                    let (_, _, d) = stage_slip(f, p, x, y, k, lat, top);
+                    t = t.max(d);
+                    if g[2] != 0.0 {
+                        tans.push(g[0].hypot(g[1]) / g[2].abs());
+                    }
+                }
+            }
+        }
+        if t > 1.0 {
+            out.extend(tans.into_iter().map(|tv| t / tv.max(p.tan_min_v())));
+        }
+    }
+    out
+}

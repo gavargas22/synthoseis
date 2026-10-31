@@ -12,9 +12,12 @@
 //!
 //! Stats are over the hanging-wall voxels of each fault's label band
 //! (`|f − 1| / |∇f| ≤ LABEL_BAND_VOXELS`) with throw > 1 sample; "peak" is
-//! the voxel of largest throw.
+//! the voxel of largest throw; a fault with no such voxel prints `n=0`.
+//! "Heave at peak throw" is `heave_at_peak_throw` (spec §2, §6.4): one seed
+//! can be well off the seeds 1-20 figures, which
+//! `fault_heave.rs::heave_at_peak_throw_matches_the_spec` checks.
 use std::io::Write;
-use synthoseis_geo::faults::{stage_slip, FaultKinematics, LABEL_BAND_VOXELS};
+use synthoseis_geo::faults::{heave_at_peak_throw, stage_slip, FaultKinematics, LABEL_BAND_VOXELS};
 
 fn pct(v: &mut [f64], q: f64) -> f64 {
     if v.is_empty() {
@@ -107,6 +110,13 @@ fn main() {
         }
         all_t.extend(&t);
         all_h.extend(&h);
+        if t.is_empty() {
+            stats.push_str(&format!(
+                "fault {}: n=0 (no surface voxel moves more than 1 sample)\n",
+                n + 1
+            ));
+            continue;
+        }
         let line = format!(
             "fault {}: n={} throw p5/50/95/max {:.1}/{:.1}/{:.1}/{:.1} samples, heave p5/50/95/max {:.1}/{:.1}/{:.1}/{:.1} bins, at peak throw {:.1} -> heave {:.1}\n",
             n + 1, t.len(), pct(&mut t, 5.0), pct(&mut t, 50.0), pct(&mut t, 95.0), pct(&mut t, 100.0),
@@ -119,6 +129,15 @@ fn main() {
         all_t.len(), pct(&mut all_t, 5.0), pct(&mut all_t, 50.0), pct(&mut all_t, 95.0), pct(&mut all_t, 100.0),
         pct(&mut all_h, 5.0), pct(&mut all_h, 50.0), pct(&mut all_h, 95.0), pct(&mut all_h, 100.0)
     ));
+    let mut hp = heave_at_peak_throw(&m, &p);
+    if hp.is_empty() {
+        stats.push_str("heave at peak throw: n=0\n");
+    } else {
+        stats.push_str(&format!(
+            "heave at peak throw (spec §2; seeds 1-20 give 1.2/4.9/11.3/14.5): n={} p5/50/95/max {:.1}/{:.1}/{:.1}/{:.1} bins\n",
+            hp.len(), pct(&mut hp, 5.0), pct(&mut hp, 50.0), pct(&mut hp, 95.0), pct(&mut hp, 100.0)
+        ));
+    }
     // Sanity: rebuilt model labels vs the heave store's fault labels.
     let store = synthoseis_io::MdioStore::open(std::path::Path::new(heave))
         .unwrap()
