@@ -527,3 +527,41 @@ fn gather_cache_and_halo_window_match_the_reference() {
         assert_eq!(vgot, vwant);
     }
 }
+
+/// Review S1: the gather cache holds at most `GATHER_CACHE_TILES` tiles
+/// whatever the cube size, and cached / uncached results are identical.
+#[test]
+fn gather_cache_memory_is_bounded_by_the_tile() {
+    let shape = [96, 96, 48];
+    let g = [16, 16];
+    let plain = heave(random_model(shape, 3, 4));
+    if !plain.has_heave() {
+        return;
+    }
+    let cached = plain.clone().with_gather_cache(g);
+    let bound = super::apply::GATHER_CACHE_TILES * g[0] * g[1] * shape[2] * 25;
+    let (mut a, mut b) = (Vec::new(), Vec::new());
+    for pass in 0..2 {
+        for i0 in (0..shape[0]).step_by(g[0]) {
+            for j0 in (0..shape[1]).step_by(g[1]) {
+                let (i1, j1) = (i0 + g[0], j0 + g[1]);
+                let (x, y) = (
+                    cached.compute_tile(i0, i1, j0, j1),
+                    plain.compute_tile(i0, i1, j0, j1),
+                );
+                assert_eq!(x.lookup, y.lookup);
+                assert_eq!(x.src_ij, y.src_ij);
+                assert!(cached.gather_cache_bytes() <= bound, "pass {pass}");
+            }
+        }
+        for i in 0..shape[0] {
+            for j in 0..shape[1] {
+                cached.column_sources(i, j, &mut a);
+                plain.column_sources(i, j, &mut b);
+                assert_eq!(a, b);
+            }
+        }
+        assert!(cached.gather_cache_bytes() <= bound);
+    }
+    assert!(cached.gather_cache_bytes() > 0);
+}

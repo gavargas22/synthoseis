@@ -33,7 +33,7 @@ pub struct FaultModel {
     clamp: Option<Seabed>,
     /// Legacy vertical lookup or heave (spec-fault-kinematics 7a).
     kinematics: FaultKinematics,
-    /// Per-tile gather results shared by every consumer of a heave run
+    /// Recent gather tiles shared by every consumer of a heave run
     /// ([`Self::with_gather_cache`]); `None` = gather on demand.
     cache: Option<std::sync::Arc<GatherCache>>,
 }
@@ -60,13 +60,47 @@ impl GatherTile {
     }
 }
 
-/// Lazily filled grid of [`GatherTile`]s: each tile is gathered once per
-/// run, by whichever consumer asks first, and reused by the others.
+/// Bounded cache of [`GatherTile`]s on the `grid` tiling: the most recently
+/// used [`GATHER_CACHE_TILES`] tiles, so memory depends on the tile size,
+/// not on the cube (review S1). Tile consumers fill it; column consumers
+/// read a cached tile when there is one and otherwise gather the column.
 #[derive(Debug)]
 struct GatherCache {
     grid: [usize; 2],
     ntj: usize,
-    tiles: Vec<std::sync::OnceLock<std::sync::Arc<GatherTile>>>,
+    /// `(tile index, tile)`, most recent last.
+    tiles: std::sync::Mutex<std::collections::VecDeque<(usize, std::sync::Arc<GatherTile>)>>,
+}
+
+/// Tiles kept by the gather cache (each `tile_i · tile_j · nk · 25` bytes).
+pub const GATHER_CACHE_TILES: usize = 4;
+
+impl GatherCache {
+    fn get(&self, idx: usize) -> Option<std::sync::Arc<GatherTile>> {
+        let mut q = self.tiles.lock().unwrap();
+        let p = q.iter().position(|(n, _)| *n == idx)?;
+        let e = q.remove(p).unwrap();
+        let t = e.1.clone();
+        q.push_back(e);
+        Some(t)
+    }
+
+    fn put(&self, idx: usize, t: std::sync::Arc<GatherTile>) {
+        let mut q = self.tiles.lock().unwrap();
+        if let Some(p) = q.iter().position(|(n, _)| *n == idx) {
+            q.remove(p);
+        }
+        q.push_back((idx, t));
+        while q.len() > GATHER_CACHE_TILES {
+            q.pop_front();
+        }
+    }
+
+    /// Bytes of gather results held (tests: memory bound).
+    fn bytes(&self) -> usize {
+        let q = self.tiles.lock().unwrap();
+        q.iter().map(|(_, t)| t.src.len() * 24 + t.id.len()).sum()
+    }
 }
 
 /// Default tile used for the global survey pass (does not affect results).
@@ -137,17 +171,17 @@ impl FaultModel {
         self
     }
 
-    /// The same model with a shared per-tile gather cache on the `grid`
+    /// The same model with a shared, bounded gather cache on the `grid`
     /// tiling (clones share it). Results are identical with and without
     /// the cache; it only removes repeated gathers of a heave run.
     pub fn with_gather_cache(mut self, grid: [usize; 2]) -> Self {
-        let [ni, nj, _] = self.shape;
+        let nj = self.shape[1];
         let grid = [grid[0].max(1), grid[1].max(1)];
-        let (nti, ntj) = (ni.div_ceil(grid[0]), nj.div_ceil(grid[1]));
+        let ntj = nj.div_ceil(grid[1]);
         self.cache = Some(std::sync::Arc::new(GatherCache {
             grid,
             ntj,
-            tiles: (0..nti * ntj).map(|_| std::sync::OnceLock::new()).collect(),
+            tiles: Default::default(),
         }));
         self
     }
@@ -198,29 +232,46 @@ impl FaultModel {
         }
     }
 
-    /// Gather results of the cache tile holding column `(i, j)`; `None`
-    /// without a cache.
-    fn cached_tile(&self, i: usize, j: usize) -> Option<std::sync::Arc<GatherTile>> {
-        let c = self.cache.as_ref()?;
-        let [ni, nj, _] = self.shape;
-        let (ti, tj) = (i / c.grid[0], j / c.grid[1]);
-        let t = c.tiles[ti * c.ntj + tj].get_or_init(|| {
-            let (i0, j0) = (ti * c.grid[0], tj * c.grid[1]);
-            std::sync::Arc::new(self.gather_block(
-                i0,
-                (i0 + c.grid[0]).min(ni),
-                j0,
-                (j0 + c.grid[1]).min(nj),
-            ))
-        });
-        Some(t.clone())
+    /// Bytes of gather results the cache currently holds (0 without one).
+    pub fn gather_cache_bytes(&self) -> usize {
+        self.cache.as_ref().map_or(0, |c| c.bytes())
     }
 
-    /// Continuous source `(i, j)` of every sample of column `(i, j)`
-    /// (from the gather cache when the model has one).
+    /// Gather results of `[i0,i1) × [j0,j1)`: from the cache when the block
+    /// is exactly one cache tile (gathered and cached if missing), else
+    /// gathered directly.
+    fn tile_gather(
+        &self,
+        i0: usize,
+        i1: usize,
+        j0: usize,
+        j1: usize,
+    ) -> std::sync::Arc<GatherTile> {
+        let [ni, nj, _] = self.shape;
+        if let Some(c) = self.cache.as_ref() {
+            let (g0, g1) = (c.grid[0], c.grid[1]);
+            if i0 % g0 == 0 && j0 % g1 == 0 && i1 == (i0 + g0).min(ni) && j1 == (j0 + g1).min(nj) {
+                let idx = (i0 / g0) * c.ntj + j0 / g1;
+                if let Some(t) = c.get(idx) {
+                    return t;
+                }
+                let t = std::sync::Arc::new(self.gather_block(i0, i1, j0, j1));
+                c.put(idx, t.clone());
+                return t;
+            }
+        }
+        std::sync::Arc::new(self.gather_block(i0, i1, j0, j1))
+    }
+
+    /// Continuous source `(i, j)` of every sample of column `(i, j)` (from
+    /// a cached tile when one holds the column, else gathered).
     pub fn column_sources(&self, i: usize, j: usize, out: &mut Vec<(f64, f64)>) {
         out.clear();
-        match self.cached_tile(i, j) {
+        let hit = self
+            .cache
+            .as_ref()
+            .and_then(|c| c.get((i / c.grid[0]) * c.ntj + j / c.grid[1]));
+        match hit {
             Some(t) => {
                 let o = t.offset(i, j);
                 out.extend(t.src[o..o + t.nk].iter().map(|s| (s[0], s[1])));
@@ -395,18 +446,10 @@ impl FaultModel {
         let mut src_ij = vec![(0.0f32, 0.0f32); n];
         let mut mask = vec![0u8; n];
         let mut segment_id = vec![0u8; n];
-        let own = if self.cache.is_none() {
-            Some(std::sync::Arc::new(self.gather_block(i0, i1, j0, j1)))
-        } else {
-            None
-        };
+        let g = self.tile_gather(i0, i1, j0, j1);
         for di in 0..ti {
             for dj in 0..tj {
                 let (i, j) = (i0 + di, j0 + dj);
-                let g = match &own {
-                    Some(t) => t.clone(),
-                    None => self.cached_tile(i, j).expect("cache"),
-                };
                 let o = g.offset(i, j);
                 let base = (di * tj + dj) * nk;
                 let wb = self.clamp.as_ref().map(|sb| sb.at(i, j, nj));

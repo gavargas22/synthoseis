@@ -263,12 +263,18 @@ footwall, a horizon map shows a gap (heave gap) along each fault.
   fault at the defaults; the throws of all faults are summed because a
   gather path can cross several hanging walls), so the output does not
   depend on `--chunk-i/--chunk-j`. Labels and volumes are faulted in place
-  strip by strip from a window of the unfaulted rows `[i0 − H, i1 + H)`;
+  strip by strip from a window of the unfaulted rows `[i0 − H, i1 + H)`
+  (a full-`nj` strip of `tile_i + 2H` rows);
   every source read is asserted to lie in the tile plus halo, and the cube
   is never copied whole.
-- Each tile is gathered once per run: the fault model lives in the
-  geometry cache with a per-tile gather cache, shared by the labels, rock
-  physics (`column_sources`), time-mode labels and partial voxels.
+- The fault model lives in the geometry cache with a bounded gather cache
+  of the last `GATHER_CACHE_TILES` (4) tiles, filled by the tile consumers
+  (labels, time-mode labels, partial voxels); rock physics
+  (`column_sources`) reads a cached tile or gathers the column. Memory is
+  fixed by the tile size, not the cube (max RSS at `--chunk-i/j 32`,
+  ×256, 4 faults: master 134 / 491 MB at 128² / 256², heave 173 / 541 MB;
+  it was 243 / 901 MB with a whole-cube cache). Test:
+  `kinematics_tests.rs::gather_cache_memory_is_bounded_by_the_tile`.
 - Salt is stationary: the body is emplaced after faulting (fault ∧ salt = 0
   in every output), so the salt kind is decided at the output column while
   the sediments next to it come from their source columns. Where a source
