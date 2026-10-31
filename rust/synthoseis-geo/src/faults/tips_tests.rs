@@ -254,3 +254,47 @@ fn tips_leave_the_fault_draws_alone() {
         assert_eq!(t.factor(t.c[0], t.c[1], t.c[2]), 1.0);
     }
 }
+
+/// Taper shape and aspect (adopted from Strata's PR #60 review): along strike
+/// and dip, measured in metres from the centre, the factor is exactly
+/// cos²(πr/2) at r = 0.25, 0.5, 0.75 and 0.9, and the strike length is twice
+/// the dip height (A = 2, 2·R_s = L). Kills a linear taper and A = 1.
+#[test]
+fn taper_shape_and_aspect() {
+    let p = HeaveParams::default();
+    let sc = [p.bin_m, p.bin_m, p.dz_m];
+    for seed in 1..=10u64 {
+        let params = sample_random_faults(
+            SHAPE,
+            &RandomFaultConfig {
+                count: 2,
+                ..RandomFaultConfig::default()
+            },
+            seed,
+        );
+        let m = FaultModel::resolve(SHAPE, &params, &Seabed::Flat(4.0), seed)
+            .with_kinematics(FaultKinematics::Heave(p))
+            .with_tips(seed, &TipParams::default());
+        for f in m.faults() {
+            let t = f.tip.as_ref().expect("tips on");
+            assert!((2.0 * t.r_s - t.length).abs() < 1e-9, "2·R_s ≠ L");
+            assert!(
+                (t.r_s - 2.0 * t.r_t).abs() < 1e-9,
+                "aspect {}",
+                t.r_s / t.r_t
+            );
+            for r in [0.25f64, 0.5, 0.75, 0.9] {
+                for (dir, rad) in [(t.s_hat, t.r_s), (t.t_hat, t.r_t)] {
+                    let u = r * rad;
+                    let fa = t.factor(
+                        t.c[0] + u * dir[0] / sc[0],
+                        t.c[1] + u * dir[1] / sc[1],
+                        t.c[2] + u * dir[2] / sc[2],
+                    );
+                    let want = (std::f64::consts::FRAC_PI_2 * r).cos().powi(2);
+                    assert!((fa - want).abs() < 1e-9, "r={r}: factor {fa}, want {want}");
+                }
+            }
+        }
+    }
+}
