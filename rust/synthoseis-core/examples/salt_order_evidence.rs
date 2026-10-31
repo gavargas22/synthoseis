@@ -40,7 +40,10 @@ fn main() {
         let j = m::jaccard(&rp, &rm, &s);
         let (w, l, nm, un) = m::warp_checks(&rp, &s);
         let jo = m::jaccard_outside(&rp, &rm, &s, &m::exposed_mask(&rm, &s, &und));
-        let ((p2, p5), (o2, o5)) = (m::stretch_fractions(&rp, &s), m::stretch_fractions(&m::unfaulted_warp_run(seed, shape), &s));
+        let ((p2, p5), (o2, o5)) = (
+            m::stretch_fractions(&rp, &s),
+            m::stretch_fractions(&m::unfaulted_warp_run(seed, shape), &s),
+        );
         println!(
             "{seed}\t{ep}\t{em}\t{:.4}%\t{sp:.5}\t{sm:.5}\t{so:.5}\t{:.3}\t{:.3}\t{j:.4}\t{w}\t{l:.2}\t{nm}\t{un}\t{jo:.4}\t{p2:.5}\t{o2:.5}\t{p5:.5}\t{o5:.5}",
             100.0 * em as f64 / nonsalt as f64,
@@ -61,7 +64,10 @@ fn main() {
             w("faults.u8", &rp.fault_id);
             let le = |v: &[u32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
             w("post_warp.u32", &le(&rp.warp));
-            w("off_warp.u32", &le(&m::unfaulted_warp_run(seed, shape).warp));
+            w(
+                "off_warp.u32",
+                &le(&m::unfaulted_warp_run(seed, shape).warp),
+            );
             let sm: Vec<u8> = (0..shape[0] * shape[1])
                 .flat_map(|q| (0..shape[2]).map(move |k| (q, k)))
                 .map(|(q, k)| s.contains(q, k) as u8)

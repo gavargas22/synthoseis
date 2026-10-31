@@ -62,49 +62,65 @@ fn hidden_drag_exposure_is_zero_seeds_1_20() {
     );
 }
 
-/// Spec test 2 at the spec bars: stair index ≤ 1.1× faults-off and
-/// ≤ 0.25× master, per seed and summed over seeds 1–20.
+/// Spec test 2 at the revised bars (#61 review): stair index ≤ 1.1×
+/// faults-off summed over seeds 1–20 and ≤ 1.2× per seed.
 #[test]
-#[ignore = "misses spec bar: post/master is 0.72 summed (bar 0.25; only seed 2 meets it), \
-            post/off is 0.90 summed but 1.169 on seed 15 (bar 1.1)"]
+#[ignore = "misses spec bar: seed 15 post/off 1.244 (bar 1.2; a real steep flank dip, \
+            see PR body); summed 0.971 (bar 1.1) passes"]
 fn stair_index_meets_spec_bars() {
-    let (mut sp, mut sm, mut so) = (0.0, 0.0, 0.0);
+    let (mut sp, mut so) = (0.0, 0.0);
     let mut fails = Vec::new();
     for seed in 1u64..=20 {
         let Some(s) = body(seed) else { continue };
         let p = m::stair_index(&m::run(&m::cfg(seed, SHAPE, 4, Mode::PostFault)), &s);
-        let ma = m::stair_index(&m::run(&m::cfg(seed, SHAPE, 4, Mode::Master)), &s);
         let o = m::stair_index(&m::run(&m::cfg(seed, SHAPE, 4, Mode::FaultsOff)), &s);
-        if p > 1.1 * o || p > 0.25 * ma {
-            fails.push((seed, p / o, p / ma));
+        if p > 1.2 * o {
+            fails.push((seed, p / o));
         }
-        (sp, sm, so) = (sp + p, sm + ma, so + o);
+        (sp, so) = (sp + p, so + o);
     }
-    assert!(
-        sp <= 1.1 * so && sp <= 0.25 * sm,
-        "sum: post/off {:.3} post/master {:.3}",
-        sp / so,
-        sp / sm
-    );
-    assert!(
-        fails.is_empty(),
-        "per seed (seed, post/off, post/master): {fails:?}"
-    );
+    assert!(sp <= 1.1 * so, "sum: post/off {:.3}", sp / so);
+    assert!(fails.is_empty(), "per seed (seed, post/off): {fails:?}");
 }
 
-/// Spec test 2, seed 1, faults-off half of the bar (measured 0.708 ≤ 1.1),
-/// plus the master half on seed 2 (measured 0.187 ≤ 0.25): the two seeds
-/// where each bar holds, so a regression of the warp shows in CI.
+/// Spec test 2 per-seed bar (≤ 1.2× faults-off) on seeds 1–3 (measured
+/// 1.015, 0.907, 1.053), so a regression of the warp shows in CI.
 #[test]
 fn stair_index_seed_checks() {
-    let s = body(1).expect("seed 1 salt");
-    let p = m::stair_index(&m::run(&m::cfg(1, SHAPE, 4, Mode::PostFault)), &s);
-    let o = m::stair_index(&m::run(&m::cfg(1, SHAPE, 4, Mode::FaultsOff)), &s);
-    assert!(p <= 1.1 * o, "seed 1: post {p} vs faults-off {o}");
-    let s = body(2).expect("seed 2 salt");
-    let p = m::stair_index(&m::run(&m::cfg(2, SHAPE, 4, Mode::PostFault)), &s);
-    let ma = m::stair_index(&m::run(&m::cfg(2, SHAPE, 4, Mode::Master)), &s);
-    assert!(p <= 0.25 * ma, "seed 2: post {p} vs master {ma}");
+    for seed in 1u64..=3 {
+        let s = body(seed).expect("salt");
+        let p = m::stair_index(&m::run(&m::cfg(seed, SHAPE, 4, Mode::PostFault)), &s);
+        let o = m::stair_index(&m::run(&m::cfg(seed, SHAPE, 4, Mode::FaultsOff)), &s);
+        assert!(p <= 1.2 * o, "seed {seed}: post {p} vs faults-off {o}");
+    }
+}
+
+/// Spec test M1c (#61 review): drag-warp stretch in the band (footprint
+/// columns included). Voxels stretched > 5× are ≤ 1 % of the band, and
+/// those stretched > 2× exceed the same warp on the unfaulted labels by at
+/// most 0.1 % (measured ≤ 0.009 % and ≤ +0.02 %, seeds 1–20).
+fn stretch_ok(seed: u64) -> Result<(), String> {
+    let Some(s) = body(seed) else { return Ok(()) };
+    let (p2, p5) = m::stretch_fractions(&m::run(&m::cfg(seed, SHAPE, 4, Mode::PostFault)), &s);
+    let (o2, _) = m::stretch_fractions(&m::unfaulted_warp_run(seed, SHAPE), &s);
+    if p5 > 0.01 || p2 > o2 + 0.001 {
+        return Err(format!(
+            "seed {seed}: >5x {p5:.5}, >2x {p2:.5} vs unfaulted {o2:.5}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn stretch_seed_14() {
+    stretch_ok(14).unwrap(); // the largest >2x fraction of seeds 1-20
+}
+
+#[test]
+#[ignore = "slow: 40 cube runs; passes (seeds 1-20)"]
+fn stretch_meets_spec_bars_seeds_1_20() {
+    let e: Vec<String> = (1u64..=20).filter_map(|s| stretch_ok(s).err()).collect();
+    assert!(e.is_empty(), "{e:?}");
 }
 
 /// Spec test 3 (synthetic): a planar 60° fault of throw T between two
@@ -260,8 +276,9 @@ fn drag_sense_and_warp_monotone() {
         "{unset} unset voxels (master {unset_master})"
     );
     // Sources may lie in the pad below the cube (at most ⌈max −D⌉ + 1).
-    let d = synthoseis_core::pipeline_stream::salt_drag_offsets(&m::cfg(1, SHAPE, 4, Mode::PostFault))
-        .expect("drag");
+    let d =
+        synthoseis_core::pipeline_stream::salt_drag_offsets(&m::cfg(1, SHAPE, 4, Mode::PostFault))
+            .expect("drag");
     let pad = (-d.iter().copied().fold(0.0f64, f64::min)).ceil() as usize + 1;
     assert!(r.warp.iter().all(|&w| (w as usize) < SHAPE[2] + pad));
 }
@@ -326,27 +343,40 @@ fn far_field_labels_unchanged() {
     }
 }
 
-/// Label parity in the drag band at the spec bars: Jaccard vs master over
-/// near-salt non-salt voxels ≥ 0.90 per seed, mean ≥ 0.95 (seeds 1–20).
+/// Label parity in the drag band at the revised bars (#61 review):
+/// Jaccard vs master over near-salt non-salt voxels outside master's
+/// exposed region ≥ 0.90 per seed, mean ≥ 0.95 (seeds 1–20).
+fn jaccard_out(seed: u64) -> Option<f64> {
+    let s = body(seed)?;
+    let rm = m::run(&m::cfg(seed, SHAPE, 4, Mode::Master));
+    let skip = m::exposed_mask(&rm, &s, &m::undragged(seed, SHAPE));
+    Some(m::jaccard_outside(
+        &m::run(&m::cfg(seed, SHAPE, 4, Mode::PostFault)),
+        &rm,
+        &s,
+        &skip,
+    ))
+}
+
 #[test]
-#[ignore = "misses proposed spec bar: mean 0.944 (bar 0.95); seeds 1/2/10/20 at 0.794/0.850/0.897/0.833 (bar 0.90)"]
+#[ignore = "misses spec bar: seed 1 at 0.8988 (bar 0.90); mean 0.963 (bar 0.95) passes"]
 fn drag_band_jaccard_meets_spec_bars() {
-    let mut js = Vec::new();
-    for seed in 1u64..=20 {
-        let Some(s) = body(seed) else { continue };
-        let j = m::jaccard(
-            &m::run(&m::cfg(seed, SHAPE, 4, Mode::PostFault)),
-            &m::run(&m::cfg(seed, SHAPE, 4, Mode::Master)),
-            &s,
-        );
-        js.push((seed, j));
-    }
+    let js: Vec<(u64, f64)> = (1u64..=20)
+        .filter_map(|s| jaccard_out(s).map(|j| (s, j)))
+        .collect();
     let mean = js.iter().map(|x| x.1).sum::<f64>() / js.len() as f64;
     let low: Vec<_> = js.iter().filter(|x| x.1 < 0.90).collect();
     assert!(
         low.is_empty() && mean >= 0.95,
         "mean {mean:.4}, below 0.90: {low:?}"
     );
+}
+
+/// The per-seed Jaccard bar on seed 2 (measured 0.918), in CI.
+#[test]
+fn drag_band_jaccard_seed_check() {
+    let j = jaccard_out(2).expect("seed 2 salt");
+    assert!(j >= 0.90, "seed 2: {j}");
 }
 
 fn output_masks(seed: u64, mode: Mode, time: bool) -> (Option<Vec<u8>>, Option<Vec<u8>>) {

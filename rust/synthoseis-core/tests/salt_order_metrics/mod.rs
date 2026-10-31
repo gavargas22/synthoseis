@@ -86,7 +86,15 @@ pub fn unfaulted_warp_run(seed: u64, shape: [usize; 3]) -> Run {
     let maps = maps(&c);
     let nh = d.len() / (shape[0] * shape[1]);
     let mut warp = Vec::new();
-    synthoseis_core::salt::drag_warp_labels(&mut labels, shape, &d, &maps, nh, &table, Some(&mut warp));
+    synthoseis_core::salt::drag_warp_labels(
+        &mut labels,
+        shape,
+        &d,
+        &maps,
+        nh,
+        &table,
+        Some(&mut warp),
+    );
     Run {
         shape,
         labels,
@@ -350,10 +358,17 @@ pub fn stretch_fractions(r: &Run, s: &SaltBody) -> (f64, f64) {
             }
             let (lo, hi) = (k.saturating_sub(4), (k + 4).min(nk - 1));
             let span = r.warp[q * nk + hi] as f64 - r.warp[q * nk + lo] as f64;
-            let st = if span <= 0.0 { f64::INFINITY } else { (hi - lo) as f64 / span };
+            let st = if span <= 0.0 {
+                f64::INFINITY
+            } else {
+                (hi - lo) as f64 / span
+            };
             over2 += (st > 2.0) as usize;
             over5 += (st > 5.0) as usize;
         }
     }
-    (over2 as f64 / n.max(1) as f64, over5 as f64 / n.max(1) as f64)
+    (
+        over2 as f64 / n.max(1) as f64,
+        over5 as f64 / n.max(1) as f64,
+    )
 }
