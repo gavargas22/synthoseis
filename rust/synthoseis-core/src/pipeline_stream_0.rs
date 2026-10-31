@@ -129,17 +129,22 @@ pub(crate) fn salt_drag_raw_intervals(
         return None;
     }
     let [ni, nj, _] = cfg.shape();
-    Some(drag_label_table(&fill_layer_labels(maps, [ni, nj, nh], nk)))
+    // One inline row at a time: the fill is per column, so the values
+    // present are the same as in the full cube, without a cube-sized copy.
+    let mut present = [false; 256];
+    for i in 0..ni {
+        let row = &maps[i * nj * nh..(i + 1) * nj * nh];
+        for v in fill_layer_labels(row, [1, nj, nh], nk) {
+            present[v as usize] = true;
+        }
+    }
+    Some(drag_label_table(&present))
 }
 
 /// The table of [`generate_labels`]' relabelling (`v + 1`, 255 → 0,
 /// consecutive ranks, no size filter at 1 voxel, then `− 1`) from the set
-/// of values present, without a voxel-sized scratch copy.
-fn drag_label_table(raw: &[u8]) -> [u8; 256] {
-    let mut present = [false; 256];
-    for &v in raw {
-        present[v as usize] = true;
-    }
+/// of raw interval values present, without a voxel-sized scratch copy.
+fn drag_label_table(present: &[bool; 256]) -> [u8; 256] {
     // Rank of `v + 1` among the present codes; code 0 (raw 255) ranks first.
     let mut rank = usize::from(present[255]);
     let mut table = [u8::MAX; 256];
