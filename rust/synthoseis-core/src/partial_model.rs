@@ -129,7 +129,7 @@ impl PartialModel {
         let drag_band = if cfg.salt_post_fault_drag() {
             crate::pipeline_stream::salt_drag_offsets(cfg).map_or(Vec::new(), |d| {
                 d.chunks_exact(nh)
-                    .map(|c| c.iter().any(|&v| v != 0.0))
+                    .map(crate::salt::drag_column_active)
                     .collect()
             })
         } else {
