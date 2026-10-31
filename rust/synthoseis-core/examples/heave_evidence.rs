@@ -10,6 +10,11 @@
 //! python rust/synthoseis-core/examples/plot_heave_evidence.py /tmp/fig OUT_PREFIX
 //! ```
 //!
+//! 7b (tip lines) evidence: pass the `--legacy-fault-profile` store first,
+//! the default store second, and `profile` as a 6th argument to print the
+//! stats of the 7a model instead of the default 7b one; tip lines are
+//! listed per fault when present. Plot with labels `7a 7b`.
+//!
 //! Stats are over the hanging-wall voxels of each fault's label band
 //! (`|f − 1| / |∇f| ≤ LABEL_BAND_VOXELS`) with throw > 1 sample; "peak" is
 //! the voxel of largest throw; a fault with no such voxel prints `n=0`.
@@ -70,7 +75,10 @@ fn main() {
         inline_count: ni,
         crossline_count: nj,
         samples: nk,
-        faults: synthoseis_core::FaultConfig::with_count(count),
+        faults: synthoseis_core::FaultConfig {
+            legacy_profile: a.get(6).is_some_and(|x| x == "profile"),
+            ..synthoseis_core::FaultConfig::with_count(count)
+        },
         ..Default::default()
     };
     let m = synthoseis_core::pipeline_stream::fault_model(&cfg).expect("faulted model");
@@ -107,6 +115,12 @@ fn main() {
                     h.push(hm);
                 }
             }
+        }
+        if let Some(tl) = &f.tip {
+            stats.push_str(&format!(
+                "fault {}: tip gamma {:.4} D_max {:.1} m L {:.0} m R_s {:.0} m R_t {:.0} m dip_c {:.1} deg\n",
+                n + 1, tl.gamma, tl.d_max, tl.length, tl.r_s, tl.r_t, tl.dip_c_deg
+            ));
         }
         all_t.extend(&t);
         all_h.extend(&h);

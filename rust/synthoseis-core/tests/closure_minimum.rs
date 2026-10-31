@@ -188,22 +188,49 @@ fn scaled_minimum_survival() {
     );
     assert!(with_trap >= 8, "{with_trap}/12");
     assert_eq!(with_trap_500, 5);
-    assert_kept_volume(&[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)]);
+    // The 98 % gate is pinned on the 7a fault profile
+    // (`--legacy-fault-profile`, #59 head); the 7b tip taper (default)
+    // leaves more small closures where the throw fades out (measured in
+    // the 7b PR: see `KEPT_7B`).
+    assert_kept_volume(
+        &[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)],
+        true,
+        0.98,
+    );
+    assert_kept_volume(
+        &[([32, 32, 128], 1..=12), ([32, 32, 256], 1..=12)],
+        false,
+        KEPT_7B,
+    );
 }
+
+/// Kept-closure-volume floor on the 7b default (tip-bounded throw). With
+/// 3 faults, 12 seeds: 32×32×128 97.98 % (7a 98.34 %), 32×32×256 98.93 %
+/// (98.99 %), 64×64×256 99.43 % (99.49 %), 128×128×256 99.01 % (98.90 %);
+/// unfaulted cubes are unchanged. Only the smallest faulted cube dips under
+/// 98 %, so the 7b floor is 97.5 % and the 98 % gate stays on 7a.
+const KEPT_7B: f64 = 0.975;
 
 /// §6.3 kept-volume gate on 64×64×256 and 128×128×256, 12 seeds each.
 #[test]
 #[ignore = "nightly: 64^2/128^2 closure-minimum sweep (about 1 min optimized)"]
 fn scaled_minimum_survival_medium_cubes() {
-    assert_kept_volume(&[([64, 64, 256], 1..=12), ([128, 128, 256], 1..=12)]);
+    let cubes = [([64, 64, 256], 1..=12), ([128, 128, 256], 1..=12)];
+    assert_kept_volume(&cubes, true, 0.98);
+    assert_kept_volume(&cubes, false, KEPT_7B);
 }
 
-fn assert_kept_volume(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
+fn assert_kept_volume(
+    cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)],
+    legacy_profile: bool,
+    floor: f64,
+) {
     for (shape, seeds) in cubes.iter().cloned() {
         for faults in [0, 3] {
             let (mut kept, mut total) = (0usize, 0usize);
             for seed in seeds.clone() {
-                let c = cfg(shape, faults, seed);
+                let mut c = cfg(shape, faults, seed);
+                c.faults.legacy_profile = legacy_profile;
                 let (labels, sh) = generate_labels(&c);
                 let k = closure_census(&c, &labels, sh).unwrap();
                 kept += k.sizes.iter().filter(|&&v| v >= k.minimum).sum::<usize>();
@@ -211,10 +238,10 @@ fn assert_kept_volume(cubes: &[([usize; 3], std::ops::RangeInclusive<u64>)]) {
             }
             let frac = kept as f64 / total.max(1) as f64;
             eprintln!(
-                "{shape:?} f{faults}: kept closure volume {:.1} %",
+                "{shape:?} f{faults} legacy_profile={legacy_profile}: kept closure volume {:.2} %",
                 100.0 * frac
             );
-            assert!(frac >= 0.98, "{shape:?} f{faults}: {frac}");
+            assert!(frac >= floor, "{shape:?} f{faults}: {frac}");
         }
     }
 }
@@ -230,8 +257,20 @@ fn salt_case_keeps_walled_closures_on_the_default() {
     // 7e80f2af (`--legacy-fold-geometry`), the folded geometry of #56
     // (`--legacy-unconformity`) and the default with the unconformity.
     for (legacy_fold, legacy_unconf, want, kept, kept_500) in [
-        (true, false, &[1070, 632, 364, 351, 138, 6, 2, 1, 1, 1, 1, 1][..], 5, 2),
-        (false, true, &[618, 336, 245, 206, 171, 3, 2, 2, 2, 1, 1, 1, 1][..], 5, 1),
+        (
+            true,
+            false,
+            &[1070, 632, 364, 351, 138, 6, 2, 1, 1, 1, 1, 1][..],
+            5,
+            2,
+        ),
+        (
+            false,
+            true,
+            &[618, 336, 245, 206, 171, 3, 2, 2, 2, 1, 1, 1, 1][..],
+            5,
+            1,
+        ),
         (false, false, &[618, 336, 206, 56, 3, 1, 1, 1][..], 4, 1),
     ] {
         let mut c = cfg([24, 20, 128], 4, 102);
@@ -246,7 +285,8 @@ fn salt_case_keeps_walled_closures_on_the_default() {
         eprintln!("salt case compartments {sizes:?}");
         assert_eq!(sizes, want);
         assert_eq!((k.minimum, k.kept()), (20, kept));
-        let legacy = closure_census(&with_minimum(&c, ClosureMinimum::LEGACY), &labels, sh).unwrap();
+        let legacy =
+            closure_census(&with_minimum(&c, ClosureMinimum::LEGACY), &labels, sh).unwrap();
         assert_eq!(legacy.kept(), kept_500, "legacy_fold={legacy_fold}");
         if !legacy_fold && legacy_unconf {
             continue_rest(&c, &labels, sh);
