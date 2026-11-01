@@ -410,3 +410,59 @@ pub fn stair_with_baseline(seed: u64, shape: [usize; 3], s: &SaltBody) -> (f64, 
     let flat = stair_index(&flat_run(seed, shape), s);
     (p, mm, o + f - flat, o)
 }
+
+/// Independent post-fault drag reference for the Jaccard bar (Strata
+/// ruling on #61 at e35b2b76). Per output column of the faulted undragged
+/// labels `src`: knots at the run tops `a → a + D(a)` (present depth, no
+/// clamp beyond ≥ 0), end knot `2nk → 2nk + D(2nk)`; output cell `k` takes
+/// `src[floor(z)]` at the first segment whose output range holds `k + ½`.
+/// Written apart from `drag_warp_labels` (no pad, no push-up clamp), so it
+/// differs from it only in the clamp and half-sample rounding.
+pub fn analytic_drag(src: &[u8], d: &[f64], maps: &[f64], shape: [usize; 3]) -> Vec<u8> {
+    let [ni, nj, nk] = shape;
+    let nh = d.len() / (ni * nj);
+    let mut out = src.to_vec();
+    for q in 0..ni * nj {
+        let dc = &d[q * nh..(q + 1) * nh];
+        if dc.iter().all(|v| v.abs() < 0.5) {
+            continue;
+        }
+        let mc = &maps[q * nh..(q + 1) * nh];
+        let dz = |z: f64| synthoseis_core::salt::depth_offset(mc, dc, z);
+        let col = &src[q * nk..(q + 1) * nk];
+        let mut kn = vec![(0.0f64, 0.0f64)];
+        for a in 1..nk {
+            if col[a] != col[a - 1] {
+                kn.push((a as f64, (a as f64 + dz(a as f64)).max(0.0)));
+            }
+        }
+        let n = 2.0 * nk as f64;
+        kn.push((n, n + dz(n)));
+        for k in 0..nk {
+            let y = k as f64 + 0.5;
+            let z = kn
+                .windows(2)
+                .find(|w| w[1].1 > w[0].1 && y >= w[0].1 && y < w[1].1)
+                .map(|w| w[0].0 + (y - w[0].1) / (w[1].1 - w[0].1) * (w[1].0 - w[0].0))
+                .unwrap_or(nk as f64 - 1.0);
+            out[q * nk + k] = col[(z.floor() as usize).min(nk - 1)];
+        }
+    }
+    out
+}
+
+/// Band Jaccard of the post-fault run of `seed` against [`analytic_drag`].
+pub fn jaccard_vs_analytic(seed: u64, shape: [usize; 3], s: &SaltBody) -> f64 {
+    let c = cfg(seed, shape, 4, Mode::PostFault);
+    let rp = run(&c);
+    let src = synthoseis_core::pipeline_stream::faulted_labels_undragged(&c);
+    let d = synthoseis_core::pipeline_stream::salt_drag_offsets(&c).expect("drag");
+    let ra = Run {
+        shape,
+        labels: analytic_drag(&src, &d, &maps(&c), shape),
+        warp: Vec::new(),
+        src: None,
+        fault_id: Vec::new(),
+    };
+    jaccard(&rp, &ra, s)
+}

@@ -468,6 +468,36 @@ fn drag_band_jaccard_seed_check() {
     assert!(j >= 0.90, "seed 2: {j}");
 }
 
+/// Label parity in the drag band (Strata ruling on #61 at e35b2b76):
+/// Jaccard vs an independent post-fault drag (`m::analytic_drag`, per output
+/// column at present depth, not `drag_warp_labels`) ≥ 0.97 per seed and
+/// ≥ 0.98 mean over seeds 1–20 (measured min 0.9832 seed 16, mean 0.9956).
+/// Jaccard vs master outside its exposed region is printed (informational:
+/// master drags in pre-fault coordinates).
+#[test]
+#[ignore = "slow: 40 cube runs; passes (min 0.983 seed 16, mean 0.996)"]
+fn drag_band_jaccard_vs_analytic() {
+    let mut js = Vec::new();
+    for seed in 1u64..=20 {
+        let Some(s) = body(seed) else { continue };
+        let j = m::jaccard_vs_analytic(seed, SHAPE, &s);
+        eprintln!("seed {seed}: J analytic {j:.4} J master-out {:.4}", jaccard_out(seed).unwrap());
+        js.push((seed, j));
+    }
+    let mean = js.iter().map(|x| x.1).sum::<f64>() / js.len() as f64;
+    let low: Vec<_> = js.iter().filter(|x| x.1 < 0.97).collect();
+    eprintln!("mean {mean:.4}");
+    assert!(low.is_empty() && mean >= 0.98, "mean {mean:.4}, below 0.97: {low:?}");
+}
+
+/// The per-seed analytic Jaccard bar on seed 2, in CI.
+#[test]
+fn drag_band_jaccard_analytic_seed_check() {
+    let s = body(2).expect("seed 2 salt");
+    let j = m::jaccard_vs_analytic(2, SHAPE, &s);
+    assert!(j >= 0.97, "seed 2: {j}");
+}
+
 fn output_masks(seed: u64, mode: Mode, time: bool) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
     let mut c = m::cfg(seed, [64, 64, 128], 4, mode);
     c.time = if time {
