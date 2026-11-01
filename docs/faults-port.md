@@ -347,11 +347,13 @@ drag-off output is byte-identical to master b22dbb67 (96/96 configs).
   `W = ω·D_max` capped at `--fault-drag-max-width-m` (default `3·D_max`,
   400 m).
 - Hanging wall `w = +s·β_h·D_loc·g`, footwall `w = −s·β_f·D_loc·g`
-  (defaults β_h 0.30, β_f 0.15), with `s = +1` normal and `−1` reverse.
+  (defaults β_h 0.30, β_f 0.15), with `s = +1` reverse and `−1` normal.
   `--fault-drag-sense auto` picks reverse when the physical dip at the
   fault centre is ≥ 35°.
-- Monotone source: `B = β·T_max·(π/2)·dz/W_min < 0.5`. Larger β is
-  clamped with a warning. Normal sense needs β_h + β_f ≤ 0.9.
+- Per-fault slope clamp (spec §3 step 1): `B_f = β·T_f·(π/2)·cos θ_f·dz/W_f`
+  with `W_f = min(ω·D_max,f, 400 m)`. Both β_h and β_f are clamped per fault
+  so that `B_f ≤ 0.16`; each clamp (fault, T_f, W_f, θ_f, β before and
+  after) is written to the run metadata. Normal sense needs β_h + β_f ≤ 0.9.
 - A bottom pad of `P = ceil(β_f·T_max) + 1` samples is filled, so that
   footwall uplift reads real strata at the cube bottom.
 - Flags: `--fault-drag-hw`, `--fault-drag-fw`, `--fault-drag-width`,

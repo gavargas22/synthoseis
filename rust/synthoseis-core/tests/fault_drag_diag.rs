@@ -237,3 +237,143 @@ fn t4_diag() {
         eprintln!("T4D seed {seed} {sense:?}: new inverted cols {cols}; zones overlapping the column {nzones:?}; combined drag-shift |grad| max {gmax_all:.3}, cols >0.5: {grad_gt}; cols where the drag-on lookup decreases off the planes {fold_cols} (lookup monotone with drag off there: {fold_offplane}); thinnest drag-off layer per col (samples) {thick:?}; beta_h {} beta_f {} B {:.3}", dm.beta_h, dm.beta_f, dm.b);
     }
 }
+
+/// Per-stage trace of the drag gather (re-derived here from the public
+/// pieces, checked against the pipeline lookup): per fault n,
+/// (z_in, v, rho_m, d, w, a_out).
+fn trace(fm: &synthoseis_geo::faults::FaultModel, dm: &synthoseis_geo::faults::DragModel, i: usize, j: usize, k: usize) -> (f64, Vec<(usize, f64, f64, f64, f64, f64, f64)>) {
+    use synthoseis_geo::faults::{heave_vector, FaultKinematics, HeaveParams};
+    let p = match fm.kinematics() { FaultKinematics::Heave(p) => p, _ => HeaveParams { heave_scale: 0.0, ..HeaveParams::default() } };
+    let [ni, nj, nk] = fm.shape();
+    let top = (nk - 1) as f64;
+    let top_src = top + dm.pad as f64;
+    let (mut x, mut y, mut z) = (i as f64, j as f64, k as f64);
+    let mut out = vec![];
+    let nf = fm.faults().len();
+    for n in (0..nf).rev() {
+        let f = &fm.faults()[n];
+        let lat = if f.tip.is_some() { 0.0 } else { f.lateral_at(x, y) };
+        let st = |kk: usize| {
+            let zz = kk as f64;
+            let v = f.geometry.value_at(x, y, zz);
+            let wt = match &f.tip { Some(t) => t.factor(x, y, zz), None => lat };
+            let dl = wt * f.profile[kk];
+            let d = if v <= 1.0 { dl } else { 0.0 };
+            if dl == 0.0 { return ((zz - d).clamp(0.0, top_src), [0.0, 0.0], v, d, 0.0); }
+            let g = f.geometry.gradient_at(x, y, zz);
+            let w = dm.displacement(n, v, g, dl);
+            let a = (zz - d - w).clamp(0.0, top_src);
+            let h = if d == 0.0 { [0.0, 0.0] } else { heave_vector(f, &p, x, y, zz, d) };
+            (a, h, v, d, w)
+        };
+        let zc = z.clamp(0.0, top);
+        let excess = z - zc;
+        let k0 = zc.floor() as usize;
+        let fr = zc - k0 as f64;
+        let (a0, h0, v0, d0, w0) = st(k0);
+        let (mut a, h, d, w) = if fr == 0.0 { (a0, h0, d0, w0) } else {
+            let (a1, h1, _, d1, w1) = st((k0 + 1).min(nk - 1));
+            (a0 + fr * (a1 - a0), [h0[0] + fr * (h1[0] - h0[0]), h0[1] + fr * (h1[1] - h0[1])], d0 + fr * (d1 - d0), w0 + fr * (w1 - w0))
+        };
+        if excess > 0.0 { a = (a + excess).clamp(0.0, top_src) }
+        let (_, rho, _) = zone(f, dm.bin_m, dm.dz_m, x, y, k0);
+        out.push((n, z, v0, rho, d, w, a));
+        z = a as f32 as f64;
+        x = (x - h[0]).clamp(0.0, (ni - 1) as f64);
+        y = (y - h[1]).clamp(0.0, (nj - 1) as f64);
+    }
+    (z, out)
+}
+
+#[test]
+#[ignore = "diagnostic"]
+fn t4_seed18_trace() {
+    for (seed, sense) in [(18u64, DragSense::Auto), (7, DragSense::Reverse), (14, DragSense::Reverse)] {
+        let c = m::cfg(seed, [32, 32, 128], 4, Mode::PostFault);
+        let off = m::run(&c);
+        let on = m::run(&with_drag(&c, Some(sense)));
+        let fm = synthoseis_core::fault_model(&with_drag(&c, Some(sense))).unwrap();
+        let dm = fm.drag().unwrap();
+        let [ni, nj, nk] = off.shape;
+        let (lo, l1) = (&off.src.as_ref().unwrap().1, &on.src.as_ref().unwrap().1);
+        let mut mism = 0;
+        for q in 0..ni * nj { for k in 0..nk { if (trace(&fm, dm, q / nj, q % nj, k).0 as f32 - l1[q * nk + k]).abs() > 1e-3 { mism += 1 } } }
+        eprintln!("TR seed {seed} {sense:?}: trace vs pipeline lookup mismatches {mism}; s {:?} W_m {:?}", dm.faults.iter().map(|f| f.s).collect::<Vec<_>>(), dm.faults.iter().map(|f| f.w_m.round()).collect::<Vec<_>>());
+        let mut shown = 0;
+        let mut cls = std::collections::BTreeMap::new();
+        for q in 0..ni * nj {
+            let co = &off.labels[q * nk..(q + 1) * nk];
+            let cn = &on.labels[q * nk..(q + 1) * nk];
+            if !hard_inv(cn) || hard_inv(co) { continue; }
+            let mut run = 1;
+            for k in 1..nk {
+                if cn[k] == cn[k - 1] { run += 1; continue; }
+                if cn[k] < cn[k - 1] && run >= 2 && cn[k] != 255 && cn[k - 1] != 255 {
+                    let (a, b) = (k.saturating_sub(3), (k + 2).min(nk - 1));
+                    let near = (k.saturating_sub(3)..(k + 3).min(nk)).any(|x| on.fault_id[q * nk + x] != 0 || off.fault_id[q * nk + x] != 0);
+                    let son = l1[q * nk + b] - l1[q * nk + a];
+                    // decreasing steps of the drag-on lookup in the window, and which fault's (d, w) changed most there
+                    for kk in a..b {
+                        let (z0, t0) = trace(&fm, dm, q / nj, q % nj, kk);
+                        let (z1, t1) = trace(&fm, dm, q / nj, q % nj, kk + 1);
+                        if z1 >= z0 { continue; }
+                        // per fault: change in d and w, and which side (v<=1)
+                        let mut key = String::new();
+                        for (s0, s1) in t0.iter().zip(t1.iter()) {
+                            if (s0.4 - s1.4).abs() > 0.5 || (s0.5 - s1.5).abs() > 0.5 || (s0.2 <= 1.0) != (s1.2 <= 1.0) {
+                                key += &format!("f{}:{}{}{} ", s0.0, if s0.2 <= 1.0 { 'H' } else { 'F' }, if s1.2 <= 1.0 { 'H' } else { 'F' }, if (s0.4 - s1.4).abs() > 0.5 { "d" } else { "" });
+                            }
+                        }
+                        *cls.entry(key.clone()).or_insert(0) += 1;
+                        if shown < 6 {
+                            shown += 1;
+                            eprintln!("TR seed {seed}: col ({},{}) k {kk}->{} near {near} span off {:.1} on {son:.1}; lookup off {:.2}->{:.2} on {z0:.2}->{z1:.2}", q / nj, q % nj, kk + 1, lo[q * nk + b] - lo[q * nk + a], lo[q * nk + kk], lo[q * nk + kk + 1]);
+                            for (s0, s1) in t0.iter().zip(t1.iter()) {
+                                eprintln!("   fault {}: z_in {:.2}->{:.2} v {:.3}->{:.3} rho_m {:.1}->{:.1} d {:.2}->{:.2} w {:.2}->{:.2} a {:.2}->{:.2}", s0.0, s0.1, s1.1, s0.2, s1.2, s0.3, s1.3, s0.4, s1.4, s0.5, s1.5, s0.6, s1.6);
+                            }
+                        }
+                    }
+                }
+                run = 1;
+            }
+        }
+        eprintln!("TR seed {seed} {sense:?}: decreasing lookup steps by cause {cls:?}");
+    }
+}
+
+#[test]
+#[ignore = "diagnostic"]
+fn t6_closure_diag() {
+    use synthoseis_core::{closure_census, generate_labels};
+    let (mut tk, mut tt) = ([0usize; 2], [0usize; 2]);
+    for seed in 1u64..=20 {
+        let mut row = vec![];
+        for drag in [false, true] {
+            let mut c = E2eConfig { seed, inline_count: 32, crossline_count: 32, samples: 128, faults: synthoseis_core::pipeline::FaultConfig::with_count(3), ..E2eConfig::default() };
+            c.faults.legacy_profile = true;
+            if drag { c.faults.drag = Some(DragParams::default()); }
+            let (labels, sh) = generate_labels(&c);
+            let k = closure_census(&c, &labels, sh).unwrap();
+            let kept: usize = k.sizes.iter().filter(|&&v| v >= k.minimum).sum();
+            let total: usize = k.sizes.iter().sum();
+            let small = k.sizes.iter().filter(|&&v| v < k.minimum).count();
+            let mut sz = k.sizes.clone(); sz.sort_unstable_by(|a, b| b.cmp(a));
+            tk[drag as usize] += kept; tt[drag as usize] += total;
+            row.push(format!("kept {kept} / total {total} ({:.2} %), closures {} (< min {}: {small}), largest {:?}", 100.0 * kept as f64 / total.max(1) as f64, k.sizes.len(), k.minimum, &sz[..sz.len().min(4)]));
+        }
+        eprintln!("T6D seed {seed}: off {} | on {}", row[0], row[1]);
+    }
+    eprintln!("T6D totals: off {} / {} on {} / {}", tk[0], tt[0], tk[1], tt[1]);
+}
+
+#[test]
+#[ignore = "diagnostic"]
+fn clamp_diag() {
+    for seed in [3u64, 4, 7, 10, 14, 18] {
+        let c = m::cfg(seed, [32, 32, 128], 4, Mode::PostFault);
+        let fm = synthoseis_core::fault_model(&with_drag(&c, Some(DragSense::Auto))).unwrap();
+        let dm = fm.drag().unwrap();
+        let f: Vec<_> = dm.faults.iter().map(|f| (f.t, f.w_m.round(), (f.theta_deg * 10.0).round() / 10.0, (f.b * 1000.0).round() / 1000.0)).collect();
+        eprintln!("CL seed {seed}: (T, W, theta, B_f) {f:?}; clamps {}", dm.clamps.len());
+    }
+}

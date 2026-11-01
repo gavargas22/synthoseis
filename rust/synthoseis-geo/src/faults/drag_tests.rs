@@ -275,7 +275,7 @@ fn t2_compact_support() {
 fn t8_tile_invariance() {
     let shape = [64, 64, 96];
     let [ni, nj, _] = shape;
-    for seed in [1u64, 2, 3] {
+    for seed in [1u64, 2, 3, 7] {
         let m = random_model(shape, seed, 4)
             .with_tips(seed, &TipParams::default())
             .with_drag(&DragParams::default());
@@ -445,36 +445,71 @@ fn bottom_rows_read_the_pad() {
     assert_eq!(clamped, 0, "{clamped} footwall voxels repeat the last sample");
 }
 
-/// T12: B < 0.5 at the defaults (seeds 1–20, tips on); out-of-range β is
-/// clamped below the bound and reported; the normal-sense cap.
+/// Inline reference for T12 (spec §3 step 1, corrected): per fault,
+/// (T_f samples, W_f m, θ_f deg, B_f unit = T (π/2) cos θ dz / W).
+fn t12_ref(m: &FaultModel, p: &DragParams) -> Vec<(f64, f64, f64, f64)> {
+    let hp = HeaveParams::default();
+    m.faults()
+        .iter()
+        .map(|f| {
+            let t = f.profile.iter().fold(0f64, |a, v| a.max(v.abs()));
+            let c = [f.center[0] as f64, f.center[1] as f64, f.center[2] as f64];
+            let g = f.geometry.gradient_at(c[0], c[1], c[2]);
+            let (gx, gy, gz) = (g[0] / hp.bin_m, g[1] / hp.bin_m, g[2] / hp.dz_m);
+            let th = (gx * gx + gy * gy).sqrt().atan2(gz.abs()).to_degrees().max(hp.min_dip_deg);
+            let dmax = match &f.tip { Some(tl) => tl.d_max, None => t * hp.dz_m / th.to_radians().sin() };
+            let w = (p.width * dmax).min(p.max_width_m);
+            (t, w, th, t * PI2 * th.to_radians().cos() * hp.dz_m / w)
+        })
+        .collect()
+}
+
+/// T12: per-fault clamp B_f ≤ 0.16 after the clamp for every fault on seeds
+/// 1–20 (defaults, and a large-throw case where W hits the 400 m cap);
+/// every clamped fault is in the metadata with β before and after. Also the
+/// normal-sense cap.
 #[test]
-fn t12_monotonicity_bound() {
-    for seed in 1..=20u64 {
-        let m = random_model([64, 64, 96], seed, 4)
-            .with_tips(seed, &TipParams::default())
-            .with_drag(&DragParams::default());
-        let d = m.drag().unwrap();
-        // B written out: β_max · T_max · (π/2) · dz / W_min.
-        let t_max = m.faults().iter().flat_map(|f| f.profile.iter()).fold(0f64, |a, v| a.max(v.abs()));
-        let w_min = d.faults.iter().map(|f| f.w_m).fold(f64::INFINITY, f64::min);
-        let b = 0.30 * t_max * PI2 * 4.0 / w_min;
-        assert!(b < 0.5, "seed {seed}: B {b}");
-        assert!((d.b - b).abs() < 1e-9 && d.warnings.is_empty(), "seed {seed}");
+fn t12_per_fault_clamp() {
+    let (mut n_faults, mut n_clamped, mut n_cap) = (0, 0, 0);
+    for large in [false, true] {
+        for seed in 1..=20u64 {
+            let cfg = RandomFaultConfig {
+                count: 4,
+                throw_min: if large { 60.0 } else { RandomFaultConfig::default().throw_min },
+                throw_max: if large { 90.0 } else { RandomFaultConfig::default().throw_max },
+                ..RandomFaultConfig::default()
+            };
+            let shape = [64, 64, 96];
+            let m = FaultModel::resolve(shape, &sample_random_faults(shape, &cfg, seed), &Seabed::Flat(4.0), seed)
+                .with_kinematics(FaultKinematics::Heave(HeaveParams::default()))
+                .with_tips(seed, &TipParams::default());
+            let p = DragParams::default();
+            let m = m.with_drag(&p);
+            let d = m.drag().unwrap();
+            for (n, &(t, w, th, unit)) in t12_ref(&m, &p).iter().enumerate() {
+                n_faults += 1;
+                n_cap += (w >= 400.0 - 1e-9) as usize;
+                let df = &d.faults[n];
+                let (bh, bf) = (df.beta_h, df.beta_f);
+                assert!(bh.max(bf) * unit <= 0.16 + 1e-12, "seed {seed} large {large} fault {n}: B_f {}", bh.max(bf) * unit);
+                let lim = 0.16 / unit;
+                assert!((bh - 0.30f64.min(lim)).abs() < 1e-12 && (bf - 0.15f64.min(lim)).abs() < 1e-12, "seed {seed} fault {n}: beta {bh} {bf}, lim {lim}");
+                let rec = d.clamps.iter().find(|c| c.fault == n);
+                if 0.30 * unit > 0.16 {
+                    n_clamped += 1;
+                    let c = rec.unwrap_or_else(|| panic!("seed {seed} fault {n} clamped but not recorded"));
+                    assert_eq!(c.before, (0.30, 0.15));
+                    assert_eq!(c.after, (bh, bf));
+                    assert!((c.t - t).abs() < 1e-12 && (c.w_m - w).abs() < 1e-9 && (c.theta_deg - th).abs() < 1e-9);
+                    assert!(d.summary().contains(&format!("fault {n}: B_f=")));
+                } else {
+                    assert!(rec.is_none(), "seed {seed} fault {n} recorded without a clamp");
+                }
+            }
+        }
     }
-    let m = random_model([64, 64, 96], 1, 4)
-        .with_tips(1, &TipParams::default())
-        .with_drag(&DragParams {
-            beta_h: 0.5,
-            beta_f: 0.5,
-            width: 1.0,
-            max_width_m: 50.0,
-            sense: DragSense::Reverse,
-            ..DragParams::default()
-        });
-    let d = m.drag().unwrap();
-    assert!(d.b_requested >= 0.5 && d.b < 0.5, "B {} → {}", d.b_requested, d.b);
-    assert!(d.beta_h < 0.5 && !d.warnings.is_empty());
-    assert!(d.summary().contains("warning"));
+    eprintln!("T12: {n_faults} faults, {n_clamped} clamped, {n_cap} at the 400 m cap");
+    assert!(n_cap > 0, "no fault hits the 400 m cap");
     let m = random_model([64, 64, 96], 1, 4).with_drag(&DragParams {
         beta_h: 0.5,
         beta_f: 0.5,

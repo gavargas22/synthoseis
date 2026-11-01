@@ -24,8 +24,9 @@ use super::kinematics::FaultKinematics;
 /// Grasemann et al. (2005) critical marker–fault angle (degrees).
 pub const DRAG_THETA_C_DEG: f64 = 35.0;
 
-/// Monotonicity budget: `B = β_max · T_max · (π/2) · dz / W_min < 0.5`.
-pub const DRAG_B_MAX: f64 = 0.5;
+/// Per-fault drag-slope target (spec §3, corrected Nov 1 2026):
+/// `B_f = β · T_f · (π/2) · cos θ_f · dz / W_f ≤ 0.16`, β clamped per fault.
+pub const DRAG_B_TARGET: f64 = 0.16;
 
 /// Drag sense (spec §1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -120,22 +121,45 @@ pub struct DragFault {
     pub s: f64,
     /// θ at the peak-throw point (degrees).
     pub theta_deg: f64,
+    /// Peak throw T_f (samples).
+    pub t: f64,
+    /// Effective β_h, β_f of this fault (after the B_f clamp).
+    pub beta_h: f64,
+    pub beta_f: f64,
+    /// B_f with the effective β (max of the two).
+    pub b: f64,
+}
+
+/// One per-fault β clamp (spec §3 step 1), recorded in the run metadata.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DragClamp {
+    pub fault: usize,
+    /// T_f (samples), W_f (metres), θ_f (degrees).
+    pub t: f64,
+    pub w_m: f64,
+    pub theta_deg: f64,
+    /// (β_h, β_f) before and after.
+    pub before: (f64, f64),
+    pub after: (f64, f64),
 }
 
 /// Resolved drag of a model (global, once).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DragModel {
     pub params: DragParams,
-    /// Effective amplitudes (after the B clamp and the normal-sense cap).
+    /// Amplitudes after the normal-sense cap (the per-fault B_f clamp is
+    /// in [`DragFault::beta_h`] / [`DragFault::beta_f`]).
     pub beta_h: f64,
     pub beta_f: f64,
     pub faults: Vec<DragFault>,
     /// Bottom pad P (samples).
     pub pad: usize,
-    /// B with the effective β.
+    /// max_f B_f with the effective β.
     pub b: f64,
-    /// B with the requested β.
+    /// max_f B_f with the requested β.
     pub b_requested: f64,
+    /// Every per-fault β clamp.
+    pub clamps: Vec<DragClamp>,
     pub bin_m: f64,
     pub dz_m: f64,
     /// Warnings for the run metadata (β clamped, …).
@@ -172,9 +196,9 @@ impl DragModel {
             return 0.0;
         }
         if v <= 1.0 {
-            df.s * self.beta_h * d_loc * t
+            df.s * df.beta_h * d_loc * t
         } else {
-            -df.s * self.beta_f * d_loc * t
+            -df.s * df.beta_f * d_loc * t
         }
     }
 
@@ -247,6 +271,10 @@ impl FaultModel {
                 w_m,
                 s,
                 theta_deg: theta,
+                t,
+                beta_h: 0.0,
+                beta_f: 0.0,
+                b: 0.0,
             });
         }
         let (mut bh, mut bf) = (p.beta_h, p.beta_f);
@@ -256,25 +284,37 @@ impl FaultModel {
             bf *= k;
             warnings.push(format!("normal-sense beta_hw + beta_fw capped at 0.9 (x{k:.3})"));
         }
-        let w_min = faults.iter().map(|f| f.w_m).fold(f64::INFINITY, f64::min);
-        let bterm = |b: f64| {
-            if faults.is_empty() || !(w_min > 0.0) {
-                0.0
+        // Spec §3 step 1: per-fault clamp B_f = β T_f (π/2) cos θ_f dz / W_f ≤ 0.16.
+        let mut clamps = Vec::new();
+        let (mut b, mut b_requested) = (0.0f64, 0.0f64);
+        for (n, f) in faults.iter_mut().enumerate() {
+            let unit = if f.w_m > 0.0 {
+                f.t * std::f64::consts::FRAC_PI_2 * f.theta_deg.to_radians().cos() * dz_m / f.w_m
             } else {
-                b * t_max * std::f64::consts::FRAC_PI_2 * dz_m / w_min
+                0.0
+            };
+            let lim = if unit > 0.0 { DRAG_B_TARGET / unit } else { f64::INFINITY };
+            f.beta_h = bh.min(lim);
+            f.beta_f = bf.min(lim);
+            f.b = f.beta_h.max(f.beta_f) * unit;
+            b = b.max(f.b);
+            b_requested = b_requested.max(bh.max(bf) * unit);
+            if f.beta_h < bh || f.beta_f < bf {
+                let c = DragClamp {
+                    fault: n,
+                    t: f.t,
+                    w_m: f.w_m,
+                    theta_deg: f.theta_deg,
+                    before: (bh, bf),
+                    after: (f.beta_h, f.beta_f),
+                };
+                warnings.push(format!(
+                    "fault {n}: B_f={:.3} > {DRAG_B_TARGET} (T={:.2} samples, W={:.0} m, theta={:.1} deg): beta_hw {:.4}->{:.4}, beta_fw {:.4}->{:.4}",
+                    bh.max(bf) * unit, c.t, c.w_m, c.theta_deg, bh, f.beta_h, bf, f.beta_f
+                ));
+                clamps.push(c);
             }
-        };
-        let b_requested = bterm(bh.max(bf));
-        if b_requested >= DRAG_B_MAX {
-            // Clamp β to just under the bound.
-            let lim = 0.999 * DRAG_B_MAX / bterm(1.0);
-            warnings.push(format!(
-                "monotonicity bound B={b_requested:.3} >= {DRAG_B_MAX}: beta clamped to {lim:.4}"
-            ));
-            bh = bh.min(lim);
-            bf = bf.min(lim);
         }
-        let b = bterm(bh.max(bf));
         let pad = if p.no_pad || faults.is_empty() {
             0
         } else {
@@ -288,6 +328,7 @@ impl FaultModel {
             pad,
             b,
             b_requested,
+            clamps,
             bin_m,
             dz_m,
             warnings,
