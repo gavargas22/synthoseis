@@ -245,21 +245,38 @@ fn t9_label_resample_parity_seeds_1_20() {
     assert_eq!((s, pb), (n, 0));
 }
 
-/// T13 mask: voxels farther than `1.5 · W_max` (metres, from the resolved
-/// drag model) from every fault-plane voxel of the drag-off run.
-fn far_mask(r: &m::Run, w_m: f64, bin_m: f64, dz_m: f64) -> Vec<bool> {
-    let [ni, nj, nk] = r.shape;
-    let planes: Vec<(f64, f64, f64)> = (0..ni * nj * nk)
-        .filter(|&v| r.fault_id[v] != 0)
-        .map(|v| (((v / nk) / nj) as f64 * bin_m, ((v / nk) % nj) as f64 * bin_m, (v % nk) as f64 * dz_m))
-        .collect();
-    let r2 = (1.5 * w_m).powi(2);
+/// T13 mask, from the spec geometry (spec-fault-drag §1), not from the
+/// production labels: a voxel is in fault `n`'s zone when its metric
+/// distance `rho = |f - 1| / |grad_m f|` to the ellipsoid surface is below
+/// `W_n` and the local throw `D_loc` (tip or lateral weight times the
+/// vertical profile) is non-zero, sub-sample tips included. Far = in no
+/// zone.
+fn far_mask(fm: &synthoseis_geo::faults::FaultModel, shape: [usize; 3], w_m: &[f64], bin_m: f64, dz_m: f64) -> Vec<bool> {
+    let [ni, nj, nk] = shape;
     (0..ni * nj * nk)
-        .map(|v| {
-            let p = (((v / nk) / nj) as f64 * bin_m, ((v / nk) % nj) as f64 * bin_m, (v % nk) as f64 * dz_m);
-            planes.iter().all(|f| (f.0 - p.0).powi(2) + (f.1 - p.1).powi(2) + (f.2 - p.2).powi(2) > r2)
-        })
+        .map(|v| far_at(fm, w_m, bin_m, dz_m, ((v / nk) / nj) as f64, ((v / nk) % nj) as f64, v % nk))
         .collect()
+}
+
+fn far_at(fm: &synthoseis_geo::faults::FaultModel, w_m: &[f64], bin_m: f64, dz_m: f64, x: f64, y: f64, k: usize) -> bool {
+    {
+        {
+            let z = k as f64;
+            fm.faults().iter().zip(w_m).all(|(f, &w)| {
+                let wt = match &f.tip {
+                    Some(t) => t.factor(x, y, z),
+                    None => f.lateral_at(x, y),
+                };
+                if wt * f.profile[k] == 0.0 {
+                    return true;
+                }
+                let fv = f.geometry.value_at(x, y, z);
+                let g = f.geometry.gradient_at(x, y, z);
+                let gn = ((g[0] / bin_m).powi(2) + (g[1] / bin_m).powi(2) + (g[2] / dz_m).powi(2)).sqrt();
+                !(gn > 0.0) || (fv - 1.0).abs() / gn >= w
+            })
+        }
+    }
 }
 
 /// T13 needs a cube wider than the zones (W up to 400 m).
@@ -272,15 +289,24 @@ fn t13(seed: u64) -> (usize, usize) {
     let on = m::run(&cd);
     let fm = synthoseis_core::fault_model(&cd).expect("faults");
     let dm = fm.drag().expect("drag");
-    let w = dm.faults.iter().map(|f| f.w_m).fold(0.0, f64::max);
-    let mask = far_mask(&off, w, dm.bin_m, dm.dz_m);
+    let w: Vec<f64> = dm.faults.iter().map(|f| f.w_m).collect();
+    // Stages evaluate the zones at the stage position, so a voxel is far
+    // only when it is outside every zone both at its output position and
+    // at its drag-off gather source.
+    let (ij, lk) = off.src.as_ref().expect("faults");
+    let nk = off.shape[2];
+    let mask: Vec<bool> = far_mask(&fm, off.shape, &w, dm.bin_m, dm.dz_m)
+        .into_iter()
+        .enumerate()
+        .map(|(v, far)| far && far_at(&fm, &w, dm.bin_m, dm.dz_m, ij[v].0 as f64, ij[v].1 as f64, (lk[v].round().max(0.0) as usize).min(nk - 1)))
+        .collect();
     let n = mask.iter().filter(|&&x| x).count();
     let diff = (0..mask.len()).filter(|&v| mask[v] && off.labels[v] != on.labels[v]).count();
     (diff, n)
 }
 
 #[test]
-#[ignore = "slow: 20 seeds; FAILS on seeds 13 and 17 under the plane-voxel mask (506 and 4806 voxels), reported on the PR"]
+#[ignore = "slow: 20 seeds"]
 fn t13_identical_outside_the_zones_seeds_1_20() {
     let mut bad = Vec::new();
     for seed in 1u64..=20 {
