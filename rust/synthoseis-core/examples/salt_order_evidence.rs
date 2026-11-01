@@ -62,6 +62,15 @@ fn main() {
             w("master_labels.u8", &rm.labels);
             w("off_labels.u8", &ro.labels);
             w("faults.u8", &rp.fault_id);
+            w(
+                "src_labels.u8",
+                &synthoseis_core::pipeline_stream::faulted_labels_undragged(&cp),
+            );
+            let f8 = |v: &[f64]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+            if let Some(d) = synthoseis_core::pipeline_stream::salt_drag_offsets(&cp) {
+                w("drag_d.f64", &f8(&d));
+            }
+            w("maps.f64", &f8(&m::maps(&cp)));
             let le = |v: &[u32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
             w("post_warp.u32", &le(&rp.warp));
             w(
