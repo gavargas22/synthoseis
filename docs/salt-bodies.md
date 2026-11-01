@@ -167,7 +167,7 @@ traveltime (depth-to-time §3.4). So:
   - *Stair index* ≤ 1.1× B summed and ≤ 1.2× B per seed, with the additive
     baseline B = faults-off + faulted-undragged − flat. Faults-off alone
     has no fault-made stairs, so it charged the drag for every stair the
-    faults make (seed 15: faulting alone adds 0.67×10⁻³, drag alone 1.70).
+    faults make (fault-block tilt carried through the drag).
     Measured sum 0.966, per seed 0.855–1.024 (seed 15 0.989); master/B
     1.243, which fails. Post vs faults-off (seed 15 1.244) and master are
     printed only.
