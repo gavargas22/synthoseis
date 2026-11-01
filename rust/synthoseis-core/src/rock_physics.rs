@@ -251,6 +251,15 @@ pub struct RockPhysicsConfig {
     /// salt and have no seismic expression inside it. CLI
     /// `--fault-labels-through-salt`. See `docs/salt-bodies.md`.
     pub fault_labels_through_salt: bool,
+    /// Legacy switch: drag the horizons against salt before faulting
+    /// (master 481805cc). By default, with salt and heave faults
+    /// ([`crate::pipeline::E2eConfig::salt_post_fault_drag`]), the layer
+    /// labels are built from the undragged maps, faulted, and then
+    /// stretched per output column by the drag offsets (spec-salt-fault-order
+    /// option B), so faults never expose strata lifted inside the salt.
+    /// CLI `--legacy-salt-fault-order` (implied by
+    /// `--legacy-fault-kinematics`).
+    pub legacy_salt_fault_order: bool,
     /// Partial voxels (spec-partial-voxels; **on by default** since PR B2):
     /// exact vertical volume fractions with Backus mixing (cell mode) or
     /// sub-cell reflectivity (time mode). Opt out with
@@ -310,6 +319,7 @@ impl Default for RockPhysicsConfig {
             salt_legacy_vs: false,
             salt_legacy_pv_maps: false,
             fault_labels_through_salt: false,
+            legacy_salt_fault_order: false,
             partial_voxels: crate::partial_voxels::PartialVoxelConfig::default(),
             legacy_rock_physics: false,
             phys: PhysParams::default(),

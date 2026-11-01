@@ -579,6 +579,175 @@ pub fn drag_offsets(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all
     drag_loop(maps, shape, salt, smooth_all, true)
 }
 
+/// Post-fault salt drag of the layer labels (spec-salt-fault-order option
+/// B, §2.3–2.5). Per output column `c` of the faulted `labels`
+/// `(ni, nj, nk)`: the label-run tops `a_r` are the knots; each moves by the
+/// drag offset at its depth, `D_c(a_r)`, interpolated linearly over the
+/// undragged horizon depths `maps` `(ni, nj, nh)` with the offsets `d`
+/// `(ni, nj, nh)` (constant above the first and below the last horizon).
+/// Keying `D` by depth rather than by the run's horizon keeps the warp
+/// smooth where a fault juxtaposes horizons of very different `D` (the
+/// "stripes" of #61 review M1). Knots are made monotone
+/// bottom-up, `b_r = min(a_r + D, b_{r+1})` (a deeper uplift pushes the
+/// shallower boundaries up with it, so horizon order never inverts),
+/// clamped at 0, between `0 → 0` and the end knot
+/// `n → n + D_c(n)` of the column padded below the cube by
+/// `P = ⌈max −D_c⌉ + 1` samples, so no output cell reads past the source.
+/// The pad continues the bottom run's interval: the undragged fill of
+/// `maps` shifted by the depth offset of that run's top (`table[label]` is
+/// its interval, 255 = none; `inv` the inverse), or repeats the label above
+/// where that is undefined. The stretch `w` is piecewise linear
+/// between knots and output cell `k` takes the label at
+/// `floor(w⁻¹(k + ½))`. Columns with `|D| < ½` throughout are untouched
+/// ([`drag_column_active`]). With `index`, it receives the source cell of
+/// every output cell (`(ni, nj, nk)`; `≥ nk` in the pad).
+pub fn drag_warp_labels(
+    labels: &mut [u8],
+    shape: [usize; 3],
+    d: &[f64],
+    maps: &[f64],
+    nh: usize,
+    table: &[u8; 256],
+    mut index: Option<&mut Vec<u32>>,
+) {
+    let [ni, nj, nk] = shape;
+    assert_eq!(labels.len(), ni * nj * nk);
+    assert_eq!(d.len(), ni * nj * nh);
+    assert_eq!(maps.len(), ni * nj * nh);
+    let mut inv = [u8::MAX; 256];
+    for (l, &h) in table.iter().enumerate().take(255) {
+        if h != 255 && inv[h as usize] == 255 {
+            inv[h as usize] = l as u8;
+        }
+    }
+    let mut knots: Vec<(f64, f64)> = Vec::new();
+    let mut src: Vec<u8> = Vec::new();
+    let mut idx = vec![0u32; nk];
+    if let Some(ix) = index.as_deref_mut() {
+        ix.clear();
+        ix.extend((0..ni * nj).flat_map(|_| 0..nk as u32));
+    }
+    for c in 0..ni * nj {
+        let dc = &d[c * nh..(c + 1) * nh];
+        if !drag_column_active(dc) {
+            continue;
+        }
+        let mc = &maps[c * nh..(c + 1) * nh];
+        let col = &mut labels[c * nk..(c + 1) * nk];
+        let pad = (-dc.iter().copied().fold(0.0f64, f64::min)).ceil() as usize + 1;
+        let n = nk + pad;
+        src.clear();
+        src.extend_from_slice(col);
+        pad_column(&mut src, n, mc, table, &inv);
+        knots.clear();
+        knots.push((0.0, 0.0));
+        for k in 1..n {
+            if src[k] != src[k - 1] {
+                knots.push((k as f64, k as f64 + depth_offset(mc, dc, k as f64)));
+            }
+        }
+        knots.push((n as f64, n as f64 + depth_offset(mc, dc, n as f64)));
+        // Push-up clamp, bottom to top: a deeper boundary lifted above a
+        // shallower one carries it along (never the reverse), then >= 0.
+        for r in (1..knots.len() - 1).rev() {
+            knots[r].1 = knots[r].1.min(knots[r + 1].1);
+        }
+        for kn in knots.iter_mut().skip(1) {
+            kn.1 = kn.1.max(0.0);
+        }
+        drag_warp_column(col, &knots, &src, &mut idx);
+        if let Some(ix) = index.as_deref_mut() {
+            ix[c * nk..(c + 1) * nk].copy_from_slice(&idx);
+        }
+    }
+}
+
+/// Whether a column's drag offsets move any boundary by half a sample or
+/// more (otherwise the warp is the identity: `floor(k + ½ − D) = k`).
+pub fn drag_column_active(dc: &[f64]) -> bool {
+    dc.iter().any(|&v| v.abs() >= 0.5)
+}
+
+/// `D_c(z)`: the offsets `dc` interpolated linearly over the horizon depths
+/// `mc` (non-decreasing), constant outside them. At a depth shared by
+/// several (pinched) horizons the deepest one's offset is used.
+#[doc(hidden)]
+pub fn depth_offset(mc: &[f64], dc: &[f64], z: f64) -> f64 {
+    let nh = mc.len();
+    if z < mc[0] {
+        return dc[0];
+    }
+    // First horizon strictly below z: ties (pinched horizons at z) take
+    // the deepest tied horizon's offset.
+    let h = mc.partition_point(|&m| m <= z);
+    if h >= nh {
+        return dc[nh - 1];
+    }
+    let span = mc[h] - mc[h - 1];
+    let t = if span > 0.0 { (z - mc[h - 1]) / span } else { 1.0 };
+    dc[h - 1] + t * (dc[h] - dc[h - 1])
+}
+
+/// Extend the column `src` (length `nk`) to `n` samples below the cube:
+/// the undragged interval fill of `mc` at depth `k + δ`, `δ` the shift
+/// between the bottom run's top and its interval's top horizon, labelled
+/// through `inv`; the label above where that is undefined (a gap or an unlabelled
+/// interval), so the pad never goes back to a shallower label.
+fn pad_column(src: &mut Vec<u8>, n: usize, mc: &[f64], table: &[u8; 256], inv: &[u8; 256]) {
+    let nk = src.len();
+    let last = src[nk - 1];
+    let k0 = (0..nk).rev().find(|&k| k == 0 || src[k - 1] != last).unwrap_or(0);
+    let h = table[last as usize];
+    let shift = (last != 255 && h != 255 && k0 > 0)
+        .then(|| mc[h as usize].ceil() as i64 - k0 as i64);
+    let nh = mc.len();
+    for k in nk..n {
+        // Gaps between intervals (and unlabelled ones) keep the label
+        // above, not the bottom run's: falling back to `last` there put a
+        // shallower label below a deeper one (seed 15, #61 delta).
+        let mut l = src[k - 1];
+        if let Some(sh) = shift {
+            let z = k as i64 + sh;
+            // Interval h: ceil(m_h) <= z < floor(m_{h+1}).
+            for g in (0..nh.saturating_sub(1)).rev() {
+                if (mc[g].ceil() as i64) <= z {
+                    if z < mc[g + 1].floor() as i64 && inv[g] != 255 {
+                        l = inv[g];
+                    }
+                    break;
+                }
+            }
+        }
+        src.push(l);
+    }
+}
+
+/// `col[k] = src[floor(w⁻¹(k + ½))]` for the knots `(a_r, b_r)` (`a`
+/// strictly and `b` weakly increasing). Outside the knots `w` translates.
+fn drag_warp_column(col: &mut [u8], knots: &[(f64, f64)], src: &[u8], idx: &mut [u32]) {
+    let n = src.len();
+    let mut r = 0;
+    for (k, out) in col.iter_mut().enumerate() {
+        let y = k as f64 + 0.5;
+        while r + 1 < knots.len() && knots[r + 1].1 <= y {
+            r += 1;
+        }
+        let (a0, b0) = knots[r];
+        let x = if y < b0 {
+            y - (b0 - a0)
+        } else if r + 1 < knots.len() {
+            let (a1, b1) = knots[r + 1];
+            // b1 > y >= b0 here, so the segment is not collapsed.
+            a0 + (y - b0) * (a1 - a0) / (b1 - b0)
+        } else {
+            y - (b0 - a0)
+        };
+        let s = (x.floor() as isize).clamp(0, n as isize - 1) as usize;
+        *out = src[s];
+        idx[k] = s as u32;
+    }
+}
+
 fn drag_loop(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all: bool, offsets: bool) -> Vec<f64> {
     let [ni, nj, nh] = shape;
     let n = ni * nj;

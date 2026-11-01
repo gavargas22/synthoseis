@@ -141,12 +141,53 @@ traveltime (depth-to-time §3.4). So:
   large cubes (`salt_top_offset_scale_capped_at_one`, on a 1600-sample
   cube). `--salt-legacy-top-offset` keeps the absolute legacy offset. The radius
   already scales with `ni`, as in legacy.
-- **The drag acts on the unfaulted toy horizons, before faulting.** In Rust
-  the faults displace labels, and there are no faulted depth maps. So:
-  - the p99 top uses the unfaulted horizon 1;
-  - the smoothing does not blur fault offsets. Legacy smooths the faulted
-    maps, so its horizons lose their sharp fault steps (not ported);
-  - the salt body itself is not faulted, as in legacy.
+- **The drag acts after faulting (roadmap 7d).** The p99 top and the drag
+  offsets come from the undragged, unfaulted toy horizons, but the drag is
+  applied after the fault gather, as a per-column monotone warp of the
+  faulted labels (`apply_salt_drag_warp`; knots at the faulted run tops). So
+  a horizon cut by a fault is dragged with its fault offset intact, and no
+  sediment voxel gathers salt-dragged layers from inside the body (0 such
+  voxels on seeds 1–20 against 0.52% of non-salt on master). Each run top
+  `a` moves by `D_c(a)`, the offsets interpolated over the undragged
+  horizon depths of the column (keyed by depth, not by the run's horizon,
+  so a fault juxtaposing horizons of different `D` leaves no stretched
+  stripe: > 5× stretch 0.009% of the band, from 2.05%). Columns are padded
+  below the cube by `⌈max −D⌉ + 1` samples continuing the bottom interval
+  instead of clamping to the last sample, and columns with `|D| < ½`
+  everywhere are left as they are (also in the partial-volume band). D is
+  computed when needed, not cached, so the warp adds no resident cube
+  (RSS within master's at chunk 32). Knots are made monotone bottom-up
+  (`b_r = min(a_r + D, b_{r+1})`, then ≥ 0), so a deeper uplift pushes the
+  shallower boundaries up and horizon order never inverts; the pad keeps the
+  label above in gaps between intervals, so it never returns to a
+  shallower label.
+
+  Bars (spec §5, Strata ruling on #61 at e35b2b76; seeds 1–20, 128×128×256,
+  4 faults; `salt_fault_order.rs`):
+  - *Stair index* ≤ 1.1× B summed and ≤ 1.2× B per seed, with the additive
+    baseline B = faults-off + faulted-undragged − flat. Faults-off alone
+    has no fault-made stairs, so it charged the drag for every stair the
+    faults make (fault-block tilt carried through the drag).
+    Measured at c080c695: sum 0.961, per seed 0.855 (seed 2) to 1.018
+    (seed 13), seed 15 0.989, seed 1 0.981; master/B
+    1.243, which fails. Post vs faults-off (seed 15 1.244) and master are
+    printed only.
+  - *Band Jaccard* ≥ 0.97 per seed and ≥ 0.98 mean against an independent
+    post-fault drag written in the test (per output column of the faulted
+    labels, knots `a → a + D(a)` at present depth, no push-up clamp, no pad;
+    neither `drag_warp_labels` nor `depth_offset`: D(z) is
+    interpolated in the test, so a product D scaled by 1.15 fails the bar:
+    mean 0.9739, six seeds < 0.97, seeds 1 and 16 at 0.948/0.947 in the CI check). Master drags in pre-fault coordinates, so it
+    disagrees with stationary salt by design and is no fair reference.
+    Measured at c080c695: min 0.9825 (seed 16), mean 0.9953, seed 1
+    0.9867; J vs master outside its
+    exposed region (seed 1 0.8959, mean 0.9644) is printed only.
+  - *Horizon order*, both directions: every faulted run top lands within 1
+    sample (the half-sample rounding) of its clamped target; no band column
+    is made non-monotone by the drag. 0 tops need more than ½ sample on
+    every seed. The salt body
+  itself is not faulted, as in legacy. `--legacy-salt-fault-order` restores
+  the pre-fault drag of master 481805cc byte for byte.
 - **Gaps come from the labels.** A column is a gap when the closure unit's
   top sample lies in salt. Legacy's `faulted_depth_maps_gaps` test on the
   dragged horizon depth is equivalent for whole-sample horizons. Legacy's

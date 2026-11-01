@@ -52,11 +52,12 @@ impl std::fmt::Debug for GeometryCache {
 /// Every input of the maps and the salt body.
 pub(crate) fn key(cfg: &E2eConfig) -> String {
     format!(
-        "{}|{:?}|{:?}|{:?}",
+        "{}|{:?}|{:?}|{:?}|{}",
         cfg.seed,
         cfg.shape(),
         cfg.effective_geometry(),
-        cfg.rock_physics
+        cfg.rock_physics,
+        cfg.salt_post_fault_drag()
     )
 }
 

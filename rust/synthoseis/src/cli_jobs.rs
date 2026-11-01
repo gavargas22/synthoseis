@@ -243,6 +243,9 @@ pub fn rock_physics_args(rock: &synthoseis_core::RockPhysicsConfig) -> Vec<Strin
     if rock.fault_labels_through_salt {
         a.push("--fault-labels-through-salt".into());
     }
+    if rock.legacy_salt_fault_order {
+        a.push("--legacy-salt-fault-order".into());
+    }
     a.extend(crate::cli_rock::rock_model_args(rock));
     // Partial voxels: the CLI always sets an explicit reflectivity.
     if rock.partial_voxels.enabled() {

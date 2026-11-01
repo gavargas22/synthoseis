@@ -276,22 +276,14 @@ footwall, a horizon map shows a gap (heave gap) along each fault.
   it was 243 / 901 MB with a whole-cube cache). Test:
   `kinematics_tests.rs::gather_cache_memory_is_bounded_by_the_tile`.
 - Salt is stationary: the body is emplaced after faulting (fault ∧ salt = 0
-  in every output), so the salt kind is decided at the output column while
-  the sediments next to it come from their source columns. Where a source
-  position lies inside the body the voxel takes the salt-dragged layers
-  that are normally hidden under the salt, which shows as staircase
-  fragments on the flanks (e.g. `seed1_inline`). Over seeds 1–20 at
-  128×128×256, 4 faults, salt on, these fragments are 0.86% of the cube on
-  average (717,669 of 83.9M voxels), median 0.76%, max 2.19% (seed 2), min
-  0.08% (seeds 9 and 19), i.e. 2.7–82% of the salt volume (82% on seed 6).
-  The legacy vertical lookup already makes the same kind of voxel (source
-  `k` inside the body's run): seeds 1 / 7 / 13 give 61,261 / 9,533 /
-  42,227 under `--legacy-fault-kinematics` against 52,150 / 14,090 /
-  53,280 with heave. Labels still mark 83.2% of the Vp steps inside the
-  fragments (98.6% elsewhere). Salt properties still use the heaved burial
-  depth. Tests: `fault_heave.rs::salt_is_stationary_under_heave`,
-  `fault_heave.rs::salt_flank_fragments_stay_bounded` (≤ 2.5% of the cube
-  and ≤ 1.6× legacy on seeds 1, 7, 13).
+  in every output). Since roadmap 7d the salt drag is applied after the
+  fault gather (per-column warp of the faulted labels), so no sediment voxel
+  takes the salt-dragged layers hidden under the body: exposure is 0 on
+  seeds 1–20 at 128×128×256, 4 faults (master: 414,581 voxels, mean 0.52% of
+  non-salt; seed 1 1.30%). `--legacy-salt-fault-order` restores master
+  481805cc. Tests: `fault_heave.rs::salt_is_stationary_under_heave`,
+  `salt_fault_order.rs` (exposure, stair index, stretch, drag knots, far
+  field, Jaccard, output masks).
 - Faults remain single-worker `--e2e --chunked` only.
 
 `--legacy-fault-kinematics` restores the vertical-only lookup of master
@@ -346,18 +338,14 @@ Numbers:
 
 ## Deferred (follow-ups)
 
-- Salt-flank fragments under heave (PR #59 review S3; no GitHub issue,
-  Issues are disabled, tracked on the Notion roadmap). Sediment voxels
-  whose gathered source lies inside the stationary salt body take the
-  salt-dragged layers hidden under the salt: 0.86% of the cube on average
-  over seeds 1–20 (max 2.19%, up to 82% of the salt volume), comparable to
-  legacy (0.85–1.48× on seeds 1/7/13), and 83.2% of their Vp steps are
-  labelled against 98.6% elsewhere. Fix: fault before the drag (gather the
-  undragged stack and add the salt drag at the output column), or fill
-  in-body sources from the nearest out-of-body sample along the gather
-  path. Done when the fragment count drops well below legacy and the
-  labelled-step fraction in the fragments matches the rest of the cube;
-  `salt_flank_fragments_stay_bounded` then tightens to the new bound.
+- Salt-flank fragments under heave: done in roadmap 7d (drag after
+  faulting, `salt_fault_order.rs`). The stair and Jaccard bars use the
+  references of the Strata ruling at e35b2b76 (see `salt-bodies.md`): stair
+  index against B = faults-off + faulted-undragged − flat (faults-off
+  ignores fault-made stairs; seed 15 0.989, sum 0.961 at c080c695), Jaccard against an
+  independent post-fault drag (master drags before faulting; min 0.9825,
+  mean 0.9953). Time-mode salt/fault label masks are the depth masks
+  through the new TWT (`time_masks_are_depth_masks_through_new_twt`).
 - Hockey-stick drag zone (throw ≥ 29.75). Faults are flagged
   `hockey_stick_deferred`, and the default throw range 5–29 avoids it.
 - Fault intersections volume and dilation; `fault_intersections` output.

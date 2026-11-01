@@ -1,0 +1,498 @@
+//! Salt / fault order metrics (spec-salt-fault-order §4), shared by
+//! `tests/salt_fault_order.rs` and `examples/salt_order_evidence.rs`.
+#![allow(dead_code)]
+
+use synthoseis_core::pipeline::{E2eConfig, FaultConfig};
+use synthoseis_core::pipeline_stream::generate_labels_warp;
+use synthoseis_core::salt::SaltBody;
+
+/// Band half-width (columns) of the near-salt metrics.
+pub const BAND: usize = 12;
+
+/// Which order a run uses.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Mode {
+    /// Post-fault drag (the default).
+    PostFault,
+    /// `--legacy-salt-fault-order` (master 481805cc).
+    Master,
+    /// `--faults 0` (drag, no faults).
+    FaultsOff,
+}
+
+pub fn cfg(seed: u64, shape: [usize; 3], faults: usize, mode: Mode) -> E2eConfig {
+    let mut c = E2eConfig::tiny(seed);
+    c.inline_count = shape[0];
+    c.crossline_count = shape[1];
+    c.samples = shape[2];
+    c.faults = FaultConfig::with_count(if mode == Mode::FaultsOff { 0 } else { faults });
+    c.rock_physics.legacy_salt_fault_order = mode == Mode::Master;
+    c.with_geometry_cache()
+}
+
+/// One run's labels, warp index, fault sources and fault ids.
+pub struct Run {
+    pub shape: [usize; 3],
+    pub labels: Vec<u8>,
+    /// Source cell of the post-fault drag warp (empty: identity).
+    pub warp: Vec<u32>,
+    /// Gather source `(i, j, k)` per voxel (`None` without faults).
+    pub src: Option<(Vec<(f32, f32)>, Vec<f32>)>,
+    /// 1-based fault id per voxel (0 = none; empty without faults).
+    pub fault_id: Vec<u8>,
+}
+
+pub fn run(c: &E2eConfig) -> Run {
+    let shape = c.shape();
+    let mut warp = Vec::new();
+    let (labels, _) = generate_labels_warp(c, Some(&mut warp));
+    let (src, fault_id) = match synthoseis_core::fault_model(c).filter(|m| !m.is_empty()) {
+        None => (None, Vec::new()),
+        Some(m) => {
+            let t = m.compute_tile(0, shape[0], 0, shape[1]);
+            let ij = t.src_ij.clone().unwrap_or_else(|| {
+                (0..shape[0] * shape[1])
+                    .flat_map(|q| {
+                        let (i, j) = ((q / shape[1]) as f32, (q % shape[1]) as f32);
+                        std::iter::repeat((i, j)).take(shape[2])
+                    })
+                    .collect()
+            });
+            (Some((ij, t.lookup.clone())), t.segment_id.clone())
+        }
+    };
+    Run {
+        shape,
+        labels,
+        warp,
+        src,
+        fault_id,
+    }
+}
+
+/// Undragged horizon maps `(ni, nj, nh)` of a post-fault drag run.
+pub fn maps(c: &E2eConfig) -> Vec<f64> {
+    synthoseis_core::pipeline_stream::salt_drag_maps(c)
+}
+
+/// The post-fault drag warp of `seed` applied to the unfaulted labels (the
+/// faults-off reference of the stretch bar: `--faults 0` drags the maps
+/// before filling, so it has no warp to measure).
+pub fn unfaulted_warp_run(seed: u64, shape: [usize; 3]) -> Run {
+    let c = cfg(seed, shape, 4, Mode::PostFault);
+    let mut labels = undragged(seed, shape);
+    let d = synthoseis_core::pipeline_stream::salt_drag_offsets(&c).expect("drag");
+    let table = synthoseis_core::pipeline_stream::salt_drag_label_table(&c).expect("table");
+    let maps = maps(&c);
+    let nh = d.len() / (shape[0] * shape[1]);
+    let mut warp = Vec::new();
+    synthoseis_core::salt::drag_warp_labels(
+        &mut labels,
+        shape,
+        &d,
+        &maps,
+        nh,
+        &table,
+        Some(&mut warp),
+    );
+    Run {
+        shape,
+        labels,
+        warp,
+        src: None,
+        fault_id: Vec::new(),
+    }
+}
+
+/// Undragged, unfaulted labels of `seed` (no salt: the base maps).
+pub fn undragged(seed: u64, shape: [usize; 3]) -> Vec<u8> {
+    let mut c = cfg(seed, shape, 0, Mode::FaultsOff);
+    c.rock_physics.salt = false;
+    let c = c.with_geometry_cache();
+    synthoseis_core::generate_labels(&c).0
+}
+
+pub fn salt(c: &E2eConfig) -> Option<SaltBody> {
+    synthoseis_core::salt::salt_body(c)
+}
+
+/// Footprint columns (salt in the first `nk` samples).
+pub fn footprint(s: &SaltBody, shape: [usize; 3]) -> Vec<bool> {
+    s.runs
+        .iter()
+        .take(shape[0] * shape[1])
+        .map(|&(a, b)| b > a && (a as usize) < shape[2])
+        .collect()
+}
+
+/// Chebyshev column distance to the footprint (capped at `cap + 1`).
+pub fn distance(fp: &[bool], ni: usize, nj: usize, cap: usize) -> Vec<usize> {
+    let mut d = vec![cap + 1; ni * nj];
+    for i in 0..ni {
+        for j in 0..nj {
+            if !fp[i * nj + j] {
+                continue;
+            }
+            for a in i.saturating_sub(cap)..(i + cap + 1).min(ni) {
+                for b in j.saturating_sub(cap)..(j + cap + 1).min(nj) {
+                    let r = a.abs_diff(i).max(b.abs_diff(j));
+                    let q = a * nj + b;
+                    d[q] = d[q].min(r);
+                }
+            }
+        }
+    }
+    d
+}
+
+fn near(x: f32, n: usize) -> usize {
+    (x.round().max(0.0) as usize).min(n - 1)
+}
+
+/// Exposed hidden-lifted strata (§4 row 1): non-salt output voxels whose
+/// source (the warp, then the fault gather; nearest voxel) lies inside the
+/// salt body and whose label differs from the undragged label there.
+pub fn exposed(r: &Run, s: &SaltBody, und: &[u8]) -> usize {
+    exposed_mask(r, s, und).iter().filter(|&&x| x).count()
+}
+
+/// Per-voxel [`exposed`].
+pub fn exposed_mask(r: &Run, s: &SaltBody, und: &[u8]) -> Vec<bool> {
+    let [ni, nj, nk] = r.shape;
+    let mut out = vec![false; ni * nj * nk];
+    let Some((ij, lk)) = &r.src else { return out };
+    for q in 0..ni * nj {
+        for k in 0..nk {
+            let v = q * nk + k;
+            if s.contains(q, k) {
+                continue;
+            }
+            let kw = if r.warp.is_empty() {
+                k
+            } else {
+                r.warp[v] as usize
+            };
+            if kw >= nk {
+                continue; // pad below the cube: no gather source
+            }
+            let w = q * nk + kw;
+            let sq = near(ij[w].0, ni) * nj + near(ij[w].1, nj);
+            let sk = near(lk[w], nk);
+            if !s.contains(sq, sk) {
+                continue;
+            }
+            out[v] = r.labels[v] != und[sq * nk + sk];
+        }
+    }
+    out
+}
+
+/// Flank stair-step index (§4 row 2): fraction of the non-salt voxels
+/// within `BAND` columns of the footprint at which a layer boundary has
+/// no matching boundary within 2 samples in some 4-neighbour column, with
+/// no fault label within 1 voxel.
+pub fn stair_index(r: &Run, s: &SaltBody) -> f64 {
+    let [ni, nj, nk] = r.shape;
+    let fp = footprint(s, r.shape);
+    let dist = distance(&fp, ni, nj, BAND);
+    let lab = |q: usize, k: usize| r.labels[q * nk + k];
+    let fault_near = |i: usize, j: usize, k: usize| {
+        if r.fault_id.is_empty() {
+            return false;
+        }
+        for a in i.saturating_sub(1)..(i + 2).min(ni) {
+            for b in j.saturating_sub(1)..(j + 2).min(nj) {
+                for kk in k.saturating_sub(1)..(k + 2).min(nk) {
+                    if r.fault_id[(a * nj + b) * nk + kk] != 0 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    };
+    let (mut stairs, mut total) = (0usize, 0usize);
+    for i in 0..ni {
+        for j in 0..nj {
+            let q = i * nj + j;
+            if dist[q] == 0 || dist[q] > BAND {
+                continue;
+            }
+            for k in 0..nk {
+                if s.contains(q, k) {
+                    continue;
+                }
+                total += 1;
+                if k == 0 || lab(q, k) == lab(q, k - 1) || s.contains(q, k - 1) {
+                    continue;
+                }
+                if fault_near(i, j, k) {
+                    continue;
+                }
+                let pair = (lab(q, k - 1), lab(q, k));
+                let nb = [
+                    (i.wrapping_sub(1), j),
+                    (i + 1, j),
+                    (i, j.wrapping_sub(1)),
+                    (i, j + 1),
+                ];
+                let jump = nb.iter().any(|&(a, b)| {
+                    if a >= ni || b >= nj {
+                        return false;
+                    }
+                    let p = a * nj + b;
+                    if s.contains(p, k) || fp[p] {
+                        return false;
+                    }
+                    let lo = k.saturating_sub(2).max(1);
+                    let hi = (k + 2).min(nk - 1);
+                    !(lo..=hi).any(|kk| (lab(p, kk - 1), lab(p, kk)) == pair)
+                });
+                stairs += jump as usize;
+            }
+        }
+    }
+    stairs as f64 / total.max(1) as f64
+}
+
+/// Near-salt layer-label Jaccard (§4 row 6): `Σ_l |A_l ∩ B_l| / Σ_l |A_l ∪
+/// B_l|` over the non-salt voxels within `BAND` columns of the footprint.
+pub fn jaccard(a: &Run, b: &Run, s: &SaltBody) -> f64 {
+    jaccard_outside(a, b, s, &[])
+}
+
+/// [`jaccard`] over the voxels not in `skip` (empty: none skipped), e.g.
+/// master's exposed region (#61 review: the bar applies outside it).
+pub fn jaccard_outside(a: &Run, b: &Run, s: &SaltBody, skip: &[bool]) -> f64 {
+    let [ni, nj, nk] = a.shape;
+    let fp = footprint(s, a.shape);
+    let dist = distance(&fp, ni, nj, BAND);
+    let (mut inter, mut uni) = (0usize, 0usize);
+    for q in 0..ni * nj {
+        if dist[q] > BAND {
+            continue;
+        }
+        for k in 0..nk {
+            if s.contains(q, k) {
+                continue;
+            }
+            let v = q * nk + k;
+            if skip.get(v).copied().unwrap_or(false) {
+                continue;
+            }
+            // Each voxel adds 1 to the intersection when equal, else 2 to
+            // the union (one per label).
+            if a.labels[v] == b.labels[v] {
+                inter += 1;
+                uni += 1;
+            } else {
+                uni += 2;
+            }
+        }
+    }
+    inter as f64 / uni.max(1) as f64
+}
+
+/// Spec test 4 (drag sense / lift) and 5 (monotone, unset) on a run:
+/// `(max output-minus-source cell, mean lift where moved in the first 3
+/// columns off the flank, non-monotone columns, unset voxels)`; unset =
+/// 255 between two labelled cells of a column.
+pub fn warp_checks(r: &Run, s: &SaltBody) -> (i64, f64, usize, usize) {
+    let [ni, nj, nk] = r.shape;
+    let fp = footprint(s, r.shape);
+    let dist = distance(&fp, ni, nj, BAND);
+    let (mut worst, mut lift, mut moved, mut nonmono, mut unset) = (i64::MIN, 0u64, 0u64, 0, 0);
+    for q in 0..ni * nj {
+        let mut prev = 0u32;
+        let mut mono = true;
+        for k in 0..nk {
+            let v = q * nk + k;
+            let s_k = if r.warp.is_empty() {
+                k as u32
+            } else {
+                r.warp[v]
+            };
+            worst = worst.max(k as i64 - s_k as i64);
+            if k > 0 && s_k < prev {
+                mono = false;
+            }
+            prev = s_k;
+            if (1..=3).contains(&dist[q]) && !s.contains(q, k) && s_k as usize > k {
+                lift += (s_k as usize - k) as u64;
+                moved += 1;
+            }
+        }
+        nonmono += (!mono) as usize;
+        let col = &r.labels[q * nk..(q + 1) * nk];
+        if let (Some(a), Some(b)) = (
+            col.iter().position(|&l| l != 255),
+            col.iter().rposition(|&l| l != 255),
+        ) {
+            unset += col[a..=b].iter().filter(|&&l| l == 255).count();
+        }
+    }
+    (worst, lift as f64 / moved.max(1) as f64, nonmono, unset)
+}
+
+/// Local stretch of the drag warp (#61 review M1c): per non-salt voxel of
+/// the columns within `BAND` of the footprint (footprint and under-salt
+/// columns included), output span over source span on a ±4-sample window
+/// (`∞` where the source span is 0). Returns the fractions above 2× and
+/// above 5×.
+pub fn stretch_fractions(r: &Run, s: &SaltBody) -> (f64, f64) {
+    let [ni, nj, nk] = r.shape;
+    let fp = footprint(s, r.shape);
+    let dist = distance(&fp, ni, nj, BAND);
+    let (mut n, mut over2, mut over5) = (0usize, 0usize, 0usize);
+    for q in 0..ni * nj {
+        if dist[q] > BAND {
+            continue;
+        }
+        for k in 0..nk {
+            if s.contains(q, k) {
+                continue;
+            }
+            n += 1;
+            if r.warp.is_empty() {
+                continue;
+            }
+            let (lo, hi) = (k.saturating_sub(4), (k + 4).min(nk - 1));
+            let span = r.warp[q * nk + hi] as f64 - r.warp[q * nk + lo] as f64;
+            let st = if span <= 0.0 {
+                f64::INFINITY
+            } else {
+                (hi - lo) as f64 / span
+            };
+            over2 += (st > 2.0) as usize;
+            over5 += (st > 5.0) as usize;
+        }
+    }
+    (
+        over2 as f64 / n.max(1) as f64,
+        over5 as f64 / n.max(1) as f64,
+    )
+}
+
+/// The faulted labels of a post-fault drag run before the drag, with the
+/// run's fault ids (the "faults only" term of the additive stair baseline).
+pub fn faulted_undragged_run(c: &E2eConfig, fault_id: &[u8]) -> Run {
+    Run {
+        shape: c.shape(),
+        labels: synthoseis_core::pipeline_stream::faulted_labels_undragged(c),
+        warp: Vec::new(),
+        src: None,
+        fault_id: fault_id.to_vec(),
+    }
+}
+
+/// Unfaulted, undragged labels as a run (the flat term of the baseline).
+pub fn flat_run(seed: u64, shape: [usize; 3]) -> Run {
+    Run {
+        shape,
+        labels: undragged(seed, shape),
+        warp: Vec::new(),
+        src: None,
+        fault_id: Vec::new(),
+    }
+}
+
+/// Stair indices of `seed` (Strata ruling on #61 at e35b2b76): `(post,
+/// master, B)` with the additive baseline `B = faults-off + faulted
+/// undragged − flat` (drag-made plus fault-made stairs, no interaction).
+/// Faults-off alone omits every fault-made stair.
+pub fn stair_with_baseline(seed: u64, shape: [usize; 3], s: &SaltBody) -> (f64, f64, f64, f64) {
+    let cp = cfg(seed, shape, 4, Mode::PostFault);
+    let rp = run(&cp);
+    let p = stair_index(&rp, s);
+    let mm = stair_index(&run(&cfg(seed, shape, 4, Mode::Master)), s);
+    let o = stair_index(&run(&cfg(seed, shape, 4, Mode::FaultsOff)), s);
+    let f = stair_index(&faulted_undragged_run(&cp, &rp.fault_id), s);
+    let flat = stair_index(&flat_run(seed, shape), s);
+    (p, mm, o + f - flat, o)
+}
+
+/// Independent post-fault drag reference for the Jaccard bar (Strata
+/// ruling on #61 at e35b2b76). Per output column of the faulted undragged
+/// labels `src`: knots at the run tops `a → a + D(a)` (present depth, no
+/// clamp beyond ≥ 0), end knot `2nk → 2nk + D(2nk)`; output cell `k` takes
+/// `src[floor(z)]` at the first segment whose output range holds `k + ½`.
+/// Written apart from `drag_warp_labels` (no pad, no push-up clamp), so it
+/// differs from it only in the clamp and half-sample rounding.
+pub fn analytic_drag(src: &[u8], d: &[f64], maps: &[f64], shape: [usize; 3]) -> Vec<u8> {
+    let [ni, nj, nk] = shape;
+    let nh = d.len() / (ni * nj);
+    let mut out = src.to_vec();
+    for q in 0..ni * nj {
+        let dc = &d[q * nh..(q + 1) * nh];
+        if dc.iter().all(|v| v.abs() < 0.5) {
+            continue;
+        }
+        let mc = &maps[q * nh..(q + 1) * nh];
+        let dz = |z: f64| offset_at(mc, dc, z);
+        let col = &src[q * nk..(q + 1) * nk];
+        let mut kn = vec![(0.0f64, 0.0f64)];
+        for a in 1..nk {
+            if col[a] != col[a - 1] {
+                kn.push((a as f64, (a as f64 + dz(a as f64)).max(0.0)));
+            }
+        }
+        let n = 2.0 * nk as f64;
+        kn.push((n, n + dz(n)));
+        for k in 0..nk {
+            let y = k as f64 + 0.5;
+            let z = kn
+                .windows(2)
+                .find(|w| w[1].1 > w[0].1 && y >= w[0].1 && y < w[1].1)
+                .map(|w| w[0].0 + (y - w[0].1) / (w[1].1 - w[0].1) * (w[1].0 - w[0].0))
+                .unwrap_or(nk as f64 - 1.0);
+            out[q * nk + k] = col[(z.floor() as usize).min(nk - 1)];
+        }
+    }
+    out
+}
+
+/// D(z) for the reference, written here so the Jaccard bar does not share
+/// the lookup with the product (`salt::depth_offset`). `mc` are the
+/// undragged horizon depths of the column (non-decreasing), `dc` their
+/// offsets. Above the first horizon and below the last (including the pad
+/// below the cube) D is held at the end value; between two bracketing
+/// horizons it is linear in depth; where several horizons share a depth
+/// (pinched), the deepest one's offset is used.
+fn offset_at(mc: &[f64], dc: &[f64], z: f64) -> f64 {
+    let nh = mc.len();
+    if z < mc[0] {
+        return dc[0];
+    }
+    if z >= mc[nh - 1] {
+        return dc[nh - 1];
+    }
+    // Deepest horizon at or above z, then the next one strictly below it.
+    let mut lo = 0;
+    for h in 0..nh {
+        if mc[h] <= z {
+            lo = h;
+        }
+    }
+    let hi = lo + 1;
+    let span = mc[hi] - mc[lo];
+    if span <= 0.0 {
+        return dc[hi];
+    }
+    dc[lo] + (z - mc[lo]) / span * (dc[hi] - dc[lo])
+}
+
+/// Band Jaccard of the post-fault run of `seed` against [`analytic_drag`].
+pub fn jaccard_vs_analytic(seed: u64, shape: [usize; 3], s: &SaltBody) -> f64 {
+    let c = cfg(seed, shape, 4, Mode::PostFault);
+    let rp = run(&c);
+    let src = synthoseis_core::pipeline_stream::faulted_labels_undragged(&c);
+    let d = synthoseis_core::pipeline_stream::salt_drag_offsets(&c).expect("drag");
+    let ra = Run {
+        shape,
+        labels: analytic_drag(&src, &d, &maps(&c), shape),
+        warp: Vec::new(),
+        src: None,
+        fault_id: Vec::new(),
+    };
+    jaccard(&rp, &ra, s)
+}
