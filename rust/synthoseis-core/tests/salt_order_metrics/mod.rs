@@ -372,3 +372,41 @@ pub fn stretch_fractions(r: &Run, s: &SaltBody) -> (f64, f64) {
         over5 as f64 / n.max(1) as f64,
     )
 }
+
+/// The faulted labels of a post-fault drag run before the drag, with the
+/// run's fault ids (the "faults only" term of the additive stair baseline).
+pub fn faulted_undragged_run(c: &E2eConfig, fault_id: &[u8]) -> Run {
+    Run {
+        shape: c.shape(),
+        labels: synthoseis_core::pipeline_stream::faulted_labels_undragged(c),
+        warp: Vec::new(),
+        src: None,
+        fault_id: fault_id.to_vec(),
+    }
+}
+
+/// Unfaulted, undragged labels as a run (the flat term of the baseline).
+pub fn flat_run(seed: u64, shape: [usize; 3]) -> Run {
+    Run {
+        shape,
+        labels: undragged(seed, shape),
+        warp: Vec::new(),
+        src: None,
+        fault_id: Vec::new(),
+    }
+}
+
+/// Stair indices of `seed` (Strata ruling on #61 at e35b2b76): `(post,
+/// master, B)` with the additive baseline `B = faults-off + faulted
+/// undragged − flat` (drag-made plus fault-made stairs, no interaction).
+/// Faults-off alone omits every fault-made stair.
+pub fn stair_with_baseline(seed: u64, shape: [usize; 3], s: &SaltBody) -> (f64, f64, f64, f64) {
+    let cp = cfg(seed, shape, 4, Mode::PostFault);
+    let rp = run(&cp);
+    let p = stair_index(&rp, s);
+    let mm = stair_index(&run(&cfg(seed, shape, 4, Mode::Master)), s);
+    let o = stair_index(&run(&cfg(seed, shape, 4, Mode::FaultsOff)), s);
+    let f = stair_index(&faulted_undragged_run(&cp, &rp.fault_id), s);
+    let flat = stair_index(&flat_run(seed, shape), s);
+    (p, mm, o + f - flat, o)
+}

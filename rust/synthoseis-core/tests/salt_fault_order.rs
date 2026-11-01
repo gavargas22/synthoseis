@@ -83,15 +83,43 @@ fn stair_index_meets_spec_bars() {
     assert!(fails.is_empty(), "per seed (seed, post/off): {fails:?}");
 }
 
-/// Spec test 2 per-seed bar (≤ 1.2× faults-off) on seeds 1–3 (measured
-/// 1.015, 0.907, 1.053), so a regression of the warp shows in CI.
+/// Spec test 2 against the additive baseline (Strata ruling on #61 at
+/// e35b2b76): stair index ≤ 1.1× B summed over seeds 1–20 and ≤ 1.2× B per
+/// seed, `B = faults-off + faulted undragged − flat`. Master must fail the
+/// summed bar (measured 1.242), so the bar still sees the artifact. Post vs
+/// faults-off and master are printed (informational).
+#[test]
+#[ignore = "slow: 60 cube runs; passes (sum 0.966, seeds 0.855-1.024)"]
+fn stair_index_vs_additive_baseline() {
+    let (mut sp, mut sm, mut sb) = (0.0, 0.0, 0.0);
+    let mut fails = Vec::new();
+    for seed in 1u64..=20 {
+        let Some(s) = body(seed) else { continue };
+        let (p, mm, b, o) = m::stair_with_baseline(seed, SHAPE, &s);
+        eprintln!(
+            "seed {seed}: post/B {:.3} master/B {:.3} post/off {:.3}",
+            p / b,
+            mm / b,
+            p / o
+        );
+        if p > 1.2 * b {
+            fails.push((seed, p / b));
+        }
+        (sp, sm, sb) = (sp + p, sm + mm, sb + b);
+    }
+    eprintln!("sum: post/B {:.3} master/B {:.3}", sp / sb, sm / sb);
+    assert!(sp <= 1.1 * sb, "sum: post/B {:.3}", sp / sb);
+    assert!(fails.is_empty(), "per seed (seed, post/B): {fails:?}");
+    assert!(sm > 1.1 * sb, "master passes the bar (vacuous): {:.3}", sm / sb);
+}
+
+/// The per-seed baseline bar (≤ 1.2× B) on seeds 1–3, in CI.
 #[test]
 fn stair_index_seed_checks() {
     for seed in 1u64..=3 {
         let s = body(seed).expect("salt");
-        let p = m::stair_index(&m::run(&m::cfg(seed, SHAPE, 4, Mode::PostFault)), &s);
-        let o = m::stair_index(&m::run(&m::cfg(seed, SHAPE, 4, Mode::FaultsOff)), &s);
-        assert!(p <= 1.2 * o, "seed {seed}: post {p} vs faults-off {o}");
+        let (p, _, b, _) = m::stair_with_baseline(seed, SHAPE, &s);
+        assert!(p <= 1.2 * b, "seed {seed}: post {p} vs B {b}");
     }
 }
 
