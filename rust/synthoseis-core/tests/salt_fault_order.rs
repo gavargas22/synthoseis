@@ -533,12 +533,16 @@ fn drag_band_jaccard_vs_analytic() {
     assert!(low.is_empty() && mean >= 0.98, "mean {mean:.4}, below 0.97: {low:?}");
 }
 
-/// The per-seed analytic Jaccard bar on seed 2, in CI.
+/// The per-seed analytic Jaccard bar in CI on seeds 1 and 16 (0.9867 and
+/// 0.9825 at c080c695). A product D scaled by 1.15 gives 0.9476 and 0.9472
+/// there; seed 2 (0.9856 under that mutant) would not catch it.
 #[test]
 fn drag_band_jaccard_analytic_seed_check() {
-    let s = body(2).expect("seed 2 salt");
-    let j = m::jaccard_vs_analytic(2, SHAPE, &s);
-    assert!(j >= 0.97, "seed 2: {j}");
+    for seed in [1u64, 16] {
+        let s = body(seed).expect("salt");
+        let j = m::jaccard_vs_analytic(seed, SHAPE, &s);
+        assert!(j >= 0.97, "seed {seed}: {j}");
+    }
 }
 
 fn output_masks(seed: u64, mode: Mode, time: bool) -> (Option<Vec<u8>>, Option<Vec<u8>>) {

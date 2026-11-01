@@ -342,9 +342,9 @@ Numbers:
   faulting, `salt_fault_order.rs`). The stair and Jaccard bars use the
   references of the Strata ruling at e35b2b76 (see `salt-bodies.md`): stair
   index against B = faults-off + faulted-undragged − flat (faults-off
-  ignores fault-made stairs; seed 15 0.989, sum 0.966), Jaccard against an
-  independent post-fault drag (master drags before faulting; min 0.9832,
-  mean 0.9956). Time-mode salt/fault label masks are the depth masks
+  ignores fault-made stairs; seed 15 0.989, sum 0.961 at c080c695), Jaccard against an
+  independent post-fault drag (master drags before faulting; min 0.9825,
+  mean 0.9953). Time-mode salt/fault label masks are the depth masks
   through the new TWT (`time_masks_are_depth_masks_through_new_twt`).
 - Hockey-stick drag zone (throw ≥ 29.75). Faults are flagged
   `hockey_stick_deferred`, and the default throw range 5–29 avoids it.

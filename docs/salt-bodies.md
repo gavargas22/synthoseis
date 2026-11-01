@@ -168,15 +168,19 @@ traveltime (depth-to-time §3.4). So:
     baseline B = faults-off + faulted-undragged − flat. Faults-off alone
     has no fault-made stairs, so it charged the drag for every stair the
     faults make (fault-block tilt carried through the drag).
-    Measured sum 0.966, per seed 0.855–1.024 (seed 15 0.989); master/B
+    Measured at c080c695: sum 0.961, per seed 0.855 (seed 2) to 1.018
+    (seed 13), seed 15 0.989, seed 1 0.981; master/B
     1.243, which fails. Post vs faults-off (seed 15 1.244) and master are
     printed only.
   - *Band Jaccard* ≥ 0.97 per seed and ≥ 0.98 mean against an independent
     post-fault drag written in the test (per output column of the faulted
     labels, knots `a → a + D(a)` at present depth, no push-up clamp, no pad;
-    not `drag_warp_labels`). Master drags in pre-fault coordinates, so it
+    neither `drag_warp_labels` nor `depth_offset`: D(z) is
+    interpolated in the test, so a product D scaled by 1.15 fails the bar:
+    mean 0.9739, six seeds < 0.97, seeds 1 and 16 at 0.948/0.947 in the CI check). Master drags in pre-fault coordinates, so it
     disagrees with stationary salt by design and is no fair reference.
-    Measured min 0.9832 (seed 16), mean 0.9956; J vs master outside its
+    Measured at c080c695: min 0.9825 (seed 16), mean 0.9953, seed 1
+    0.9867; J vs master outside its
     exposed region (seed 1 0.8959, mean 0.9644) is printed only.
   - *Horizon order*, both directions: every faulted run top lands within 1
     sample (the half-sample rounding) of its clamped target; no band column
