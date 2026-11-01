@@ -346,15 +346,29 @@ drag-off output is byte-identical to master b22dbb67 (96/96 configs).
   `g(q) = cos²(πq/2)` for `q = ρ/W < 1`, else 0, with
   `W = ω·D_max` capped at `--fault-drag-max-width-m` (default `3·D_max`,
   400 m).
-- Hanging wall `w = +s·β_h·D_loc·g`, footwall `w = −s·β_f·D_loc·g`
+- Hanging wall `w = +s·β_h·A·g`, footwall `w = −s·β_f·A·g`
   (defaults β_h 0.30, β_f 0.15), with `s = +1` reverse and `−1` normal.
+  D8 amplitude: `A = D_c·t(r)`, `t = cos(πr/2)` for `r < 1` on 7b's
+  elliptical radius, else 0 (not the cos² throw taper); D_c is the
+  fault's centre slip (signed profile value of largest |·|, samples).
+  Without a tip line `A = D_c·lat`. Drag stays zero where the throw
+  `D_loc` is zero (salt, outside the tip ellipse).
   `--fault-drag-sense auto` picks reverse when the physical dip at the
   fault centre is ≥ 35°.
-- Per-fault slope clamp (spec §3, corrected):
-  `B_f = β·[T_f·(π/2)·cos θ_f·dz/W_f + G_f]` with `W_f = min(ω·D_max,f, 400 m)`.
+- Per-fault slope clamp (spec §3, D8):
+  `B_f = β·[D_c·(π/2)·cos θ_f·dz/W_f + G_t,f + A_max·max|ΔP|]` with
+  `W_f = min(ω·D_max,f, 400 m)`, `G_t,f = (π/2)·D_c·dz·sqrt((ŝ_z/R_s)² +
+  (t̂_z/R_t)²)` (bounds |∂A/∂z|, T12 checks it against a finite-difference
+  maximum) and the ΔP term kept as before (`G_f = G_t + ΔP` in the summary).
   Both β_h and β_f are clamped per fault so that `B_f ≤ 0.16`; each clamp
   (fault, T_f, W_f, θ_f, G_f, β before and after) is written to the run
   metadata, and the summary lists G_f per fault.
+- D9 cluster scale: faults whose drag zones (points with ρ < W and
+  D_loc ≠ 0, sampled on a tile-invariant stride grid of ≤ 2^18 points)
+  come within `max(W_a, W_b)` of each other form a cluster, taken
+  transitively. Each cluster gets `k = min(1, 0.16/ΣB_f)` after the D8
+  clamp, applied to β_h and β_f; the metadata lists each cluster (fault
+  ids, ΣB_f before, k) and the summary prints `clusters=[...]`.
 - G_f (`throw_gradient_bound`) bounds |∂D/∂z| in samples per sample for the
   code's own throw `D = A(x,y,z)·P(z)`: `P` is the vertical profile in
   samples (linear between samples), `A` the 7b tip weight `cos²(πr/2)`, with
@@ -371,16 +385,19 @@ drag-off output is byte-identical to master b22dbb67 (96/96 configs).
   without `--fault-drag` and under `--legacy-fault-kinematics`. The run
   prints a `fault drag:` summary line.
 - Tests: `synthoseis-geo/src/faults/drag_tests.rs` (planar analytic T1,
-  T2, T8, T10–T12, the pad check) and `synthoseis-core/tests/fault_drag.rs`
-  (T4–T7, T9, T13).
+  T2, T8, T10–T12, the D9 cluster radius, the pad check) and
+  `synthoseis-core/tests/fault_drag.rs` (T4–T7, T9, T13, T14). T4: drag-on
+  inverted columns ≤ drag-off per seed and sense, zero tolerance. T14: on
+  single-fault windows (no other zone within W) with drag-off read slope
+  < 0.6, drag-on read slope ≥ 0.5.
 
 ## Deferred (follow-ups)
 
 - Older fault-plane labels are dropped where a younger fault skips over them,
   and the youngest fault wins. This has been read from the code for both
   legacy and heave, but has not been confirmed by a legacy run.
-- Fault drag (7c): T4 drag-made inversions and the T13 tip-zone
-  differences (see the PR). Drag of properties and stacks outside the
+- Fault drag (7c): bars that miss at the branch head are reported on
+  the PR with measured values (T14 on seed 3). Drag of properties and stacks outside the
   zones is not checked separately, only labels. The auto sense picks
   normal on most default faults (their physical dips are under 35°).
 
