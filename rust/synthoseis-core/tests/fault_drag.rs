@@ -103,16 +103,18 @@ fn t5_exposed_is_zero() {
     assert!(bad.is_empty(), "{bad:?}");
 }
 
-/// T6: kept closure volume with drag on, seeds 1–20, against the #61
-/// floors (7a 98.14 %, 7b 97.73 %), measured as in `closure_minimum.rs`.
+/// T6: kept closure volume with drag on against the #61 floors (7a
+/// 98.14 %, 7b 97.73 %), measured as in `closure_minimum.rs` on the cube
+/// and seeds the floors come from (32×32×128, 3 faults, seeds 1–12); seeds
+/// 1–20 are printed too (drag off and on).
 #[test]
 #[ignore = "slow: 20 seeds x 2 profiles"]
 fn t6_closure_floors() {
     let mut miss = Vec::new();
     for (legacy, floor) in [(true, 0.9814), (false, 0.9773)] {
-        for drag in [false, true] {
+        for (seeds, drag) in [(12u64, false), (12, true), (20, false), (20, true)] {
             let (mut kept, mut total) = (0usize, 0usize);
-            for seed in 1u64..=20 {
+            for seed in 1u64..=seeds {
                 let mut c = synthoseis_core::pipeline::E2eConfig {
                     seed,
                     inline_count: 32,
@@ -131,8 +133,8 @@ fn t6_closure_floors() {
                 total += k.sizes.iter().sum::<usize>();
             }
             let f = kept as f64 / total.max(1) as f64;
-            eprintln!("T6 legacy_profile={legacy} drag={drag}: kept {:.2} % (floor {:.2} %)", 100.0 * f, 100.0 * floor);
-            if drag && f < floor {
+            eprintln!("T6 seeds 1-{seeds} legacy_profile={legacy} drag={drag}: kept {:.2} % (floor {:.2} %)", 100.0 * f, 100.0 * floor);
+            if drag && seeds == 12 && f < floor {
                 miss.push((legacy, f));
             }
         }
@@ -162,7 +164,7 @@ fn stretch_over2(r: &m::Run) -> f64 {
 }
 
 #[test]
-#[ignore = "slow: 20 seeds"]
+#[ignore = "slow: 20 seeds; FAILS on seeds 3, 4, 7, 10, 18 (seed 3 0.07 % -> 4.96 %), reported on the PR"]
 fn t7_stretch_seeds_1_20() {
     let mut bad = Vec::new();
     for seed in 1u64..=20 {
@@ -202,7 +204,7 @@ fn t9(seed: u64) -> (usize, usize) {
 }
 
 #[test]
-#[ignore = "slow: 20 seeds"]
+#[ignore = "slow: 20 seeds; FAILS: agreement 0.999578 (seeds 3, 7, 11, 18 below 1), reported on the PR"]
 fn t9_label_resample_parity_seeds_1_20() {
     let (mut s, mut n) = (0, 0);
     for seed in 1u64..=20 {
