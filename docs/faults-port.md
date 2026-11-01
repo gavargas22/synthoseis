@@ -336,7 +336,38 @@ Numbers:
 - Tip lengths L range from 1.5 to 15 km; seed 7 fault 2 shows both tips inside the cube.
 - Tile invariance: chunk 32 vs default chunks give identical decoded arrays for seeds 1/7/13 at 128²×256.
 
+## Optional fault drag (opt-in; spec-fault-drag 7c)
+
+`--fault-drag` adds normal or reverse drag to the vertical slip in the
+kinematics stage (fault first, then the salt warp). Off by default:
+drag-off output is byte-identical to master b22dbb67 (96/96 configs).
+
+- Zone distance `ρ = |f − 1| / |∇_m f|` (metres), taper
+  `g(q) = cos²(πq/2)` for `q = ρ/W < 1`, else 0, with
+  `W = ω·D_max` capped at `--fault-drag-max-width-m` (default `3·D_max`,
+  400 m).
+- Hanging wall `w = +s·β_h·D_loc·g`, footwall `w = −s·β_f·D_loc·g`
+  (defaults β_h 0.30, β_f 0.15), with `s = +1` normal and `−1` reverse.
+  `--fault-drag-sense auto` picks reverse when the physical dip at the
+  fault centre is ≥ 35°.
+- Monotone source: `B = β·T_max·(π/2)·dz/W_min < 0.5`. Larger β is
+  clamped with a warning. Normal sense needs β_h + β_f ≤ 0.9.
+- A bottom pad of `P = ceil(β_f·T_max) + 1` samples is filled, so that
+  footwall uplift reads real strata at the cube bottom.
+- Flags: `--fault-drag-hw`, `--fault-drag-fw`, `--fault-drag-width`,
+  `--fault-drag-max-width-m` and `--fault-drag-sense`. They are rejected
+  without `--fault-drag` and under `--legacy-fault-kinematics`. The run
+  prints a `fault drag:` summary line.
+- Tests: `synthoseis-geo/src/faults/drag_tests.rs` (planar analytic T1,
+  T2, T8, T10–T12, the pad check) and `synthoseis-core/tests/fault_drag.rs`
+  (T4–T7, T9, T13).
+
 ## Deferred (follow-ups)
+
+- Fault drag (7c): T4 drag-made inversions and the T13 tip-zone
+  differences (see the PR). Drag of properties and stacks outside the
+  zones is not checked separately, only labels. The auto sense picks
+  normal on most default faults (their physical dips are under 35°).
 
 - Salt-flank fragments under heave: done in roadmap 7d (drag after
   faulting, `salt_fault_order.rs`). The stair and Jaccard bars use the
