@@ -428,7 +428,7 @@ pub fn analytic_drag(src: &[u8], d: &[f64], maps: &[f64], shape: [usize; 3]) -> 
             continue;
         }
         let mc = &maps[q * nh..(q + 1) * nh];
-        let dz = |z: f64| synthoseis_core::salt::depth_offset(mc, dc, z);
+        let dz = |z: f64| offset_at(mc, dc, z);
         let col = &src[q * nk..(q + 1) * nk];
         let mut kn = vec![(0.0f64, 0.0f64)];
         for a in 1..nk {
@@ -449,6 +449,36 @@ pub fn analytic_drag(src: &[u8], d: &[f64], maps: &[f64], shape: [usize; 3]) -> 
         }
     }
     out
+}
+
+/// D(z) for the reference, written here so the Jaccard bar does not share
+/// the lookup with the product (`salt::depth_offset`). `mc` are the
+/// undragged horizon depths of the column (non-decreasing), `dc` their
+/// offsets. Above the first horizon and below the last (including the pad
+/// below the cube) D is held at the end value; between two bracketing
+/// horizons it is linear in depth; where several horizons share a depth
+/// (pinched), the deepest one's offset is used.
+fn offset_at(mc: &[f64], dc: &[f64], z: f64) -> f64 {
+    let nh = mc.len();
+    if z < mc[0] {
+        return dc[0];
+    }
+    if z >= mc[nh - 1] {
+        return dc[nh - 1];
+    }
+    // Deepest horizon at or above z, then the next one strictly below it.
+    let mut lo = 0;
+    for h in 0..nh {
+        if mc[h] <= z {
+            lo = h;
+        }
+    }
+    let hi = lo + 1;
+    let span = mc[hi] - mc[lo];
+    if span <= 0.0 {
+        return dc[hi];
+    }
+    dc[lo] + (z - mc[lo]) / span * (dc[hi] - dc[lo])
 }
 
 /// Band Jaccard of the post-fault run of `seed` against [`analytic_drag`].

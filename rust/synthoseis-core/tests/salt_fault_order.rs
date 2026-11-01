@@ -69,13 +69,16 @@ fn hidden_drag_exposure_is_zero_seeds_1_20() {
 /// summed bar (measured 1.242), so the bar still sees the artifact. Post vs
 /// faults-off and master are printed (informational).
 #[test]
-#[ignore = "slow: 60 cube runs; passes (sum 0.966, seeds 0.855-1.024)"]
+#[ignore = "slow: 60 cube runs; passes at c080c695 (sum 0.961, seeds 0.855 (2) to 1.018 (13), seed 15 0.989)"]
 fn stair_index_vs_additive_baseline() {
     let (mut sp, mut sm, mut sb) = (0.0, 0.0, 0.0);
     let mut fails = Vec::new();
     for seed in 1u64..=20 {
         let Some(s) = body(seed) else { continue };
         let (p, mm, b, o) = m::stair_with_baseline(seed, SHAPE, &s);
+        if seed == 1 {
+            eprintln!();
+        }
         eprintln!(
             "seed {seed}: post/B {:.3} master/B {:.3} post/off {:.3}",
             p / b,
@@ -508,16 +511,19 @@ fn jaccard_out(seed: u64) -> Option<f64> {
 /// Label parity in the drag band (Strata ruling on #61 at e35b2b76):
 /// Jaccard vs an independent post-fault drag (`m::analytic_drag`, per output
 /// column at present depth, not `drag_warp_labels`) ≥ 0.97 per seed and
-/// ≥ 0.98 mean over seeds 1–20 (measured min 0.9832 seed 16, mean 0.9956).
+/// ≥ 0.98 mean over seeds 1–20 (measured at c080c695: min 0.9825 seed 16, mean 0.9953).
 /// Jaccard vs master outside its exposed region is printed (informational:
 /// master drags in pre-fault coordinates).
 #[test]
-#[ignore = "slow: 40 cube runs; passes (min 0.983 seed 16, mean 0.996)"]
+#[ignore = "slow: 40 cube runs; passes at c080c695 (min 0.9825 seed 16, mean 0.9953)"]
 fn drag_band_jaccard_vs_analytic() {
     let mut js = Vec::new();
     for seed in 1u64..=20 {
         let Some(s) = body(seed) else { continue };
         let j = m::jaccard_vs_analytic(seed, SHAPE, &s);
+        if seed == 1 {
+            eprintln!();
+        }
         eprintln!("seed {seed}: J analytic {j:.4} J master-out {:.4}", jaccard_out(seed).unwrap());
         js.push((seed, j));
     }
