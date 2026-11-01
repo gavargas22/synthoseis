@@ -595,8 +595,8 @@ pub fn drag_offsets(maps: &[f64], shape: [usize; 3], salt: &SaltBody, smooth_all
 /// `P = ⌈max −D_c⌉ + 1` samples, so no output cell reads past the source.
 /// The pad continues the bottom run's interval: the undragged fill of
 /// `maps` shifted by the depth offset of that run's top (`table[label]` is
-/// its interval, 255 = none; `inv` the inverse), or repeats the bottom
-/// label where that is undefined. The stretch `w` is piecewise linear
+/// its interval, 255 = none; `inv` the inverse), or repeats the label above
+/// where that is undefined. The stretch `w` is piecewise linear
 /// between knots and output cell `k` takes the label at
 /// `floor(w⁻¹(k + ½))`. Columns with `|D| < ½` throughout are untouched
 /// ([`drag_column_active`]). With `index`, it receives the source cell of
@@ -691,7 +691,8 @@ pub fn depth_offset(mc: &[f64], dc: &[f64], z: f64) -> f64 {
 /// Extend the column `src` (length `nk`) to `n` samples below the cube:
 /// the undragged interval fill of `mc` at depth `k + δ`, `δ` the shift
 /// between the bottom run's top and its interval's top horizon, labelled
-/// through `inv`; the bottom label where that is undefined.
+/// through `inv`; the label above where that is undefined (a gap or an unlabelled
+/// interval), so the pad never goes back to a shallower label.
 fn pad_column(src: &mut Vec<u8>, n: usize, mc: &[f64], table: &[u8; 256], inv: &[u8; 256]) {
     let nk = src.len();
     let last = src[nk - 1];
@@ -701,7 +702,10 @@ fn pad_column(src: &mut Vec<u8>, n: usize, mc: &[f64], table: &[u8; 256], inv: &
         .then(|| mc[h as usize].ceil() as i64 - k0 as i64);
     let nh = mc.len();
     for k in nk..n {
-        let mut l = last;
+        // Gaps between intervals (and unlabelled ones) keep the label
+        // above, not the bottom run's: falling back to `last` there put a
+        // shallower label below a deeper one (seed 15, #61 delta).
+        let mut l = src[k - 1];
         if let Some(sh) = shift {
             let z = k as i64 + sh;
             // Interval h: ceil(m_h) <= z < floor(m_{h+1}).

@@ -265,33 +265,71 @@ fn knot_misses(seed: u64, min_throw: usize) -> (usize, usize) {
     (tops, bad)
 }
 
-/// No column leaves the drag with inverted horizon order (#61 delta): a
-/// deeper boundary lifted above a shallower one pushes that one up with it,
-/// so no output run top sits more than 1 sample below its own drag target
-/// `a + D(a)` (`a` its faulted run top). The old pin-down clamp held such
-/// tops at the shallower boundary's target (seed 1 (25,15), label 9 at 56).
-/// At 81d486a2 seeds 1, 4 and 6 fail with 2217, 330 and 4158 pinned tops
-/// (912, 330 and 1619 columns). It is the second M3 killer: knots from the
-/// unfaulted labels put the targets at unfaulted tops, so faulted tops land
-/// below theirs (with `drag_knots_are_faulted_run_tops`).
+/// No column leaves the drag with inverted horizon order (#61 delta, Strata
+/// ruling at e35b2b76), seeds 1–20, both directions. For every run top `a`
+/// of the faulted labels before the warp, its expected output position is
+/// the push-up clamp of the targets, `b_r = max(0, min(a_r + D(a_r),
+/// b_{r+1}))` (computed here, bottom-up over the column's run tops), and
+/// its output position (the first cell whose source is at or below `a`)
+/// lies within 1 sample of `b` either way: not pinned below (the old
+/// pin-down clamp; seeds 1, 4, 6 fail at 81d486a2) and not lifted above.
+/// The 1 sample is the half-sample rounding of `floor(w⁻¹(k + ½))`, the
+/// same for every seed. Tops a knot in the pad below the cube can push
+/// (target ≥ nk + min D) are checked only for "not pinned below". Also: no band column is non-monotone
+/// (salt and unset excluded) over a source column that is monotone (salt
+/// included): the warp is monotone, so only the pad can do that (seed 15 had
+/// 2 at e35b2b76: the pad fell back to the bottom label in interval gaps).
+/// Columns whose source is non-monotone only under the salt mask (fault
+/// repeats the drag lifts into view) are printed. Second M3 killer with
+/// `drag_knots_are_faulted_run_tops`.
 #[test]
-fn drag_keeps_horizon_order() {
-    let pinned: Vec<(u64, usize, usize)> = [1u64, 4, 6]
-        .into_iter()
-        .map(|s| {
-            let (tops, cols) = pinned_tops(s);
-            (s, tops, cols)
-        })
-        .filter(|&(_, t, _)| t > 0)
-        .collect();
-    assert!(pinned.is_empty(), "(seed, tops, columns) pinned below their target: {pinned:?}");
+#[ignore = "slow: 20 seeds; passes (0 off by more than 1 sample, 0 drag-made non-monotone columns)"]
+fn drag_keeps_horizon_order_seeds_1_20() {
+    let mut bad = Vec::new();
+    for seed in 1u64..=20 {
+        let Some(o) = horizon_order(seed) else { continue };
+        eprintln!(
+            "seed {seed}: tops {} (pad-reach skipped {}) below {} above {} | columns using the \
+             tolerance {} | drag-made non-monotone {} | non-monotone from under the salt mask {}",
+            o.tops, o.pad_skip, o.below, o.above, o.tol_cols, o.nonmono, o.unmasked
+        );
+        if o.below + o.above + o.nonmono > 0 {
+            bad.push((seed, o.below, o.above, o.nonmono));
+        }
+    }
+    assert!(bad.is_empty(), "(seed, below, above, non-monotone): {bad:?}");
 }
 
-/// `(run tops, columns)` of `seed` whose output position lies more than 1
-/// sample below their drag target `a + D(a)`: `a` a run top of the faulted
-/// labels before the warp, its output position the first cell whose
-/// source is at or below `a`.
-fn pinned_tops(seed: u64) -> (usize, usize) {
+/// The order check on seeds 1, 4, 6 and 15, in CI.
+#[test]
+fn drag_keeps_horizon_order() {
+    for seed in [1u64, 4, 6, 15] {
+        let o = horizon_order(seed).expect("salt");
+        assert!(o.tops > 1000, "seed {seed}: {} tops", o.tops);
+        assert_eq!(
+            (o.below, o.above, o.nonmono),
+            (0, 0, 0),
+            "seed {seed}: (below, above, drag-made non-monotone)"
+        );
+    }
+}
+
+struct Order {
+    tops: usize,
+    below: usize,
+    above: usize,
+    tol_cols: usize,
+    nonmono: usize,
+    /// Tops skipped: within reach of a knot in the pad below the cube.
+    pad_skip: usize,
+    /// Columns whose output order is non-monotone where the source is
+    /// non-monotone only under the salt mask (fault repeats lifted into
+    /// view; informational).
+    unmasked: usize,
+}
+
+fn horizon_order(seed: u64) -> Option<Order> {
+    let s = body(seed)?;
     let c = m::cfg(seed, SHAPE, 4, Mode::PostFault);
     let r = m::run(&c);
     let src = synthoseis_core::pipeline_stream::faulted_labels_undragged(&c);
@@ -299,30 +337,70 @@ fn pinned_tops(seed: u64) -> (usize, usize) {
     let maps = m::maps(&c);
     let [ni, nj, nk] = SHAPE;
     let nh = d.len() / (ni * nj);
-    let (mut tops, mut cols) = (0usize, 0usize);
+    let fp = m::footprint(&s, SHAPE);
+    let dist = m::distance(&fp, ni, nj, m::BAND);
+    let mut o = Order {
+        tops: 0,
+        below: 0,
+        above: 0,
+        tol_cols: 0,
+        nonmono: 0,
+        pad_skip: 0,
+        unmasked: 0,
+    };
+    let mono = |col: &[u8], q: usize, mask: bool| {
+        let v: Vec<u8> = (0..nk)
+            .filter(|&k| col[k] != 255 && !(mask && s.contains(q, k)))
+            .map(|k| col[k])
+            .collect();
+        v.windows(2).all(|w| w[1] >= w[0])
+    };
     for q in 0..ni * nj {
+        let (col, w) = (&src[q * nk..(q + 1) * nk], &r.warp[q * nk..(q + 1) * nk]);
+        // The warp is monotone, so output order is a subsequence of the
+        // source's: a non-monotone output column over a source that is
+        // monotone (salt cells included) can only come from the pad.
+        if dist[q] <= m::BAND && !mono(&r.labels[q * nk..(q + 1) * nk], q, true) {
+            if mono(col, q, false) {
+                o.nonmono += 1;
+            } else if mono(col, q, true) {
+                o.unmasked += 1;
+            }
+        }
         let dc = &d[q * nh..(q + 1) * nh];
         if !synthoseis_core::salt::drag_column_active(dc) {
             continue;
         }
         let mc = &maps[q * nh..(q + 1) * nh];
-        let (col, w) = (&src[q * nk..(q + 1) * nk], &r.warp[q * nk..(q + 1) * nk]);
-        let before = tops;
-        for a in 1..nk {
-            if col[a] == col[a - 1] {
-                continue;
-            }
-            let target = a as f64 + synthoseis_core::salt::depth_offset(mc, dc, a as f64);
-            let Some(y) = w.iter().position(|&x| x as usize >= a) else {
-                continue;
-            };
-            if y as f64 > target + 1.0 + 1e-9 {
-                tops += 1;
-            }
+        let tops: Vec<usize> = (1..nk).filter(|&a| col[a] != col[a - 1]).collect();
+        let mut b: Vec<f64> = tops
+            .iter()
+            .map(|&a| a as f64 + synthoseis_core::salt::depth_offset(mc, dc, a as f64))
+            .collect();
+        for t in (0..b.len().saturating_sub(1)).rev() {
+            b[t] = b[t].min(b[t + 1]);
         }
-        cols += usize::from(tops > before);
+        // A knot in the pad (source at or below nk) has target ≥ nk + min D;
+        // tops whose clamp could reach it depend on the pad fill.
+        let reach = nk as f64 + dc.iter().copied().fold(0.0f64, f64::min);
+        let mut tol = false;
+        for (t, &a) in tops.iter().enumerate() {
+            let Some(y) = w.iter().position(|&x| x as usize >= a) else { continue };
+            let want = b[t].max(0.0);
+            let e = y as f64 - want;
+            o.below += usize::from(e > 1.0 + 1e-9);
+            // The pad only pushes up: such tops are checked one way.
+            if b[t] >= reach - 1e-9 {
+                o.pad_skip += 1;
+                continue;
+            }
+            o.tops += 1;
+            o.above += usize::from(e < -1.0 - 1e-9);
+            tol |= e.abs() > 0.5 + 1e-9;
+        }
+        o.tol_cols += usize::from(tol);
     }
-    (tops, cols)
+    Some(o)
 }
 
 /// Spec tests 4 and 5 on seed 1: the warp only lifts (`k − w⁻¹(k) ≤ 0`),
