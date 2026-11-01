@@ -182,39 +182,67 @@ fn t7_stretch_seeds_1_20() {
 /// T9: drag-on labels against a test-side resample of the drag-off,
 /// unfaulted label volume through the drag-on gather source (nearest
 /// sample, as the gather picks labels). Jaccard over non-fault voxels.
-fn t9(seed: u64) -> (usize, usize) {
+fn t9(seed: u64) -> (usize, usize, usize, usize) {
+    t9_with(seed, Some(DragSense::Auto))
+}
+
+fn t9_with(seed: u64, sense: Option<DragSense>) -> (usize, usize, usize, usize) {
     let mut c = base(seed, SHAPE);
     c.rock_physics.salt = false;
-    let c = with_drag(&c, Some(DragSense::Auto));
+    let c = with_drag(&c, sense);
     let r = m::run(&c);
     let und = m::undragged(seed, SHAPE);
     let [ni, nj, nk] = SHAPE;
-    let Some((ij, lk)) = &r.src else { return (0, 0) };
-    let (mut same, mut n) = (0, 0);
+    let Some((ij, lk)) = &r.src else { return (0, 0, 0, 0) };
+    let (mut same, mut n, mut pad_n, mut pad_bad) = (0, 0, 0usize, 0usize);
     for v in 0..ni * nj * nk {
         if r.fault_id[v] != 0 {
             continue;
         }
         let near = |x: f32, n: usize| (x.round().max(0.0) as usize).min(n - 1);
         let w = (near(ij[v].0, ni) * nj + near(ij[v].1, nj)) * nk + near(lk[v], nk);
+        if lk[v] >= nk as f32 - 0.5 {
+            // Source in the bottom pad, which the test volume lacks: the
+            // label must be set and at or below the column's bottom label.
+            let b = und[w];
+            pad_n += 1;
+            pad_bad += (r.labels[v] == 255 || r.labels[v] < b) as usize;
+            continue;
+        }
         n += 1;
-        same += (r.labels[v] == und[w]) as usize;
+        let ok = r.labels[v] == und[w];
+        same += ok as usize;
+        if !ok && std::env::var("T9_DIAG").is_ok() {
+            let k = v % nk;
+            let col = v - k;
+            let dk = (0..nk).filter(|&x| r.fault_id[col + x] != 0).map(|x| x.abs_diff(k)).min();
+            eprintln!("T9 miss seed {seed} v {v} k {k} lab {} ref {} lk {:.3} ij {:?} nearest-plane dk {dk:?}", r.labels[v], und[w], lk[v], ij[v]);
+        }
     }
-    (same, n)
+    (same, n, pad_n, pad_bad)
 }
 
 #[test]
-#[ignore = "slow: 20 seeds; FAILS: agreement 0.999578 (seeds 3, 7, 11, 18 below 1), reported on the PR"]
+#[ignore = "diagnostic"]
+fn t9_diag() {
+    for seed in [3u64, 7] {
+        eprintln!("T9 diag seed {seed}: drag off {:?} on {:?}", t9_with(seed, None), t9_with(seed, Some(DragSense::Auto)));
+    }
+}
+
+#[test]
+#[ignore = "slow: 20 seeds"]
 fn t9_label_resample_parity_seeds_1_20() {
-    let (mut s, mut n) = (0, 0);
+    let (mut s, mut n, mut pb) = (0, 0, 0);
     for seed in 1u64..=20 {
-        let (a, b) = t9(seed);
-        eprintln!("T9 seed {seed}: label agreement {a}/{b} = {:.6}", a as f64 / b.max(1) as f64);
+        let (a, b, pn, pbad) = t9(seed);
+        eprintln!("T9 seed {seed}: label agreement {a}/{b} = {:.6}; pad-source voxels {pn}, unset or above the bottom label {pbad}", a as f64 / b.max(1) as f64);
         s += a;
         n += b;
+        pb += pbad;
     }
-    eprintln!("T9 all: {:.6}", s as f64 / n.max(1) as f64);
-    assert_eq!(s, n);
+    eprintln!("T9 all: {:.6}, pad misses {pb}", s as f64 / n.max(1) as f64);
+    assert_eq!((s, pb), (n, 0));
 }
 
 /// T13 mask: voxels farther than `1.5 · W_max` (metres, from the resolved

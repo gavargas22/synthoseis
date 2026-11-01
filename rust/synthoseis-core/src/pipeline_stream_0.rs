@@ -568,6 +568,16 @@ fn apply_faults_to_labels_padded(
     let [ni, nj, nk] = cfg.shape();
     let nks = nk + pad;
     let mut src = fill_layer_labels(maps, [ni, nj, nh], nks);
+    // Below the deepest horizon map the fill is unset (255); in the pad that
+    // is cube bottom, not air: continue the last layer of the column (the
+    // gather would otherwise lift 255 into the cube).
+    for c in 0..ni * nj {
+        for k in nk.max(1)..nks {
+            if src[c * nks + k] == 255 {
+                src[c * nks + k] = src[c * nks + k - 1];
+            }
+        }
+    }
     let mut table = [None::<u8>; 256];
     for c in 0..ni * nj {
         for k in 0..nk {
