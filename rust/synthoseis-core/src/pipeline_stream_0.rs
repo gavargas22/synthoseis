@@ -455,11 +455,20 @@ fn build_fault_model(cfg: &E2eConfig, maps: &[f64], nh: usize) -> Option<FaultMo
     };
     let model = FaultModel::resolve_with_mode(shape, &params, &seabed, seed, mode);
     let model = model.with_kinematics(fault_kinematics(cfg));
-    if cfg.faults.legacy_kinematics || cfg.faults.legacy_profile {
+    if cfg.faults.legacy_kinematics {
         return Some(model);
     }
     // 7b: tip lines from their own sub-stream of the run seed.
-    Some(model.with_tips(cfg.seed, &TipParams::default()))
+    let model = if cfg.faults.legacy_profile {
+        model
+    } else {
+        model.with_tips(cfg.seed, &TipParams::default())
+    };
+    // 7c: optional fault drag inside the gather.
+    match &cfg.faults.drag {
+        Some(d) => Some(model.with_drag(d)),
+        None => Some(model),
+    }
 }
 
 /// Fault kinematics of `cfg`: legacy vertical lookup under
@@ -534,8 +543,56 @@ pub(crate) fn apply_faults_to_labels(cfg: &E2eConfig, maps: &[f64], nh: usize, l
         build_fault_model(cfg, maps, nh)
     };
     if let Some(model) = model {
+        let pad = model.drag_pad();
+        if pad > 0 {
+            apply_faults_to_labels_padded(&model, cfg, maps, nh, labels, pad);
+            return;
+        }
         let _ = model.apply_to_labels(labels, fault_tile(cfg));
     }
+}
+
+/// [`apply_faults_to_labels`] with fault drag: the unfaulted fill is
+/// evaluated on `nk + pad` samples (spec-fault-drag §3, bottom pad), its
+/// raw layer indices are mapped to the ids `labels` already carries (pairs
+/// in the top `nk` samples; layers only in the pad get new ids above the
+/// largest, in depth order) and the fault gather reads from it.
+fn apply_faults_to_labels_padded(
+    model: &synthoseis_geo::faults::FaultModel,
+    cfg: &E2eConfig,
+    maps: &[f64],
+    nh: usize,
+    labels: &mut [u8],
+    pad: usize,
+) {
+    let [ni, nj, nk] = cfg.shape();
+    let nks = nk + pad;
+    let mut src = fill_layer_labels(maps, [ni, nj, nh], nks);
+    let mut table = [None::<u8>; 256];
+    for c in 0..ni * nj {
+        for k in 0..nk {
+            let raw = src[c * nks + k] as usize;
+            table[raw].get_or_insert(labels[c * nk + k]);
+        }
+    }
+    let mut present = [false; 256];
+    for &v in &src {
+        present[v as usize] = true;
+    }
+    let mut next = table.iter().flatten().filter(|&&v| v != 255).map(|&v| v as u16 + 1).max().unwrap_or(0);
+    for (raw, t) in table.iter_mut().enumerate() {
+        if t.is_none() && present[raw] {
+            *t = Some(if raw == 255 { 255 } else { next.min(254) as u8 });
+            if raw != 255 {
+                next += 1;
+            }
+        }
+    }
+    for v in src.iter_mut() {
+        *v = table[*v as usize].unwrap_or(*v);
+    }
+    let (out, _, _) = model.apply_to_labels_from(&src, nks, fault_tile(cfg));
+    labels.copy_from_slice(&out);
 }
 
 /// Binary fault-label volume for `cfg` (`None` when faulting is disabled).

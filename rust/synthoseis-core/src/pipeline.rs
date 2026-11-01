@@ -274,6 +274,10 @@ pub struct FaultConfig {
     /// scaling (spec-fault-kinematics 7b). CLI `--legacy-fault-profile`.
     /// Ignored under `legacy_kinematics`, which turns 7b off too.
     pub legacy_profile: bool,
+    /// Optional fault drag (roadmap 7c, spec-fault-drag). Default `None`
+    /// = off (bit-identical to master b22dbb67). CLI `--fault-drag` and
+    /// `--fault-drag-*`. Needs heave (ignored under `legacy_kinematics`).
+    pub drag: Option<synthoseis_geo::faults::DragParams>,
 }
 
 impl Default for FaultConfig {
@@ -287,6 +291,7 @@ impl Default for FaultConfig {
             legacy_kinematics: false,
             min_dip_deg: synthoseis_geo::faults::DEFAULT_MIN_DIP_DEG,
             legacy_profile: false,
+            drag: None,
         }
     }
 }

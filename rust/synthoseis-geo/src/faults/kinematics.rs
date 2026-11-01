@@ -20,6 +20,7 @@
 //! position, last writer (youngest) wins.
 
 use super::apply::FaultModel;
+use super::drag::DragModel;
 use super::model::ResolvedFault;
 
 /// Half width of the analytic fault-label band (voxels, spec §6.4): the
@@ -212,6 +213,9 @@ impl FaultModel {
         k: usize,
         oldest_first: bool,
     ) -> Gathered {
+        if let Some(dm) = self.drag() {
+            return self.gather_drag(dm, p, i, j, k, oldest_first);
+        }
         let [ni, nj, nk] = self.shape();
         let top = (nk.max(1) - 1) as f64;
         let (imax, jmax) = ((ni.max(1) - 1) as f64, (nj.max(1) - 1) as f64);
@@ -259,6 +263,120 @@ impl FaultModel {
                 )
             };
             // Legacy stores the composed lookup as f32 at every stage.
+            z = a as f32 as f64;
+            x = (x - h[0]).clamp(0.0, imax);
+            y = (y - h[1]).clamp(0.0, jmax);
+        }
+        Gathered { src: [x, y, z], id }
+    }
+}
+
+/// One fault stage with drag (spec-fault-drag §1): `(a, h)` with
+/// `a = clip(kk − d − w, 0, top_src)` and the heave from `d` only.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn stage_slip_drag(
+    f: &ResolvedFault,
+    n: usize,
+    dm: &DragModel,
+    p: &HeaveParams,
+    x: f64,
+    y: f64,
+    kk: usize,
+    lat: f64,
+    top_src: f64,
+    pre: Option<(f64, [f64; 3])>,
+) -> (f64, [f64; 2]) {
+    let z = kk as f64;
+    let v = match pre {
+        Some((v, _)) => v,
+        None => f.geometry.value_at(x, y, z),
+    };
+    let wt = match &f.tip {
+        Some(t) => t.factor(x, y, z),
+        None => lat,
+    };
+    let d_loc = wt * f.profile[kk];
+    let d = if v <= 1.0 { d_loc } else { 0.0 };
+    if d_loc == 0.0 {
+        return ((z - d).clamp(0.0, top_src), [0.0, 0.0]);
+    }
+    let g = match pre {
+        Some((_, g)) => g,
+        None => f.geometry.gradient_at(x, y, z),
+    };
+    let w = dm.displacement(n, v, g, d_loc);
+    let a = (z - d - w).clamp(0.0, top_src);
+    if d == 0.0 || p.heave_scale == 0.0 {
+        return (a, [0.0, 0.0]);
+    }
+    (a, heave_from_gradient(p, g, d))
+}
+
+impl FaultModel {
+    /// [`Self::gather_with`] with fault drag: the same stages plus the drag
+    /// term, sources down to `nk − 1 + P` (the bottom pad).
+    fn gather_drag(
+        &self,
+        dm: &DragModel,
+        p: &HeaveParams,
+        i: usize,
+        j: usize,
+        k: usize,
+        oldest_first: bool,
+    ) -> Gathered {
+        let [ni, nj, nk] = self.shape();
+        let top = (nk.max(1) - 1) as f64;
+        let top_src = top + dm.pad as f64;
+        let (imax, jmax) = ((ni.max(1) - 1) as f64, (nj.max(1) - 1) as f64);
+        let (mut x, mut y, mut z) = (i as f64, j as f64, k as f64);
+        let mut id = 0u8;
+        let nf = self.faults().len();
+        for step in 0..nf {
+            let n = if oldest_first { step } else { nf - 1 - step };
+            let f = &self.faults()[n];
+            let lat = if f.tip.is_some() {
+                0.0
+            } else {
+                f.lateral_at(x, y)
+            };
+            let wz = match &f.tip {
+                Some(t) => t.factor(x, y, z),
+                None => lat,
+            };
+            let mut pre = None;
+            if id == 0 && wz * profile_at(f, z, top) > 1.0 {
+                let g = f.geometry.gradient_at(x, y, z);
+                let gn = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
+                let v = f.geometry.value_at(x, y, z);
+                if gn > 0.0 && (v - 1.0).abs() / gn <= LABEL_BAND_VOXELS {
+                    id = (n + 1).min(254) as u8;
+                }
+                pre = Some((v, g));
+            }
+            let zc = z.clamp(0.0, top);
+            // A younger stage may have sent the position into the pad:
+            // the stage map continues with slope 1 below the cube.
+            let excess = z - zc;
+            let k0 = zc.floor() as usize;
+            let w = zc - k0 as f64;
+            let pre = pre.filter(|_| w == 0.0 && z == k0 as f64);
+            let (a0, h0) = stage_slip_drag(f, n, dm, p, x, y, k0, lat, top_src, pre);
+            let (a, h) = if w == 0.0 {
+                (a0, h0)
+            } else {
+                let k1 = (k0 + 1).min(nk - 1);
+                let (a1, h1) = stage_slip_drag(f, n, dm, p, x, y, k1, lat, top_src, None);
+                (
+                    a0 + w * (a1 - a0),
+                    [h0[0] + w * (h1[0] - h0[0]), h0[1] + w * (h1[1] - h0[1])],
+                )
+            };
+            let a = if excess > 0.0 {
+                (a + excess).clamp(0.0, top_src)
+            } else {
+                a
+            };
             z = a as f32 as f64;
             x = (x - h[0]).clamp(0.0, imax);
             y = (y - h[1]).clamp(0.0, jmax);

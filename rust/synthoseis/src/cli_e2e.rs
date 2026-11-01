@@ -605,6 +605,12 @@ fn print_fault_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
     } else {
         println!("fault kinematics: heave, min dip {} deg", cfg.faults.min_dip_deg);
     }
+    if let Some(d) = model.drag() {
+        println!("{}", d.summary());
+        for w in &d.warnings {
+            eprintln!("warning: fault drag: {w}");
+        }
+    }
 }
 
 pub fn run_single_worker_placeholder(config: &RunConfig, store: Option<PathBuf>, seed: u64) {

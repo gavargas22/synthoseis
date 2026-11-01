@@ -347,3 +347,4 @@ mod tests {
         assert!(report.angle_mae > 0.0);
     }
 }
+pub use synthoseis_geo::faults::{DragParams, DragSense};

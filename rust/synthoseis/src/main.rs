@@ -114,6 +114,29 @@ enum Commands {
         /// with --legacy-fault-kinematics, which already turns it off.
         #[arg(long, default_value_t = false)]
         legacy_fault_profile: bool,
+        /// Optional fault drag (roadmap 7c, off by default): the strata
+        /// bend next to each fault inside a cos²-tapered zone of width
+        /// W = width · D_max (capped). Requires --faults; rejected with
+        /// --legacy-fault-kinematics.
+        #[arg(long, default_value_t = false)]
+        fault_drag: bool,
+        /// Hanging-wall drag amplitude (fraction of local throw, 0-0.5,
+        /// default 0.30). Requires --fault-drag.
+        #[arg(long)]
+        fault_drag_hw: Option<f64>,
+        /// Footwall drag amplitude (0-0.5, default 0.15). Requires --fault-drag.
+        #[arg(long)]
+        fault_drag_fw: Option<f64>,
+        /// Drag zone width in units of D_max (1-10, default 3). Requires --fault-drag.
+        #[arg(long)]
+        fault_drag_width: Option<f64>,
+        /// Drag zone width cap in metres (50-800, default 400). Requires --fault-drag.
+        #[arg(long)]
+        fault_drag_max_width_m: Option<f64>,
+        /// Drag sense: auto (Grasemann angle rule, default), reverse or
+        /// normal. Requires --fault-drag.
+        #[arg(long)]
+        fault_drag_sense: Option<String>,
         /// Cube shape `NI,NJ,NK` for single-worker `--e2e --chunked` (default 8,8,8).
         #[arg(long)]
         shape: Option<String>,
@@ -793,6 +816,12 @@ fn main() {
             legacy_fault_kinematics,
             fault_min_dip,
             legacy_fault_profile,
+            fault_drag,
+            fault_drag_hw,
+            fault_drag_fw,
+            fault_drag_width,
+            fault_drag_max_width_m,
+            fault_drag_sense,
             shape,
             bandpass,
             lateral_filter,
@@ -872,6 +901,19 @@ fn main() {
                 fault_min_dip,
                 legacy_fault_profile,
             )
+                .and_then(|c| {
+                    parse_fault_drag(
+                        c,
+                        fault_drag,
+                        FaultDragArgs {
+                            hw: fault_drag_hw,
+                            fw: fault_drag_fw,
+                            width: fault_drag_width,
+                            max_width_m: fault_drag_max_width_m,
+                            sense: fault_drag_sense.as_deref(),
+                        },
+                    )
+                })
                 .unwrap_or_else(|e| {
                     eprintln!("{e}");
                     std::process::exit(2);
@@ -1177,9 +1219,112 @@ pub fn parse_fault_kinematics(
     Ok(c)
 }
 
+/// Optional `--fault-drag-*` values.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FaultDragArgs<'a> {
+    pub hw: Option<f64>,
+    pub fw: Option<f64>,
+    pub width: Option<f64>,
+    pub max_width_m: Option<f64>,
+    pub sense: Option<&'a str>,
+}
+
+/// `--fault-drag [--fault-drag-*]` on top of [`parse_fault_kinematics`]
+/// (spec-fault-drag §2). Errors (exit 2) for a value out of range, a
+/// `--fault-drag-*` without `--fault-drag`, drag without faults or with
+/// `--legacy-fault-kinematics`, and normal sense with β_h + β_f > 0.9.
+pub fn parse_fault_drag(
+    mut c: synthoseis_core::FaultConfig,
+    on: bool,
+    a: FaultDragArgs<'_>,
+) -> Result<synthoseis_core::FaultConfig, String> {
+    let any = a.hw.is_some()
+        || a.fw.is_some()
+        || a.width.is_some()
+        || a.max_width_m.is_some()
+        || a.sense.is_some();
+    if !on {
+        if any {
+            return Err("--fault-drag-hw / -fw / -width / -max-width-m / -sense require --fault-drag".into());
+        }
+        return Ok(c);
+    }
+    if c.count == 0 {
+        return Err("--fault-drag has no effect without --faults".into());
+    }
+    if c.legacy_kinematics {
+        return Err("--fault-drag needs the heave gather; rejected with --legacy-fault-kinematics".into());
+    }
+    use synthoseis_core::{DragParams, DragSense};
+    let mut p = DragParams::default();
+    if let Some(v) = a.hw {
+        p.beta_h = v;
+    }
+    if let Some(v) = a.fw {
+        p.beta_f = v;
+    }
+    if let Some(v) = a.width {
+        p.width = v;
+    }
+    if let Some(v) = a.max_width_m {
+        p.max_width_m = v;
+    }
+    if let Some(s) = a.sense {
+        p.sense = match s {
+            "auto" => DragSense::Auto,
+            "reverse" => DragSense::Reverse,
+            "normal" => DragSense::Normal,
+            o => return Err(format!("--fault-drag-sense {o}: expected auto, reverse or normal")),
+        };
+    }
+    p.validate()?;
+    c.drag = Some(p);
+    Ok(c)
+}
+
 #[cfg(test)]
 mod tests {
     use synthoseis_core::{ClosureMinimum, RockPhysicsConfig};
+
+    #[test]
+    fn fault_drag_flags_parse_and_are_checked() {
+        use super::{parse_fault_drag, parse_fault_kinematics, FaultDragArgs};
+        use synthoseis_core::{DragParams, DragSense};
+        let base = parse_fault_kinematics(3, false, None, false).unwrap();
+        // Off by default: the config is unchanged.
+        assert_eq!(parse_fault_drag(base.clone(), false, FaultDragArgs::default()).unwrap(), base);
+        let on = parse_fault_drag(base.clone(), true, FaultDragArgs::default()).unwrap();
+        assert_eq!(on.drag, Some(DragParams::default()));
+        let p = on.drag.unwrap();
+        assert_eq!((p.beta_h, p.beta_f, p.width, p.max_width_m), (0.30, 0.15, 3.0, 400.0));
+        assert_eq!(p.sense, DragSense::Auto);
+        let a = FaultDragArgs {
+            hw: Some(0.4),
+            fw: Some(0.2),
+            width: Some(2.0),
+            max_width_m: Some(300.0),
+            sense: Some("normal"),
+        };
+        let p = parse_fault_drag(base.clone(), true, a).unwrap().drag.unwrap();
+        assert_eq!((p.beta_h, p.beta_f, p.width, p.max_width_m, p.sense), (0.4, 0.2, 2.0, 300.0, DragSense::Normal));
+        let bad = |a: FaultDragArgs<'_>| parse_fault_drag(base.clone(), true, a).is_err();
+        assert!(bad(FaultDragArgs { hw: Some(0.6), ..Default::default() }));
+        assert!(bad(FaultDragArgs { fw: Some(-0.1), ..Default::default() }));
+        assert!(bad(FaultDragArgs { width: Some(0.5), ..Default::default() }));
+        assert!(bad(FaultDragArgs { width: Some(11.0), ..Default::default() }));
+        assert!(bad(FaultDragArgs { max_width_m: Some(40.0), ..Default::default() }));
+        assert!(bad(FaultDragArgs { max_width_m: Some(900.0), ..Default::default() }));
+        assert!(bad(FaultDragArgs { sense: Some("sideways"), ..Default::default() }));
+        // Normal sense needs β_h + β_f <= 0.9 (0.5 + 0.5 is rejected).
+        assert!(bad(FaultDragArgs { hw: Some(0.5), fw: Some(0.5), sense: Some("normal"), ..Default::default() }));
+        assert!(!bad(FaultDragArgs { hw: Some(0.5), fw: Some(0.5), sense: Some("reverse"), ..Default::default() }));
+        // A sub-flag without --fault-drag, drag without faults, drag with legacy kinematics.
+        assert!(parse_fault_drag(base.clone(), false, FaultDragArgs { hw: Some(0.3), ..Default::default() }).is_err());
+        let none = parse_fault_kinematics(0, false, None, false).unwrap();
+        assert!(parse_fault_drag(none, true, FaultDragArgs::default()).is_err());
+        let legacy = parse_fault_kinematics(3, true, None, false).unwrap();
+        assert!(parse_fault_drag(legacy, true, FaultDragArgs::default()).is_err());
+    }
 
     #[test]
     fn legacy_fault_profile_flag_parses_and_is_checked() {

@@ -36,6 +36,8 @@ pub struct FaultModel {
     /// Recent gather tiles shared by every consumer of a heave run
     /// ([`Self::with_gather_cache`]); `None` = gather on demand.
     cache: Option<std::sync::Arc<GatherCache>>,
+    /// Optional fault drag (7c, [`super::drag`]); `None` = off.
+    drag: Option<std::sync::Arc<super::drag::DragModel>>,
 }
 
 /// Gather results of one tile `[i0,i1) × [j0,j1) × [0,nk)` (row-major).
@@ -148,6 +150,7 @@ impl FaultModel {
             clamp,
             kinematics: FaultKinematics::Legacy,
             cache: None,
+            drag: None,
         }
     }
 
@@ -161,6 +164,7 @@ impl FaultModel {
             clamp: None,
             kinematics: FaultKinematics::Legacy,
             cache: None,
+            drag: None,
         }
     }
 
@@ -169,6 +173,24 @@ impl FaultModel {
         self.kinematics = kinematics;
         self.cache = None;
         self
+    }
+
+    /// Set the resolved drag (drops the gather cache).
+    pub(crate) fn set_drag(mut self, d: Option<std::sync::Arc<super::drag::DragModel>>) -> Self {
+        self.drag = d;
+        self.cache = None;
+        self
+    }
+
+    /// Resolved fault drag (`None` = off).
+    pub fn drag(&self) -> Option<&super::drag::DragModel> {
+        self.drag.as_deref()
+    }
+
+    /// Bottom pad P (samples) of the gather source: sources may lie in
+    /// `[0, nk − 1 + P]`; 0 without drag.
+    pub fn drag_pad(&self) -> usize {
+        self.drag.as_ref().map_or(0, |d| d.pad)
     }
 
     /// The same model with a shared, bounded gather cache on the `grid`
@@ -583,6 +605,39 @@ impl FaultModel {
         (mask, ids)
     }
 
+    /// [`Self::apply_to_labels`] from an unfaulted label cube `src` of
+    /// `nk_src >= nk` samples per column (the fill on `nk + P` samples, so
+    /// drag sources below the cube read real labels, spec-fault-drag §3).
+    /// Returns `(labels (ni, nj, nk), mask, ids)`. The result does not
+    /// depend on `tile`.
+    pub fn apply_to_labels_from(
+        &self,
+        src: &[u8],
+        nk_src: usize,
+        tile: [usize; 2],
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let [ni, nj, nk] = self.shape;
+        assert!(nk_src >= nk);
+        assert_eq!(src.len(), ni * nj * nk_src);
+        let n = ni * nj * nk;
+        let (mut labels, mut mask, mut ids) = (vec![0u8; n], vec![0u8; n], vec![0u8; n]);
+        self.for_each_tile(tile, |t| {
+            for i in t.i0..t.i1 {
+                for j in t.j0..t.j1 {
+                    let g = (i * nj + j) * nk;
+                    let l = t.col_offset(i, j);
+                    for k in 0..nk {
+                        let [si, sj, sk] = t.nearest_source_in(i, j, k, ni, nj, nk_src);
+                        labels[g + k] = src[(si * nj + sj) * nk_src + sk];
+                    }
+                    mask[g..g + nk].copy_from_slice(&t.mask[l..l + nk]);
+                    ids[g..g + nk].copy_from_slice(&t.segment_id[l..l + nk]);
+                }
+            }
+        });
+        (labels, mask, ids)
+    }
+
     /// Displace a float volume (e.g. geologic age) with linear interpolation
     /// (`Faults.apply_xyz_displacement`). Returns the fault mask.
     pub fn apply_to_volume_f32(&self, vol: &mut [f32], tile: [usize; 2]) -> Vec<u8> {
@@ -706,9 +761,24 @@ impl FaultTile {
     /// in `i`, `j`; legacy `floor(k + ½)` in `k`), clamped to the cube.
     #[inline]
     pub fn nearest_source(&self, i: usize, j: usize, k: usize, ni: usize, nj: usize) -> [usize; 3] {
+        self.nearest_source_in(i, j, k, ni, nj, self.nk)
+    }
+
+    /// [`Self::nearest_source`] with the source `k` clamped to a column of
+    /// `nk_src` samples (drag bottom pad).
+    #[inline]
+    pub fn nearest_source_in(
+        &self,
+        i: usize,
+        j: usize,
+        k: usize,
+        ni: usize,
+        nj: usize,
+        nk_src: usize,
+    ) -> [usize; 3] {
         let o = self.col_offset(i, j) + k;
         let r = |x: f64, n: usize| (x + 0.5).floor().clamp(0.0, (n.max(1) - 1) as f64) as usize;
-        let sk = r(self.lookup[o] as f64, self.nk);
+        let sk = r(self.lookup[o] as f64, nk_src);
         match &self.src_ij {
             None => [i, j, sk],
             Some(s) => [r(s[o].0 as f64, ni), r(s[o].1 as f64, nj), sk],
