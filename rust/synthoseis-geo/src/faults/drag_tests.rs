@@ -135,7 +135,9 @@ const T1_SHAPE: [usize; 3] = [128, 8, 160];
 /// label band.
 fn t1_errors(heave: bool, sense: DragSense, s_sign: f64) -> (f64, f64, usize) {
     let pl = Planar::new(T1_SHAPE);
-    let p = drag(0.5, 0.5, sense);
+    // The analytic horizons are the drag kinematics alone; the numerical
+    // slope limiter (not physics, tested by `limiter_*`) is off here.
+    let p = DragParams { no_limiter: true, ..drag(0.5, 0.5, sense) };
     let m = pl.model(heave).with_drag(&p);
     let [ni, nj, nk] = T1_SHAPE;
     let lab = labels_of(&m, |k| (k / H) as u8, [ni, nj]);

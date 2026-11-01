@@ -606,6 +606,8 @@ fn print_fault_summary(cfg: &synthoseis_core::pipeline::E2eConfig) {
         println!("fault kinematics: heave, min dip {} deg", cfg.faults.min_dip_deg);
     }
     if let Some(d) = model.drag() {
+        // Gathers any column not yet seen so the limiter count is complete.
+        let _ = model.limiter_stats();
         println!("{}", d.summary());
         for w in &d.warnings {
             eprintln!("warning: fault drag: {w}");
