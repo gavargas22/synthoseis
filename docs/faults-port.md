@@ -350,21 +350,20 @@ drag-off output is byte-identical to master b22dbb67 (96/96 configs).
   (defaults β_h 0.30, β_f 0.15), with `s = +1` reverse and `−1` normal.
   `--fault-drag-sense auto` picks reverse when the physical dip at the
   fault centre is ≥ 35°.
-- Per-fault slope clamp (spec §3 step 1): `B_f = β·T_f·(π/2)·cos θ_f·dz/W_f`
-  with `W_f = min(ω·D_max,f, 400 m)`. Both β_h and β_f are clamped per fault
-  so that `B_f ≤ 0.16`; each clamp (fault, T_f, W_f, θ_f, β before and
-  after) is written to the run metadata. Normal sense needs β_h + β_f ≤ 0.9.
-- Numerical slope limiter (spec §3 step 2). This is a numerical limiter, not
-  physics. Per column, along depth only, over the ±4-sample read-slope
-  window (clipped at the column ends): where the drag-off read slope
-  `Δlookup/Δk` of a window is ≥ 0.5 and the drag-on window holds no
-  fault-plane label, the drag-on read slope is kept ≥ 0.5 by raising the
-  lower sample's source depth (windows processed by their lower end). Windows
-  already past 2× stretch with drag off are left untouched. The B_f clamp
-  bounds only the taper term `β·D·g′·∂q/∂z`; the breakdown on seeds 3/7
-  shows the throw-gradient term `β·g·∂D/∂z` (7b elliptical throw)
-  dominates. The run metadata line reports `numerical slope limiter (not
-  physics …): N samples raised in M columns`. Drag off never runs it.
+- Per-fault slope clamp (spec §3, corrected):
+  `B_f = β·[T_f·(π/2)·cos θ_f·dz/W_f + G_f]` with `W_f = min(ω·D_max,f, 400 m)`.
+  Both β_h and β_f are clamped per fault so that `B_f ≤ 0.16`; each clamp
+  (fault, T_f, W_f, θ_f, G_f, β before and after) is written to the run
+  metadata, and the summary lists G_f per fault.
+- G_f (`throw_gradient_bound`) bounds |∂D/∂z| in samples per sample for the
+  code's own throw `D = A(x,y,z)·P(z)`: `P` is the vertical profile in
+  samples (linear between samples), `A` the 7b tip weight `cos²(πr/2)`, with
+  `r² = (s/R_s)² + (t/R_t)²` in metres. So
+  `G_f = (π/2)·T_f·dz·sqrt((ŝ_z/R_s)² + (t̂_z/R_t)²) + max_k |P[k+1] − P[k]|`
+  (ŝ_z = 0, t̂_z = sin δ). T_f is in samples and R in metres, which is why
+  the dz factor appears. The second term covers the vertical profile itself,
+  which Strata's elliptical-only form leaves out. Without a tip line the
+  bound is `max(1, A_centre)·max_k |ΔP_k|`. Normal sense needs β_h + β_f ≤ 0.9.
 - A bottom pad of `P = ceil(β_f·T_max) + 1` samples is filled, so that
   footwall uplift reads real strata at the cube bottom.
 - Flags: `--fault-drag-hw`, `--fault-drag-fw`, `--fault-drag-width`,
@@ -377,6 +376,9 @@ drag-off output is byte-identical to master b22dbb67 (96/96 configs).
 
 ## Deferred (follow-ups)
 
+- Older fault-plane labels are dropped where a younger fault skips over them,
+  and the youngest fault wins. This has been read from the code for both
+  legacy and heave, but has not been confirmed by a legacy run.
 - Fault drag (7c): T4 drag-made inversions and the T13 tip-zone
   differences (see the PR). Drag of properties and stacks outside the
   zones is not checked separately, only labels. The auto sense picks

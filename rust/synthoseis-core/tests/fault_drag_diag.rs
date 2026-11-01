@@ -518,19 +518,142 @@ fn slope_breakdown() {
     }
 }
 
+/// Per-stage chain (youngest first) with drag on (`dm = Some`) or off:
+/// (n, input [x, y, z], d, w, heave [hx, hy]) plus the final (x, y, z).
+/// Inline replica of the heave gather; the final z is checked against the
+/// production lookup by the caller.
+#[allow(clippy::type_complexity)]
+fn chain(fm: &synthoseis_geo::faults::FaultModel, dm: Option<&synthoseis_geo::faults::DragModel>, i: usize, j: usize, k: usize) -> (Vec<(usize, [f64; 3], f64, f64, [f64; 2])>, [f64; 3]) {
+    use synthoseis_geo::faults::{heave_vector, FaultKinematics, HeaveParams};
+    let p = match fm.kinematics() { FaultKinematics::Heave(p) => p, _ => HeaveParams { heave_scale: 0.0, ..HeaveParams::default() } };
+    let [ni, nj, nk] = fm.shape();
+    let top = (nk - 1) as f64;
+    let top_src = top + dm.map_or(0, |d| d.pad) as f64;
+    let (mut x, mut y, mut z) = (i as f64, j as f64, k as f64);
+    let mut out = vec![];
+    for n in (0..fm.faults().len()).rev() {
+        let f = &fm.faults()[n];
+        let lat = if f.tip.is_some() { 0.0 } else { f.lateral_at(x, y) };
+        let st = |kk: usize| {
+            let zz = kk as f64;
+            let v = f.geometry.value_at(x, y, zz);
+            let wt = match &f.tip { Some(t) => t.factor(x, y, zz), None => lat };
+            let dl = wt * f.profile[kk];
+            let d = if v <= 1.0 { dl } else { 0.0 };
+            if dl == 0.0 { return ((zz - d).clamp(0.0, top_src), [0.0, 0.0], 0.0, d); }
+            let w = match dm { Some(dm) => dm.displacement(n, v, f.geometry.gradient_at(x, y, zz), dl), None => 0.0 };
+            let h = if d == 0.0 { [0.0, 0.0] } else { heave_vector(f, &p, x, y, zz, d) };
+            ((zz - d - w).clamp(0.0, top_src), h, w, d)
+        };
+        let zc = z.clamp(0.0, top);
+        let excess = z - zc;
+        let k0 = zc.floor() as usize;
+        let fr = zc - k0 as f64;
+        let (a0, h0, w0, d0) = st(k0);
+        let (mut a, h, w, d) = if fr == 0.0 { (a0, h0, w0, d0) } else {
+            let (a1, h1, w1, d1) = st((k0 + 1).min(nk - 1));
+            (a0 + fr * (a1 - a0), [h0[0] + fr * (h1[0] - h0[0]), h0[1] + fr * (h1[1] - h0[1])], w0 + fr * (w1 - w0), d0 + fr * (d1 - d0))
+        };
+        if excess > 0.0 { a = (a + excess).clamp(0.0, top_src) }
+        out.push((n, [x, y, z], d, w, h));
+        z = a as f32 as f64;
+        x = (x - h[0]).clamp(0.0, (ni - 1) as f64);
+        y = (y - h[1]).clamp(0.0, (nj - 1) as f64);
+    }
+    (out, [x, y, z])
+}
+
+/// Independent throw D_n(x, y, z) of fault n at a continuous position
+/// (zero on the footwall side), straight from the resolved geometry, profile
+/// and tip; used for the analytic partials.
+fn throw_at(f: &synthoseis_geo::faults::ResolvedFault, x: f64, y: f64, z: f64) -> f64 {
+    let nk = f.profile.len();
+    let zc = z.clamp(0.0, (nk - 1) as f64);
+    let k0 = zc.floor() as usize;
+    let k1 = (k0 + 1).min(nk - 1);
+    let fr = zc - k0 as f64;
+    let side = |kk: usize| if f.geometry.value_at(x, y, kk as f64) <= 1.0 { 1.0 } else { 0.0 };
+    let dk = |kk: usize| {
+        let wt = match &f.tip { Some(t) => t.factor(x, y, kk as f64), None => f.lateral_at(x, y) };
+        side(kk) * wt * f.profile[kk]
+    };
+    dk(k0) + fr * (dk(k1) - dk(k0))
+}
+
+/// Gap term (Strata, 2:51 PM): the drag shift moves where the older fault's
+/// throw is read sideways. Over the worst windows, per fault stage n:
+///   Δslope = −Σ_n [ (ΔD_n^on − ΔD_n^off) + ΔW_n ] / len   (exact telescoping)
+/// and ΔD_n^on − ΔD_n^off is split with independent central partials of D_n
+/// into vertical (∂D/∂z·Δz_in), lateral (∂D/∂x·Δx_in + ∂D/∂y·Δy_in, the
+/// sideways-read term) and a residual.
 #[test]
 #[ignore = "diagnostic"]
-fn limiter_rate() {
-    for seed in 1u64..=20 {
+fn gap_term() {
+    for no_gf in [true, false] {
+    eprintln!("GAP ===== B {} =====", if no_gf { "step 1 (taper only, 8965fe51 clamp)" } else { "with G_f" });
+    for (seed, ci, cj, lo, hi) in [(7u64, 12usize, 19usize, 44usize, 52usize), (3, 24, 15, 54, 62)] {
         let c = m::cfg(seed, [32, 32, 128], 4, Mode::PostFault);
-        let cd = with_drag(&c, Some(DragSense::Auto));
-        let _ = m::run(&cd);
+        let off = m::run(&c);
+        let mut cd = c.clone();
+        cd.faults.drag = Some(DragParams { sense: DragSense::Auto, no_gf, ..DragParams::default() });
+        let cd = cd.with_geometry_cache();
+        let on = m::run(&cd);
         let fm = synthoseis_core::fault_model(&cd).unwrap();
+        let fm0 = synthoseis_core::fault_model(&c).unwrap();
         let dm = fm.drag().unwrap();
-        let st = fm.limiter_stats().unwrap();
-        let [ni, nj, nk] = fm.shape();
-        let mut zone_vox = 0usize;
-        for q in 0..ni * nj { for k in 0..nk { if in_zone(&fm, dm, q / nj, q % nj, k) > 0 { zone_vox += 1 } } }
-        eprintln!("LR seed {seed}: limiter raised {} samples in {} columns; drag-zone voxels {zone_vox}; rate {:.3} %", st.samples, st.columns, 100.0 * st.samples as f64 / zone_vox.max(1) as f64);
+        let [_, nj, nk] = off.shape;
+        let q = ci * nj + cj;
+        let len = (hi - lo) as f64;
+        let (lz_on, lz_off) = (&on.src.as_ref().unwrap().1, &off.src.as_ref().unwrap().1);
+        let s_on = (lz_on[q * nk + hi] - lz_on[q * nk + lo]) as f64 / len;
+        let s_off = (lz_off[q * nk + hi] - lz_off[q * nk + lo]) as f64 / len;
+        // replica check against production lookups
+        let mut rep = 0.0f64;
+        for k in lo..=hi {
+            rep = rep.max((chain(&fm, Some(dm), ci, cj, k).1[2] - lz_on[q * nk + k] as f64).abs());
+            rep = rep.max((chain(&fm0, None, ci, cj, k).1[2] - lz_off[q * nk + k] as f64).abs());
+        }
+        eprintln!("GAP seed {seed} col ({ci},{cj}) k {lo}..{hi}: slope off {s_off:.3} on {s_on:.3} drop {:.3}; replica max |dz| vs production {rep:.2e}", s_off - s_on);
+        let nf = fm.faults().len();
+        // per fault: [ΔW, ΔD_on−ΔD_off, vertical, lateral, residual] (slope units)
+        let mut t = vec![[0.0f64; 5]; nf];
+        let h = 0.05;
+        for k in lo..hi {
+            let (a_on, _) = chain(&fm, Some(dm), ci, cj, k);
+            let (b_on, _) = chain(&fm, Some(dm), ci, cj, k + 1);
+            let (a_off, _) = chain(&fm0, None, ci, cj, k);
+            let (b_off, _) = chain(&fm0, None, ci, cj, k + 1);
+            let mut lat_k = vec![];
+            for s in 0..nf {
+                let n = a_on[s].0;
+                let f = &fm.faults()[n];
+                let dw = b_on[s].3 - a_on[s].3;
+                let dd = (b_on[s].2 - a_on[s].2) - (b_off[s].2 - a_off[s].2);
+                let mid: [f64; 3] = std::array::from_fn(|c| 0.5 * (a_on[s].1[c] + b_on[s].1[c]));
+                let pd = |c: usize| {
+                    let mut p1 = mid; let mut p0 = mid; p1[c] += h; p0[c] -= h;
+                    (throw_at(f, p1[0], p1[1], p1[2]) - throw_at(f, p0[0], p0[1], p0[2])) / (2.0 * h)
+                };
+                let din: [f64; 3] = std::array::from_fn(|c| (b_on[s].1[c] - a_on[s].1[c]) - (b_off[s].1[c] - a_off[s].1[c]));
+                let vert = pd(2) * din[2];
+                let lat = pd(0) * din[0] + pd(1) * din[1];
+                lat_k.push((n, lat));
+                for (o, v) in t[n].iter_mut().zip([dw, dd, vert, lat, dd - vert - lat]) { *o += v / len; }
+            }
+            eprintln!("   k {k}->{}: lateral-read term per fault {:?}", k + 1, lat_k.iter().map(|(n, v)| (*n, (v * 1000.0).round() / 1000.0)).collect::<Vec<_>>());
+            for s in 0..nf {
+                let f = &fm.faults()[a_on[s].0];
+                let side = |q: [f64; 3]| f.geometry.value_at(q[0], q[1], q[2]);
+                eprintln!("      fault {}: z_in on {:.3} off {:.3} | v on {:.3} off {:.3} | D on {:.3} off {:.3} | w on {:.3}", a_on[s].0, a_on[s].1[2], a_off[s].1[2], side(a_on[s].1), side(a_off[s].1), a_on[s].2, a_off[s].2, a_on[s].3);
+            }
+        }
+        let mut tot = 0.0;
+        for (n, v) in t.iter().enumerate() {
+            if v.iter().all(|x| *x == 0.0) { continue; }
+            eprintln!("   fault {n}: dW {:+.3} | dD_on-dD_off {:+.3} = vertical {:+.3} + lateral(sideways read) {:+.3} + residual {:+.3}", v[0], v[1], v[2], v[3], v[4]);
+            tot += v[0] + v[1];
+        }
+        eprintln!("GAP seed {seed}: predicted drop sum_n(dW + dD_on-dD_off) {tot:.3} vs observed {:.3}", s_off - s_on);
     }
+}
 }

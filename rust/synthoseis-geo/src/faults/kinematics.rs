@@ -216,19 +216,6 @@ impl FaultModel {
         if let Some(dm) = self.drag() {
             return self.gather_drag(dm, p, i, j, k, oldest_first);
         }
-        self.gather_plain(p, i, j, k, oldest_first)
-    }
-
-    /// The drag-off gather (also the drag-off read of the numerical slope
-    /// limiter, [`super::drag`]).
-    pub(crate) fn gather_plain(
-        &self,
-        p: &HeaveParams,
-        i: usize,
-        j: usize,
-        k: usize,
-        oldest_first: bool,
-    ) -> Gathered {
         let [ni, nj, nk] = self.shape();
         let top = (nk.max(1) - 1) as f64;
         let (imax, jmax) = ((ni.max(1) - 1) as f64, (nj.max(1) - 1) as f64);

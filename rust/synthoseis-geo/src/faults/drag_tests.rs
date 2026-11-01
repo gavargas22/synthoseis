@@ -135,9 +135,7 @@ const T1_SHAPE: [usize; 3] = [128, 8, 160];
 /// label band.
 fn t1_errors(heave: bool, sense: DragSense, s_sign: f64) -> (f64, f64, usize) {
     let pl = Planar::new(T1_SHAPE);
-    // The analytic horizons are the drag kinematics alone; the numerical
-    // slope limiter (not physics, tested by `limiter_*`) is off here.
-    let p = DragParams { no_limiter: true, ..drag(0.5, 0.5, sense) };
+    let p = drag(0.5, 0.5, sense);
     let m = pl.model(heave).with_drag(&p);
     let [ni, nj, nk] = T1_SHAPE;
     let lab = labels_of(&m, |k| (k / H) as u8, [ni, nj]);
@@ -286,7 +284,7 @@ fn t8_tile_invariance() {
             let b = labels_of(&m, |k| k as u8, tile);
             let d = a.iter().zip(&b).filter(|(x, y)| x != y).count();
             let moved = a.iter().enumerate().filter(|(v, &x)| x as usize != v % shape[2]).count();
-            eprintln!("T8 seed {seed} tile {tile:?}: {d} of {} voxels differ from 1x1 ({moved} voxels moved by the faults; limiter {:?})", a.len(), m.limiter_stats());
+            eprintln!("T8 seed {seed} tile {tile:?}: {d} of {} voxels differ from 1x1 ({moved} voxels moved by the faults)", a.len());
             assert!(a == b, "seed {seed} tile {tile:?}");
         }
     }
@@ -448,8 +446,10 @@ fn bottom_rows_read_the_pad() {
 }
 
 /// Inline reference for T12 (spec §3 step 1, corrected): per fault,
-/// (T_f samples, W_f m, θ_f deg, B_f unit = T (π/2) cos θ dz / W).
-fn t12_ref(m: &FaultModel, p: &DragParams) -> Vec<(f64, f64, f64, f64)> {
+/// (T_f samples, W_f m, θ_f deg, B_f unit = T (π/2) cos θ dz / W + G_f, G_f).
+/// G_f inline: with a horizontal strike ŝ_z = 0 and |t̂_z| = sin δ of the raw
+/// centre normal, G_f = (π/2) T dz sin δ / R_t + max_k |P[k+1] − P[k]|.
+fn t12_ref(m: &FaultModel, p: &DragParams) -> Vec<(f64, f64, f64, f64, f64)> {
     let hp = HeaveParams::default();
     m.faults()
         .iter()
@@ -461,7 +461,10 @@ fn t12_ref(m: &FaultModel, p: &DragParams) -> Vec<(f64, f64, f64, f64)> {
             let th = (gx * gx + gy * gy).sqrt().atan2(gz.abs()).to_degrees().max(hp.min_dip_deg);
             let dmax = match &f.tip { Some(tl) => tl.d_max, None => t * hp.dz_m / th.to_radians().sin() };
             let w = (p.width * dmax).min(p.max_width_m);
-            (t, w, th, t * PI2 * th.to_radians().cos() * hp.dz_m / w)
+            let dp = f.profile.windows(2).fold(0f64, |a, v| a.max((v[1] - v[0]).abs()));
+            let sin_d = (gx * gx + gy * gy).sqrt() / (gx * gx + gy * gy + gz * gz).sqrt();
+            let gf = match &f.tip { Some(tl) => PI2 * t * hp.dz_m * sin_d / tl.r_t + dp, None => dp };
+            (t, w, th, t * PI2 * th.to_radians().cos() * hp.dz_m / w + gf, gf)
         })
         .collect()
 }
@@ -473,6 +476,7 @@ fn t12_ref(m: &FaultModel, p: &DragParams) -> Vec<(f64, f64, f64, f64)> {
 #[test]
 fn t12_per_fault_clamp() {
     let (mut n_faults, mut n_clamped, mut n_cap) = (0, 0, 0);
+    let mut g_ratio: Vec<f64> = vec![];
     for large in [false, true] {
         for seed in 1..=20u64 {
             let cfg = RandomFaultConfig {
@@ -488,7 +492,42 @@ fn t12_per_fault_clamp() {
             let p = DragParams::default();
             let m = m.with_drag(&p);
             let d = m.drag().unwrap();
-            for (n, &(t, w, th, unit)) in t12_ref(&m, &p).iter().enumerate() {
+            let hp = HeaveParams::default();
+            for (n, &(_, w, _, _, gf)) in t12_ref(&m, &p).iter().enumerate() {
+                // G_f ≥ the finite-difference max |∂D/∂z| over the drag zone
+                // (inline D = cos²(π r/2) · P[k], ρ < W).
+                let f = &m.faults()[n];
+                let mut fd = 0f64;
+                for i in 0..shape[0] {
+                    for j in 0..shape[1] {
+                        let dk = |k: usize| {
+                            let a = match &f.tip {
+                                Some(tl) => {
+                                    let q = [(i as f64 - tl.c[0]) * hp.bin_m, (j as f64 - tl.c[1]) * hp.bin_m, (k as f64 - tl.c[2]) * hp.dz_m];
+                                    let ss = q[0] * tl.s_hat[0] + q[1] * tl.s_hat[1] + q[2] * tl.s_hat[2];
+                                    let tt = q[0] * tl.t_hat[0] + q[1] * tl.t_hat[1] + q[2] * tl.t_hat[2];
+                                    let r = ((ss / tl.r_s).powi(2) + (tt / tl.r_t).powi(2)).sqrt();
+                                    if r < 1.0 { (PI2 * r).cos().powi(2) } else { 0.0 }
+                                }
+                                None => f.lateral(i, j),
+                            };
+                            a * f.profile[k]
+                        };
+                        for k in 0..shape[2] - 1 {
+                            let v = f.geometry.value_at(i as f64, j as f64, k as f64);
+                            let g = f.geometry.gradient_at(i as f64, j as f64, k as f64);
+                            let gn = ((g[0] / hp.bin_m).powi(2) + (g[1] / hp.bin_m).powi(2) + (g[2] / hp.dz_m).powi(2)).sqrt();
+                            if gn > 0.0 && (v - 1.0).abs() / gn < w {
+                                fd = fd.max((dk(k + 1) - dk(k)).abs());
+                            }
+                        }
+                    }
+                }
+                assert!(gf >= fd - 1e-12, "seed {seed} large {large} fault {n}: G_f {gf} < FD max |dD/dz| {fd}");
+                assert!((d.faults[n].g - gf).abs() < 1e-9, "seed {seed} fault {n}: G_f {} vs inline {gf}", d.faults[n].g);
+                g_ratio.push(fd / gf.max(1e-300));
+            }
+            for (n, &(t, w, th, unit, gf)) in t12_ref(&m, &p).iter().enumerate() {
                 n_faults += 1;
                 n_cap += (w >= 400.0 - 1e-9) as usize;
                 let df = &d.faults[n];
@@ -503,6 +542,7 @@ fn t12_per_fault_clamp() {
                     assert_eq!(c.before, (0.30, 0.15));
                     assert_eq!(c.after, (bh, bf));
                     assert!((c.t - t).abs() < 1e-12 && (c.w_m - w).abs() < 1e-9 && (c.theta_deg - th).abs() < 1e-9);
+                    assert!((c.g - gf).abs() < 1e-9, "seed {seed} fault {n}: recorded G_f {} vs {gf}", c.g);
                     assert!(d.summary().contains(&format!("fault {n}: B_f=")));
                 } else {
                     assert!(rec.is_none(), "seed {seed} fault {n} recorded without a clamp");
@@ -511,6 +551,8 @@ fn t12_per_fault_clamp() {
         }
     }
     eprintln!("T12: {n_faults} faults, {n_clamped} clamped, {n_cap} at the 400 m cap");
+    g_ratio.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    eprintln!("T12: FD max |dD/dz| / G_f over the drag zone: min {:.3} median {:.3} max {:.3}", g_ratio[0], g_ratio[g_ratio.len() / 2], g_ratio[g_ratio.len() - 1]);
     assert!(n_cap > 0, "no fault hits the 400 m cap");
     let m = random_model([64, 64, 96], 1, 4).with_drag(&DragParams {
         beta_h: 0.5,
@@ -538,96 +580,4 @@ fn drag_off_and_legacy_are_unchanged() {
         3,
     );
     assert!(legacy.with_drag(&DragParams::default()).drag().is_none());
-}
-
-/// Inline reference of the numerical slope limiter (spec §3 step 2): the
-/// constraint written as "for every window, in order of its lower edge's
-/// last change": repeat sweeps over all ±4 windows until none is short.
-/// Inputs: the drag-on column without the limiter, the drag-off column and
-/// the drag-on labels (all f32 lookups).
-fn limiter_ref(on: &[f32], off: &[f32], ids: &[u8]) -> Vec<f32> {
-    let nk = on.len();
-    let mut z = on.to_vec();
-    let need = |lo: usize, hi: usize| 0.5 * (hi - lo) as f64;
-    loop {
-        let mut changed = false;
-        for hi in 0..nk {
-            for k in 0..nk {
-                let (lo, h) = (k.saturating_sub(4), (k + 4).min(nk - 1));
-                if h != hi || ids[lo..=hi].iter().any(|&d| d != 0) {
-                    continue;
-                }
-                if ((off[hi] - off[lo]) as f64) < need(lo, hi) {
-                    continue;
-                }
-                if ((z[hi] - z[lo]) as f64) < need(lo, hi) {
-                    let mut v = (z[lo] as f64 + need(lo, hi)) as f32;
-                    while ((v - z[lo]) as f64) < need(lo, hi) {
-                        v = f32::from_bits(v.to_bits() + 1);
-                    }
-                    z[hi] = v;
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            return z;
-        }
-    }
-}
-
-fn lookups(m: &FaultModel) -> (Vec<f32>, Vec<u8>) {
-    let [ni, nj, _] = m.shape();
-    let t = m.compute_tile(0, ni, 0, nj);
-    (t.lookup, t.segment_id)
-}
-
-/// Limiter vs its inline reference on every column, and the constraint it
-/// guarantees. `no_limiter` runs mutant M7 (must fail).
-fn limiter_check(no_limiter: bool) -> Result<u64, String> {
-    let shape = [48, 48, 96];
-    let nk = shape[2];
-    let mut fired = 0u64;
-    for seed in 1u64..=8 {
-        let base = random_model(shape, seed, 4).with_tips(seed, &TipParams::default());
-        let off = lookups(&base).0;
-        let raw = lookups(&base.clone().with_drag(&DragParams { no_limiter: true, ..DragParams::default() }));
-        let m = base.with_drag(&DragParams { no_limiter, ..DragParams::default() });
-        let (got, _) = lookups(&m);
-        for c in 0..shape[0] * shape[1] {
-            let r = c * nk..(c + 1) * nk;
-            let want = limiter_ref(&raw.0[r.clone()], &off[r.clone()], &raw.1[r.clone()]);
-            fired += want.iter().zip(&raw.0[r.clone()]).filter(|(a, b)| a != b).count() as u64;
-            if want[..] != got[r.clone()] {
-                return Err(format!("seed {seed} column {c}: limiter != inline reference"));
-            }
-            // Guarantee: every unlabelled window with drag-off slope >= 0.5 has drag-on slope >= 0.5;
-            // windows with drag-off slope < 0.5 are untouched at their lower... edge samples never lowered.
-            for k in 0..nk {
-                let (lo, hi) = (k.saturating_sub(4), (k + 4).min(nk - 1));
-                let o = c * nk;
-                if raw.1[o + lo..=o + hi].iter().any(|&d| d != 0) {
-                    continue;
-                }
-                let need = 0.5 * (hi - lo) as f64;
-                if ((off[o + hi] - off[o + lo]) as f64) >= need && ((got[o + hi] - got[o + lo]) as f64) < need {
-                    return Err(format!("seed {seed} column {c} k {k}: drag-on read slope below 0.5"));
-                }
-            }
-        }
-    }
-    Ok(fired)
-}
-
-#[test]
-fn limiter_matches_inline_reference() {
-    let fired = limiter_check(false).unwrap();
-    eprintln!("limiter: {fired} samples raised over seeds 1-8");
-    assert!(fired > 0, "the limiter never fired; the test proves nothing");
-}
-
-#[test]
-fn limiter_mutant_is_killed() {
-    // M7: limiter removed.
-    assert!(limiter_check(true).is_err());
 }
