@@ -236,11 +236,9 @@ impl FaultModel {
         let mut id = Vec::with_capacity(n);
         for i in i0..i1 {
             for j in j0..j1 {
-                for k in 0..nk {
-                    let g = self.gather(i, j, k);
-                    src.push(g.src);
-                    id.push(g.id);
-                }
+                // Per column along depth only: the numerical limiter (drag
+                // on) cannot depend on the tiling.
+                self.gather_column(i, j, nk, &mut src, &mut id);
             }
         }
         GatherTile {

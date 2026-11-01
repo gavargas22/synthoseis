@@ -167,7 +167,7 @@ fn stretch_over2(r: &m::Run) -> f64 {
 }
 
 #[test]
-#[ignore = "slow: 20 seeds; FAILS on seeds 3, 4, 7, 10, 18 (seed 3 0.07 % -> 4.96 %); every stretched window is inside a drag zone, reported on the PR"]
+#[ignore = "slow: 20 seeds; passes with the numerical slope limiter (spec 3 step 2)"]
 fn t7_stretch_seeds_1_20() {
     let mut bad = Vec::new();
     for seed in 1u64..=20 {

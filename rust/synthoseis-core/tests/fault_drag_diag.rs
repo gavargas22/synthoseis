@@ -377,3 +377,160 @@ fn clamp_diag() {
         eprintln!("CL seed {seed}: (T, W, theta, B_f) {f:?}; clamps {}", dm.clamps.len());
     }
 }
+
+/// Stage positions (x, y, z_in) and drag w of every fault, youngest first
+/// (same stages as `trace`).
+fn stages(fm: &synthoseis_geo::faults::FaultModel, dm: &synthoseis_geo::faults::DragModel, i: usize, j: usize, k: usize) -> Vec<(usize, [f64; 3], f64)> {
+    use synthoseis_geo::faults::{heave_vector, FaultKinematics, HeaveParams};
+    let p = match fm.kinematics() { FaultKinematics::Heave(p) => p, _ => HeaveParams { heave_scale: 0.0, ..HeaveParams::default() } };
+    let [ni, nj, nk] = fm.shape();
+    let top = (nk - 1) as f64;
+    let top_src = top + dm.pad as f64;
+    let (mut x, mut y, mut z) = (i as f64, j as f64, k as f64);
+    let mut out = vec![];
+    for n in (0..fm.faults().len()).rev() {
+        let f = &fm.faults()[n];
+        let lat = if f.tip.is_some() { 0.0 } else { f.lateral_at(x, y) };
+        let st = |kk: usize| {
+            let zz = kk as f64;
+            let v = f.geometry.value_at(x, y, zz);
+            let wt = match &f.tip { Some(t) => t.factor(x, y, zz), None => lat };
+            let dl = wt * f.profile[kk];
+            let d = if v <= 1.0 { dl } else { 0.0 };
+            if dl == 0.0 { return ((zz - d).clamp(0.0, top_src), [0.0, 0.0], 0.0); }
+            let g = f.geometry.gradient_at(x, y, zz);
+            let w = dm.displacement(n, v, g, dl);
+            let h = if d == 0.0 { [0.0, 0.0] } else { heave_vector(f, &p, x, y, zz, d) };
+            ((zz - d - w).clamp(0.0, top_src), h, w)
+        };
+        let zc = z.clamp(0.0, top);
+        let excess = z - zc;
+        let k0 = zc.floor() as usize;
+        let fr = zc - k0 as f64;
+        let (a0, h0, w0) = st(k0);
+        let (mut a, h, w) = if fr == 0.0 { (a0, h0, w0) } else {
+            let (a1, h1, w1) = st((k0 + 1).min(nk - 1));
+            (a0 + fr * (a1 - a0), [h0[0] + fr * (h1[0] - h0[0]), h0[1] + fr * (h1[1] - h0[1])], w0 + fr * (w1 - w0))
+        };
+        if excess > 0.0 { a = (a + excess).clamp(0.0, top_src) }
+        out.push((n, [x, y, z], w));
+        z = a as f32 as f64;
+        x = (x - h[0]).clamp(0.0, (ni - 1) as f64);
+        y = (y - h[1]).clamp(0.0, (nj - 1) as f64);
+    }
+    out
+}
+
+/// Inline taper/throw of fault n at a continuous position: (g(q), g'(q)/W·∂ρ/∂z, D, ∂D/∂z, side sβ).
+fn parts(f: &synthoseis_geo::faults::ResolvedFault, df: &synthoseis_geo::faults::DragFault, bin: f64, dz: f64, x: f64, y: f64, z: f64) -> (f64, f64, f64, f64, f64) {
+    let nk = f.profile.len();
+    let rho = |z: f64| {
+        let v = f.geometry.value_at(x, y, z);
+        let g = f.geometry.gradient_at(x, y, z);
+        let gn = ((g[0] / bin).powi(2) + (g[1] / bin).powi(2) + (g[2] / dz).powi(2)).sqrt();
+        ((v - 1.0).abs() / gn, v)
+    };
+    let tap = |q: f64| if q < 1.0 { (std::f64::consts::FRAC_PI_2 * q).cos().powi(2) } else { 0.0 };
+    let dcont = |z: f64| {
+        let zc = z.clamp(0.0, (nk - 1) as f64);
+        let k0 = zc.floor() as usize;
+        let k1 = (k0 + 1).min(nk - 1);
+        let fr = zc - k0 as f64;
+        let pr = f.profile[k0] + fr * (f.profile[k1] - f.profile[k0]);
+        let wt = match &f.tip { Some(t) => t.factor(x, y, z), None => f.lateral_at(x, y) };
+        wt * pr
+    };
+    let h = 0.25;
+    let (r0, v) = rho(z);
+    let q = r0 / df.w_m;
+    let dg = (tap(rho(z + h).0 / df.w_m) - tap(rho(z - h).0 / df.w_m)) / (2.0 * h);
+    let dd = (dcont(z + h) - dcont(z - h)) / (2.0 * h);
+    let sb = if v <= 1.0 { df.s * df.beta_h } else { -df.s * df.beta_f };
+    (tap(q), dg, dcont(z), dd, sb)
+}
+
+#[test]
+#[ignore = "diagnostic"]
+fn slope_breakdown() {
+    for seed in [3u64, 7, 4, 10, 18] {
+        let c = m::cfg(seed, [32, 32, 128], 4, Mode::PostFault);
+        let off = m::run(&c);
+        let cd = with_drag(&c, Some(DragSense::Auto));
+        let on = m::run(&cd);
+        let fm = synthoseis_core::fault_model(&cd).unwrap();
+        let dm = fm.drag().unwrap();
+        let [ni, nj, nk] = off.shape;
+        let (lo_, l1) = (&off.src.as_ref().unwrap().1, &on.src.as_ref().unwrap().1);
+        // global per-voxel max |term1| per fault vs B_f
+        let nf = fm.faults().len();
+        let mut t1max = vec![0.0f64; nf];
+        let mut t2max = vec![0.0f64; nf];
+        let mut win = vec![];
+        for q in 0..ni * nj {
+            for k in 0..nk {
+                let (i, j) = (q / nj, q % nj);
+                for (n, p, _) in stages(&fm, dm, i, j, k) {
+                    let (g, dg, d, dd, sb) = parts(&fm.faults()[n], &dm.faults[n], dm.bin_m, dm.dz_m, p[0], p[1], p[2]);
+                    t1max[n] = t1max[n].max((sb * d * dg).abs());
+                    t2max[n] = t2max[n].max((sb * g * dd).abs());
+                }
+                let (lo, hi) = (k.saturating_sub(4), (k + 4).min(nk - 1));
+                if (lo..=hi).any(|x| on.fault_id[q * nk + x] != 0) { continue; }
+                let len = (hi - lo) as f64;
+                let son = (l1[q * nk + hi] - l1[q * nk + lo]) as f64 / len;
+                let soff = (lo_[q * nk + hi] - lo_[q * nk + lo]) as f64 / len;
+                if son < 0.5 && soff >= 0.5 { win.push((son, soff, q, lo, hi)); }
+            }
+        }
+        eprintln!("SB seed {seed}: B_f {:?}", dm.faults.iter().map(|f| (f.b * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+        eprintln!("SB seed {seed}: max per-voxel |term1| {:?}  |term2| {:?}", t1max.iter().map(|v| (v * 1000.0).round() / 1000.0).collect::<Vec<_>>(), t2max.iter().map(|v| (v * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+        win.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // aggregate over all new windows: window-mean of each term summed over faults
+        let mut agg = [0.0f64; 4];
+        for (wi, &(son, soff, q, lo, hi)) in win.iter().enumerate() {
+            let (i, j) = (q / nj, q % nj);
+            let len = (hi - lo) as f64;
+            let mut per = vec![[0.0f64; 4]; nf]; // dw, t1, t2, t3
+            for k in lo..hi {
+                let s0 = stages(&fm, dm, i, j, k);
+                let s1 = stages(&fm, dm, i, j, k + 1);
+                for (a, b) in s0.iter().zip(&s1) {
+                    let n = a.0;
+                    let (g, dg, d, dd, sb) = parts(&fm.faults()[n], &dm.faults[n], dm.bin_m, dm.dz_m, a.1[0], a.1[1], a.1[2]);
+                    let dw = b.2 - a.2;
+                    let (t1, t2) = (sb * d * dg, sb * g * dd);
+                    per[n][0] += dw / len;
+                    per[n][1] += t1 / len;
+                    per[n][2] += t2 / len;
+                    per[n][3] += (dw - t1 - t2) / len;
+                }
+            }
+            for p in &per { for t in 0..4 { agg[t] += p[t].abs() } }
+            if wi < 4 {
+                eprintln!("SB seed {seed}: window col ({i},{j}) k {lo}..{hi}: slope off {soff:.3} on {son:.3}");
+                for (n, p) in per.iter().enumerate() {
+                    eprintln!("   fault {n}: dw/dk {:+.3} = taper {:+.3} + dD/dz {:+.3} + chain {:+.3}", p[0], p[1], p[2], p[3]);
+                }
+            }
+        }
+        let nw = win.len().max(1) as f64;
+        eprintln!("SB seed {seed}: {} new windows; mean |dw/dk| {:.3}, |taper| {:.3}, |dD/dz| {:.3}, |chain| {:.3}", win.len(), agg[0] / nw, agg[1] / nw, agg[2] / nw, agg[3] / nw);
+    }
+}
+
+#[test]
+#[ignore = "diagnostic"]
+fn limiter_rate() {
+    for seed in 1u64..=20 {
+        let c = m::cfg(seed, [32, 32, 128], 4, Mode::PostFault);
+        let cd = with_drag(&c, Some(DragSense::Auto));
+        let _ = m::run(&cd);
+        let fm = synthoseis_core::fault_model(&cd).unwrap();
+        let dm = fm.drag().unwrap();
+        let st = fm.limiter_stats().unwrap();
+        let [ni, nj, nk] = fm.shape();
+        let mut zone_vox = 0usize;
+        for q in 0..ni * nj { for k in 0..nk { if in_zone(&fm, dm, q / nj, q % nj, k) > 0 { zone_vox += 1 } } }
+        eprintln!("LR seed {seed}: limiter raised {} samples in {} columns; drag-zone voxels {zone_vox}; rate {:.3} %", st.samples, st.columns, 100.0 * st.samples as f64 / zone_vox.max(1) as f64);
+    }
+}

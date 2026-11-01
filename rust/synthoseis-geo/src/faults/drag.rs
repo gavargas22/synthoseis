@@ -28,6 +28,123 @@ pub const DRAG_THETA_C_DEG: f64 = 35.0;
 /// `B_f = β · T_f · (π/2) · cos θ_f · dz / W_f ≤ 0.16`, β clamped per fault.
 pub const DRAG_B_TARGET: f64 = 0.16;
 
+/// Numerical slope limiter (spec §3 step 2). NOT physics: a per-column
+/// guard on the read slope `Δlookup / Δk` over the ±[`LIMITER_HALF`]
+/// window (clipped at the column ends). Wherever the drag-off read slope
+/// of a window is ≥ [`LIMITER_MIN_SLOPE`] and the drag-on window holds no
+/// fault-plane label, the drag-on read slope is kept ≥ the same value
+/// (drag never pushes a window past 2× stretch). Windows already past 2×
+/// with drag off are left as they are.
+pub const LIMITER_MIN_SLOPE: f64 = 0.5;
+/// Half window of the limiter (samples).
+pub const LIMITER_HALF: usize = 4;
+
+/// Per-column activation record of the numerical limiter (samples raised
+/// per column; `u32::MAX` = column not gathered yet). Stores, never adds,
+/// so re-gathering a column (cache misses, halos) cannot double count.
+pub struct LimiterLog {
+    cols: Vec<std::sync::atomic::AtomicU32>,
+}
+
+impl LimiterLog {
+    fn new(n: usize) -> Self {
+        Self {
+            cols: (0..n).map(|_| std::sync::atomic::AtomicU32::new(u32::MAX)).collect(),
+        }
+    }
+
+    pub(crate) fn store(&self, col: usize, raised: u32) {
+        if let Some(c) = self.cols.get(col) {
+            c.store(raised, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn get(&self, col: usize) -> Option<u32> {
+        let v = self.cols.get(col)?.load(std::sync::atomic::Ordering::Relaxed);
+        (v != u32::MAX).then_some(v)
+    }
+}
+
+impl std::fmt::Debug for LimiterLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LimiterLog({} columns)", self.cols.len())
+    }
+}
+
+impl PartialEq for LimiterLog {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+/// [`LimiterStats`] plus whether every column has been recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LimiterStatsPartial {
+    pub samples: u64,
+    pub columns: u64,
+    pub complete: bool,
+}
+
+/// Activation count of the numerical limiter over a whole run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LimiterStats {
+    /// Lookup samples raised.
+    pub samples: u64,
+    /// Columns with at least one raised sample.
+    pub columns: u64,
+}
+
+/// The limiter on one column (in place on `on`, the drag-on source depth
+/// of every sample, already f32-rounded). `ids` are the drag-on labels,
+/// `off(k)` the drag-off source depth. Returns the samples raised.
+pub(crate) fn limit_column(
+    on: &mut [f64],
+    ids: &[u8],
+    top_src: f64,
+    mut off: impl FnMut() -> Vec<f64>,
+) -> u32 {
+    let nk = on.len();
+    if nk < 2 {
+        return 0;
+    }
+    let win = |k: usize| (k.saturating_sub(LIMITER_HALF), (k + LIMITER_HALF).min(nk - 1));
+    let short = |lk: &[f64], lo: usize, hi: usize| {
+        ((lk[hi] as f32 - lk[lo] as f32) as f64) < LIMITER_MIN_SLOPE * (hi - lo) as f64
+    };
+    let free = |lo: usize, hi: usize| ids[lo..=hi].iter().all(|&d| d == 0);
+    // Cheap pre-check: no unlabelled drag-on window below the slope.
+    if !(0..nk).any(|k| {
+        let (lo, hi) = win(k);
+        free(lo, hi) && short(on, lo, hi)
+    }) {
+        return 0;
+    }
+    let off = off();
+    let mut raised = 0u32;
+    // Windows sorted by their lower end... processed by upper end, so the
+    // lower end of every window is final when the window is enforced.
+    let mut ws: Vec<(usize, usize)> = (0..nk).map(win).collect();
+    ws.sort_by_key(|&(lo, hi)| (hi, lo));
+    ws.dedup();
+    let mut last = usize::MAX;
+    for (lo, hi) in ws {
+        if !free(lo, hi) || !short(on, lo, hi) || short(&off, lo, hi) {
+            continue;
+        }
+        let lo32 = on[lo] as f32;
+        let mut v = (on[lo] + LIMITER_MIN_SLOPE * (hi - lo) as f64) as f32;
+        while ((v - lo32) as f64) < LIMITER_MIN_SLOPE * (hi - lo) as f64 {
+            v = f32::from_bits(v.to_bits() + 1);
+        }
+        on[hi] = (v as f64).min(top_src) as f32 as f64;
+        if hi != last {
+            raised += 1;
+            last = hi;
+        }
+    }
+    raised
+}
+
 /// Drag sense (spec §1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DragSense {
@@ -72,6 +189,9 @@ pub struct DragParams {
     /// Test hook (mutant M6): drop the bottom pad.
     #[doc(hidden)]
     pub no_pad: bool,
+    /// Test hook (mutant M7): drop the numerical slope limiter.
+    #[doc(hidden)]
+    pub no_limiter: bool,
 }
 
 impl Default for DragParams {
@@ -84,6 +204,7 @@ impl Default for DragParams {
             sense: DragSense::Auto,
             taper: DragTaper::Cos2,
             no_pad: false,
+            no_limiter: false,
         }
     }
 }
@@ -164,6 +285,8 @@ pub struct DragModel {
     pub dz_m: f64,
     /// Warnings for the run metadata (β clamped, …).
     pub warnings: Vec<String>,
+    /// Activations of the numerical slope limiter (not physics).
+    pub limiter: std::sync::Arc<LimiterLog>,
 }
 
 impl DragModel {
@@ -202,6 +325,22 @@ impl DragModel {
         }
     }
 
+    /// Limiter activations recorded so far, and whether every column was
+    /// recorded (see [`FaultModel::limiter_stats`] for a complete count).
+    pub fn limiter_stats(&self) -> LimiterStatsPartial {
+        let mut st = LimiterStatsPartial { complete: true, ..Default::default() };
+        for c in 0..self.limiter.cols.len() {
+            match self.limiter.get(c) {
+                Some(r) => {
+                    st.samples += r as u64;
+                    st.columns += (r > 0) as u64;
+                }
+                None => st.complete = false,
+            }
+        }
+        st
+    }
+
     /// One-line summary for the run metadata.
     pub fn summary(&self) -> String {
         let senses: Vec<&str> = self
@@ -211,7 +350,7 @@ impl DragModel {
             .collect();
         let widths: Vec<String> = self.faults.iter().map(|f| format!("{:.0}", f.w_m)).collect();
         format!(
-            "fault drag: beta_hw={:.3} beta_fw={:.3} width={} cap={} m, W_m=[{}], sense=[{}], pad={} samples, B={:.3}{}",
+            "fault drag: beta_hw={:.3} beta_fw={:.3} width={} cap={} m, W_m=[{}], sense=[{}], pad={} samples, B={:.3}{}{}",
             self.beta_h,
             self.beta_f,
             self.params.width,
@@ -220,6 +359,17 @@ impl DragModel {
             senses.join(","),
             self.pad,
             self.b,
+            if self.params.no_limiter {
+                String::new()
+            } else {
+                let st = self.limiter_stats();
+                format!(
+                    ", numerical slope limiter (not physics, min read slope {LIMITER_MIN_SLOPE} over +-{LIMITER_HALF} samples): {} samples raised in {} columns{}",
+                    st.samples,
+                    st.columns,
+                    if st.complete { "" } else { " (columns gathered so far)" }
+                )
+            },
             if self.warnings.is_empty() {
                 String::new()
             } else {
@@ -332,7 +482,70 @@ impl FaultModel {
             bin_m,
             dz_m,
             warnings,
+            limiter: std::sync::Arc::new(LimiterLog::new(self.shape()[0] * self.shape()[1])),
         };
         self.set_drag(Some(std::sync::Arc::new(m)))
+    }
+}
+
+impl FaultModel {
+    /// Limiter activations of the whole run (columns not gathered yet are
+    /// gathered now). `None` without drag.
+    pub fn limiter_stats(&self) -> Option<LimiterStats> {
+        let dm = self.drag()?;
+        let [ni, nj, nk] = self.shape();
+        let mut st = LimiterStats::default();
+        let mut src = Vec::new();
+        let mut id = Vec::new();
+        for c in 0..ni * nj {
+            let r = match dm.limiter.get(c) {
+                Some(r) => r,
+                None => {
+                    src.clear();
+                    id.clear();
+                    self.gather_column(c / nj, c % nj, nk, &mut src, &mut id)
+                }
+            };
+            st.samples += r as u64;
+            st.columns += (r > 0) as u64;
+        }
+        Some(st)
+    }
+
+    /// Gather column `(i, j)` (appended to `src`, `id`), with the numerical
+    /// slope limiter when drag is on. Returns the samples it raised.
+    pub(crate) fn gather_column(
+        &self,
+        i: usize,
+        j: usize,
+        nk: usize,
+        src: &mut Vec<[f64; 3]>,
+        id: &mut Vec<u8>,
+    ) -> u32 {
+        let o = src.len();
+        for k in 0..nk {
+            let g = self.gather(i, j, k);
+            src.push(g.src);
+            id.push(g.id);
+        }
+        let Some(dm) = self.drag() else { return 0 };
+        if dm.params.no_limiter {
+            return 0;
+        }
+        let FaultKinematics::Heave(p) = self.kinematics() else {
+            return 0;
+        };
+        let mut on: Vec<f64> = src[o..].iter().map(|s| s[2]).collect();
+        let top_src = (nk.max(1) - 1) as f64 + dm.pad as f64;
+        let raised = limit_column(&mut on, &id[o..], top_src, || {
+            (0..nk).map(|k| self.gather_plain(&p, i, j, k, false).src[2]).collect()
+        });
+        if raised > 0 {
+            for (s, z) in src[o..].iter_mut().zip(&on) {
+                s[2] = *z;
+            }
+        }
+        dm.limiter.store(i * self.shape()[1] + j, raised);
+        raised
     }
 }
