@@ -30,6 +30,8 @@ mod tests_reach;
 mod kinematics_tests;
 #[cfg(test)]
 mod tips_tests;
+#[cfg(test)]
+mod drag_tests;
 
 pub use apply::{
     horizon_depth_from_age, interp_trace_into, interp_uniform, remap_nearest, trilinear,
