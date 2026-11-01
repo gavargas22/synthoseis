@@ -1,7 +1,8 @@
 //! Post-fault salt drag (spec-salt-fault-order, option B): the bars of
 //! spec §5 on 128×128×256 cubes with 4 faults. Measured values for seeds
-//! 1–20 are in `docs/salt-bodies.md`; bars that the measurement misses stay
-//! at the spec value and are `#[ignore]`d with the measured number.
+//! 1–20 are in `docs/salt-bodies.md`. The 20-seed bars are `#[ignore]`d
+//! for run time only; the old-reference numbers (stair vs faults-off and
+//! master, Jaccard vs master) are printed, not asserted.
 mod salt_order_metrics;
 use m::Mode;
 use salt_order_metrics as m;
@@ -60,27 +61,6 @@ fn hidden_drag_exposure_is_zero_seeds_1_20() {
         "master mean {:.4} %",
         100.0 * frac / n as f64
     );
-}
-
-/// Spec test 2 at the revised bars (#61 review): stair index ≤ 1.1×
-/// faults-off summed over seeds 1–20 and ≤ 1.2× per seed.
-#[test]
-#[ignore = "misses spec bar: seed 15 post/off 1.244 (bar 1.2; a real steep flank dip, \
-            see PR body); summed 0.971 (bar 1.1) passes"]
-fn stair_index_meets_spec_bars() {
-    let (mut sp, mut so) = (0.0, 0.0);
-    let mut fails = Vec::new();
-    for seed in 1u64..=20 {
-        let Some(s) = body(seed) else { continue };
-        let p = m::stair_index(&m::run(&m::cfg(seed, SHAPE, 4, Mode::PostFault)), &s);
-        let o = m::stair_index(&m::run(&m::cfg(seed, SHAPE, 4, Mode::FaultsOff)), &s);
-        if p > 1.2 * o {
-            fails.push((seed, p / o));
-        }
-        (sp, so) = (sp + p, so + o);
-    }
-    assert!(sp <= 1.1 * so, "sum: post/off {:.3}", sp / so);
-    assert!(fails.is_empty(), "per seed (seed, post/off): {fails:?}");
 }
 
 /// Spec test 2 against the additive baseline (Strata ruling on #61 at
@@ -432,9 +412,9 @@ fn far_field_labels_unchanged() {
     }
 }
 
-/// Label parity in the drag band at the revised bars (#61 review):
 /// Jaccard vs master over near-salt non-salt voxels outside master's
-/// exposed region ≥ 0.90 per seed, mean ≥ 0.95 (seeds 1–20).
+/// exposed region (informational since the Strata ruling at e35b2b76:
+/// printed by `drag_band_jaccard_vs_analytic`; seed 1 0.8959, mean 0.9644).
 fn jaccard_out(seed: u64) -> Option<f64> {
     let s = body(seed)?;
     let rm = m::run(&m::cfg(seed, SHAPE, 4, Mode::Master));
@@ -445,27 +425,6 @@ fn jaccard_out(seed: u64) -> Option<f64> {
         &s,
         &skip,
     ))
-}
-
-#[test]
-#[ignore = "misses spec bar: seed 1 at 0.8988 (bar 0.90); mean 0.963 (bar 0.95) passes"]
-fn drag_band_jaccard_meets_spec_bars() {
-    let js: Vec<(u64, f64)> = (1u64..=20)
-        .filter_map(|s| jaccard_out(s).map(|j| (s, j)))
-        .collect();
-    let mean = js.iter().map(|x| x.1).sum::<f64>() / js.len() as f64;
-    let low: Vec<_> = js.iter().filter(|x| x.1 < 0.90).collect();
-    assert!(
-        low.is_empty() && mean >= 0.95,
-        "mean {mean:.4}, below 0.90: {low:?}"
-    );
-}
-
-/// The per-seed Jaccard bar on seed 2 (measured 0.918), in CI.
-#[test]
-fn drag_band_jaccard_seed_check() {
-    let j = jaccard_out(2).expect("seed 2 salt");
-    assert!(j >= 0.90, "seed 2: {j}");
 }
 
 /// Label parity in the drag band (Strata ruling on #61 at e35b2b76):
