@@ -284,7 +284,7 @@ fn t8_tile_invariance() {
             let b = labels_of(&m, |k| k as u8, tile);
             let d = a.iter().zip(&b).filter(|(x, y)| x != y).count();
             let moved = a.iter().enumerate().filter(|(v, &x)| x as usize != v % shape[2]).count();
-            eprintln!("T8 seed {seed} tile {tile:?}: {d} of {} voxels differ from 1x1 ({moved} voxels moved by the faults)", a.len());
+            eprintln!("T8 seed {seed} tile {tile:?}: {d} of {} voxels differ from 1x1 ({moved} voxels moved by the faults; limiter {:?})", a.len(), m.limiter_stats());
             assert!(a == b, "seed {seed} tile {tile:?}");
         }
     }
@@ -536,4 +536,96 @@ fn drag_off_and_legacy_are_unchanged() {
         3,
     );
     assert!(legacy.with_drag(&DragParams::default()).drag().is_none());
+}
+
+/// Inline reference of the numerical slope limiter (spec §3 step 2): the
+/// constraint written as "for every window, in order of its lower edge's
+/// last change": repeat sweeps over all ±4 windows until none is short.
+/// Inputs: the drag-on column without the limiter, the drag-off column and
+/// the drag-on labels (all f32 lookups).
+fn limiter_ref(on: &[f32], off: &[f32], ids: &[u8]) -> Vec<f32> {
+    let nk = on.len();
+    let mut z = on.to_vec();
+    let need = |lo: usize, hi: usize| 0.5 * (hi - lo) as f64;
+    loop {
+        let mut changed = false;
+        for hi in 0..nk {
+            for k in 0..nk {
+                let (lo, h) = (k.saturating_sub(4), (k + 4).min(nk - 1));
+                if h != hi || ids[lo..=hi].iter().any(|&d| d != 0) {
+                    continue;
+                }
+                if ((off[hi] - off[lo]) as f64) < need(lo, hi) {
+                    continue;
+                }
+                if ((z[hi] - z[lo]) as f64) < need(lo, hi) {
+                    let mut v = (z[lo] as f64 + need(lo, hi)) as f32;
+                    while ((v - z[lo]) as f64) < need(lo, hi) {
+                        v = f32::from_bits(v.to_bits() + 1);
+                    }
+                    z[hi] = v;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return z;
+        }
+    }
+}
+
+fn lookups(m: &FaultModel) -> (Vec<f32>, Vec<u8>) {
+    let [ni, nj, _] = m.shape();
+    let t = m.compute_tile(0, ni, 0, nj);
+    (t.lookup, t.segment_id)
+}
+
+/// Limiter vs its inline reference on every column, and the constraint it
+/// guarantees. `no_limiter` runs mutant M7 (must fail).
+fn limiter_check(no_limiter: bool) -> Result<u64, String> {
+    let shape = [48, 48, 96];
+    let nk = shape[2];
+    let mut fired = 0u64;
+    for seed in 1u64..=8 {
+        let base = random_model(shape, seed, 4).with_tips(seed, &TipParams::default());
+        let off = lookups(&base).0;
+        let raw = lookups(&base.clone().with_drag(&DragParams { no_limiter: true, ..DragParams::default() }));
+        let m = base.with_drag(&DragParams { no_limiter, ..DragParams::default() });
+        let (got, _) = lookups(&m);
+        for c in 0..shape[0] * shape[1] {
+            let r = c * nk..(c + 1) * nk;
+            let want = limiter_ref(&raw.0[r.clone()], &off[r.clone()], &raw.1[r.clone()]);
+            fired += want.iter().zip(&raw.0[r.clone()]).filter(|(a, b)| a != b).count() as u64;
+            if want[..] != got[r.clone()] {
+                return Err(format!("seed {seed} column {c}: limiter != inline reference"));
+            }
+            // Guarantee: every unlabelled window with drag-off slope >= 0.5 has drag-on slope >= 0.5;
+            // windows with drag-off slope < 0.5 are untouched at their lower... edge samples never lowered.
+            for k in 0..nk {
+                let (lo, hi) = (k.saturating_sub(4), (k + 4).min(nk - 1));
+                let o = c * nk;
+                if raw.1[o + lo..=o + hi].iter().any(|&d| d != 0) {
+                    continue;
+                }
+                let need = 0.5 * (hi - lo) as f64;
+                if ((off[o + hi] - off[o + lo]) as f64) >= need && ((got[o + hi] - got[o + lo]) as f64) < need {
+                    return Err(format!("seed {seed} column {c} k {k}: drag-on read slope below 0.5"));
+                }
+            }
+        }
+    }
+    Ok(fired)
+}
+
+#[test]
+fn limiter_matches_inline_reference() {
+    let fired = limiter_check(false).unwrap();
+    eprintln!("limiter: {fired} samples raised over seeds 1-8");
+    assert!(fired > 0, "the limiter never fired; the test proves nothing");
+}
+
+#[test]
+fn limiter_mutant_is_killed() {
+    // M7: limiter removed.
+    assert!(limiter_check(true).is_err());
 }

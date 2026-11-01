@@ -354,6 +354,17 @@ drag-off output is byte-identical to master b22dbb67 (96/96 configs).
   with `W_f = min(ω·D_max,f, 400 m)`. Both β_h and β_f are clamped per fault
   so that `B_f ≤ 0.16`; each clamp (fault, T_f, W_f, θ_f, β before and
   after) is written to the run metadata. Normal sense needs β_h + β_f ≤ 0.9.
+- Numerical slope limiter (spec §3 step 2). This is a numerical limiter, not
+  physics. Per column, along depth only, over the ±4-sample read-slope
+  window (clipped at the column ends): where the drag-off read slope
+  `Δlookup/Δk` of a window is ≥ 0.5 and the drag-on window holds no
+  fault-plane label, the drag-on read slope is kept ≥ 0.5 by raising the
+  lower sample's source depth (windows processed by their lower end). Windows
+  already past 2× stretch with drag off are left untouched. The B_f clamp
+  bounds only the taper term `β·D·g′·∂q/∂z`; the breakdown on seeds 3/7
+  shows the throw-gradient term `β·g·∂D/∂z` (7b elliptical throw)
+  dominates. The run metadata line reports `numerical slope limiter (not
+  physics …): N samples raised in M columns`. Drag off never runs it.
 - A bottom pad of `P = ceil(β_f·T_max) + 1` samples is filled, so that
   footwall uplift reads real strata at the cube bottom.
 - Flags: `--fault-drag-hw`, `--fault-drag-fw`, `--fault-drag-width`,
