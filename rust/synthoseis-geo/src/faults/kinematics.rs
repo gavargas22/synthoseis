@@ -305,7 +305,7 @@ fn stage_slip_drag(
         Some((_, g)) => g,
         None => f.geometry.gradient_at(x, y, z),
     };
-    let w = dm.displacement(n, v, g, d_loc);
+    let w = dm.displacement(n, v, g, dm.amplitude(n, f, x, y, z, lat));
     let a = (z - d - w).clamp(0.0, top_src);
     if d == 0.0 || p.heave_scale == 0.0 {
         return (a, [0.0, 0.0]);

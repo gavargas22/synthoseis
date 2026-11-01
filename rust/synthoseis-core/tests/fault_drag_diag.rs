@@ -261,7 +261,7 @@ fn trace(fm: &synthoseis_geo::faults::FaultModel, dm: &synthoseis_geo::faults::D
             let d = if v <= 1.0 { dl } else { 0.0 };
             if dl == 0.0 { return ((zz - d).clamp(0.0, top_src), [0.0, 0.0], v, d, 0.0); }
             let g = f.geometry.gradient_at(x, y, zz);
-            let w = dm.displacement(n, v, g, dl);
+            let w = dm.displacement(n, v, g, dm.amplitude(n, f, x, y, zz, lat));
             let a = (zz - d - w).clamp(0.0, top_src);
             let h = if d == 0.0 { [0.0, 0.0] } else { heave_vector(f, &p, x, y, zz, d) };
             (a, h, v, d, w)
@@ -399,7 +399,7 @@ fn stages(fm: &synthoseis_geo::faults::FaultModel, dm: &synthoseis_geo::faults::
             let d = if v <= 1.0 { dl } else { 0.0 };
             if dl == 0.0 { return ((zz - d).clamp(0.0, top_src), [0.0, 0.0], 0.0); }
             let g = f.geometry.gradient_at(x, y, zz);
-            let w = dm.displacement(n, v, g, dl);
+            let w = dm.displacement(n, v, g, dm.amplitude(n, f, x, y, zz, lat));
             let h = if d == 0.0 { [0.0, 0.0] } else { heave_vector(f, &p, x, y, zz, d) };
             ((zz - d - w).clamp(0.0, top_src), h, w)
         };
@@ -541,7 +541,7 @@ fn chain(fm: &synthoseis_geo::faults::FaultModel, dm: Option<&synthoseis_geo::fa
             let dl = wt * f.profile[kk];
             let d = if v <= 1.0 { dl } else { 0.0 };
             if dl == 0.0 { return ((zz - d).clamp(0.0, top_src), [0.0, 0.0], 0.0, d); }
-            let w = match dm { Some(dm) => dm.displacement(n, v, f.geometry.gradient_at(x, y, zz), dl), None => 0.0 };
+            let w = match dm { Some(dm) => dm.displacement(n, v, f.geometry.gradient_at(x, y, zz), dm.amplitude(n, f, x, y, zz, lat)), None => 0.0 };
             let h = if d == 0.0 { [0.0, 0.0] } else { heave_vector(f, &p, x, y, zz, d) };
             ((zz - d - w).clamp(0.0, top_src), h, w, d)
         };

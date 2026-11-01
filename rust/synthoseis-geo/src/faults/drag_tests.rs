@@ -477,6 +477,9 @@ fn t12_ref(m: &FaultModel, p: &DragParams) -> Vec<(f64, f64, f64, f64, f64)> {
 fn t12_per_fault_clamp() {
     let (mut n_faults, mut n_clamped, mut n_cap) = (0, 0, 0);
     let mut g_ratio: Vec<f64> = vec![];
+    let mut gt_ratio: Vec<f64> = vec![];
+    let (mut n_clusters, mut n_multi, mut n_k, mut n_radius) = (0usize, 0usize, 0usize, 0usize);
+    let mut ks: Vec<f64> = vec![];
     for large in [false, true] {
         for seed in 1..=20u64 {
             let cfg = RandomFaultConfig {
@@ -524,23 +527,164 @@ fn t12_per_fault_clamp() {
                     }
                 }
                 assert!(gf >= fd - 1e-12, "seed {seed} large {large} fault {n}: G_f {gf} < FD max |dD/dz| {fd}");
+                // D8: G_t,f ≥ the FD max |∂(D_c·cos(π r/2))/∂z| of the drag
+                // amplitude over the drag zone (inline, no production calls
+                // but the geometry).
+                if let Some(tl) = &f.tip {
+                    let tf = f.profile.iter().fold(0f64, |a, v| a.max(v.abs()));
+                    let g0 = f.geometry.gradient_at(f.center[0] as f64, f.center[1] as f64, f.center[2] as f64);
+                    let (gx, gy, gz) = (g0[0] / hp.bin_m, g0[1] / hp.bin_m, g0[2] / hp.dz_m);
+                    let sin_d = (gx * gx + gy * gy).sqrt() / (gx * gx + gy * gy + gz * gz).sqrt();
+                    let gt = PI2 * tf * hp.dz_m * sin_d / tl.r_t;
+                    let mut fa = 0f64;
+                    for i in 0..shape[0] {
+                        for j in 0..shape[1] {
+                            let amp = |k: usize| {
+                                let q = [(i as f64 - tl.c[0]) * hp.bin_m, (j as f64 - tl.c[1]) * hp.bin_m, (k as f64 - tl.c[2]) * hp.dz_m];
+                                let ss = q[0] * tl.s_hat[0] + q[1] * tl.s_hat[1] + q[2] * tl.s_hat[2];
+                                let tt = q[0] * tl.t_hat[0] + q[1] * tl.t_hat[1] + q[2] * tl.t_hat[2];
+                                let r = ((ss / tl.r_s).powi(2) + (tt / tl.r_t).powi(2)).sqrt();
+                                if r < 1.0 { tf * (PI2 * r).cos() } else { 0.0 }
+                            };
+                            for k in 0..shape[2] - 1 {
+                                let v = f.geometry.value_at(i as f64, j as f64, k as f64);
+                                let g = f.geometry.gradient_at(i as f64, j as f64, k as f64);
+                                let gn = ((g[0] / hp.bin_m).powi(2) + (g[1] / hp.bin_m).powi(2) + (g[2] / hp.dz_m).powi(2)).sqrt();
+                                if gn > 0.0 && (v - 1.0).abs() / gn < w {
+                                    fa = fa.max((amp(k + 1) - amp(k)).abs());
+                                    let pa = m.drag().unwrap().amplitude(n, f, i as f64, j as f64, k as f64, 0.0);
+                                    assert!((pa - amp(k).copysign(f.profile.iter().fold(0f64, |a, v| if v.abs() > a.abs() { *v } else { a }))).abs() < 1e-9 * tf.max(1.0), "seed {seed} fault {n}: amplitude {pa} vs inline {}", amp(k));
+                                }
+                            }
+                        }
+                    }
+                    assert!(gt >= fa - 1e-12, "seed {seed} large {large} fault {n}: G_t {gt} < FD max |dA/dz| {fa}");
+                    assert!((d.faults[n].g_t - gt).abs() < 1e-9, "seed {seed} fault {n}: G_t {} vs inline {gt}", d.faults[n].g_t);
+                    gt_ratio.push(fa / gt.max(1e-300));
+                }
                 assert!((d.faults[n].g - gf).abs() < 1e-9, "seed {seed} fault {n}: G_f {} vs inline {gf}", d.faults[n].g);
                 g_ratio.push(fd / gf.max(1e-300));
             }
-            for (n, &(t, w, th, unit, gf)) in t12_ref(&m, &p).iter().enumerate() {
+            // D9 reference: zone points (ρ < W, D_loc ≠ 0) on the stride grid
+            // s = min{s ≥ 1 : Π⌈n/s⌉ ≤ 2^18}, clusters = transitive closure
+            // of "some pair of points closer than max(W_a, W_b)", k =
+            // min(1, 0.16 / ΣB_f) with the D8-clamped B_f.
+            let rf = t12_ref(&m, &p);
+            let mut st = 1usize;
+            while shape.iter().map(|&n| n.div_ceil(st)).product::<usize>() > 1 << 18 {
+                st += 1;
+            }
+            let pts: Vec<Vec<[f64; 3]>> = m
+                .faults()
+                .iter()
+                .zip(&rf)
+                .map(|(f, &(_, w, _, _, _))| {
+                    let mut v = vec![];
+                    for i in (0..shape[0]).step_by(st) {
+                        for j in (0..shape[1]).step_by(st) {
+                            for k in (0..shape[2]).step_by(st) {
+                                let (x, y, z) = (i as f64, j as f64, k as f64);
+                                let a = match &f.tip {
+                                    Some(tl) => {
+                                        let q = [(x - tl.c[0]) * hp.bin_m, (y - tl.c[1]) * hp.bin_m, (z - tl.c[2]) * hp.dz_m];
+                                        let ss = q[0] * tl.s_hat[0] + q[1] * tl.s_hat[1] + q[2] * tl.s_hat[2];
+                                        let tt = q[0] * tl.t_hat[0] + q[1] * tl.t_hat[1] + q[2] * tl.t_hat[2];
+                                        let r = ((ss / tl.r_s).powi(2) + (tt / tl.r_t).powi(2)).sqrt();
+                                        if r < 1.0 { (PI2 * r).cos().powi(2) } else { 0.0 }
+                                    }
+                                    None => f.lateral(i, j),
+                                };
+                                if a * f.profile[k] == 0.0 {
+                                    continue;
+                                }
+                                let fv = f.geometry.value_at(x, y, z);
+                                let g = f.geometry.gradient_at(x, y, z);
+                                let gn = ((g[0] / hp.bin_m).powi(2) + (g[1] / hp.bin_m).powi(2) + (g[2] / hp.dz_m).powi(2)).sqrt();
+                                if gn > 0.0 && (fv - 1.0).abs() / gn < w {
+                                    v.push([x * hp.bin_m, y * hp.bin_m, z * hp.dz_m]);
+                                }
+                            }
+                        }
+                    }
+                    v
+                })
+                .collect();
+            // Minimum point-pair distance, by sorting on x and pruning.
+            let min_d = |a: &[[f64; 3]], b: &[[f64; 3]]| {
+                let mut bs = b.to_vec();
+                bs.sort_by(|p, q| p[0].partial_cmp(&q[0]).unwrap());
+                let mut best = f64::INFINITY;
+                for p in a {
+                    let lo = bs.partition_point(|q| q[0] < p[0] - best);
+                    for q in &bs[lo..] {
+                        if q[0] > p[0] + best {
+                            break;
+                        }
+                        best = best.min(((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt());
+                    }
+                }
+                best
+            };
+            let nf = rf.len();
+            let mut comp: Vec<usize> = (0..nf).collect();
+            for a in 0..nf {
+                for b in a + 1..nf {
+                    let r = rf[a].1.max(rf[b].1);
+                    let dd = min_d(&pts[a], &pts[b]);
+                    n_radius += (dd < r && dd >= 0.5 * r) as usize;
+                    if dd < r {
+                        let (ca, cb) = (comp[a], comp[b]);
+                        for c in comp.iter_mut() {
+                            if *c == cb {
+                                *c = ca;
+                            }
+                        }
+                    }
+                }
+            }
+            let bclamp: Vec<f64> = rf.iter().map(|&(_, _, _, u, _)| 0.30f64.min(0.16 / u) * u).collect();
+            let mut kref = vec![1.0; nf];
+            let mut roots: Vec<usize> = comp.clone();
+            roots.sort();
+            roots.dedup();
+            assert_eq!(roots.len(), d.clusters.len(), "seed {seed} large {large}: clusters {:?} vs inline {comp:?}", d.clusters);
+            for &c in &roots {
+                let mem: Vec<usize> = (0..nf).filter(|&n| comp[n] == c).collect();
+                let sb: f64 = mem.iter().map(|&n| bclamp[n]).sum();
+                let k = if sb > 0.16 { 0.16 / sb } else { 1.0 };
+                for &n in &mem {
+                    kref[n] = k;
+                }
+                let pc = &d.clusters[d.faults[mem[0]].cluster];
+                assert_eq!(pc.faults, mem, "seed {seed} large {large}: cluster {:?} vs inline {mem:?}", pc.faults);
+                assert!((pc.sum_b - sb).abs() < 1e-9 && (pc.k - k).abs() < 1e-12, "seed {seed}: cluster {mem:?} sumB {} k {} vs {sb} {k}", pc.sum_b, pc.k);
+                let after: f64 = mem.iter().map(|&n| d.faults[n].b).sum();
+                assert!(after <= 0.16 + 1e-9, "seed {seed} large {large}: cluster {mem:?} sum B after k {after}");
+                n_clusters += 1;
+                n_multi += (mem.len() > 1) as usize;
+                if k < 1.0 {
+                    n_k += 1;
+                    ks.push(k);
+                    assert!(d.summary().contains(&format!("k={k:.4}")));
+                }
+            }
+            for (n, &(t, w, th, unit, gf)) in rf.iter().enumerate() {
                 n_faults += 1;
                 n_cap += (w >= 400.0 - 1e-9) as usize;
                 let df = &d.faults[n];
-                let (bh, bf) = (df.beta_h, df.beta_f);
-                assert!(bh.max(bf) * unit <= 0.16 + 1e-12, "seed {seed} large {large} fault {n}: B_f {}", bh.max(bf) * unit);
                 let lim = 0.16 / unit;
-                assert!((bh - 0.30f64.min(lim)).abs() < 1e-12 && (bf - 0.15f64.min(lim)).abs() < 1e-12, "seed {seed} fault {n}: beta {bh} {bf}, lim {lim}");
+                // β after the D8 clamp (inline), then × the inline D9 k.
+                let (bh, bf) = (0.30f64.min(lim), 0.15f64.min(lim));
+                let kr = kref[n];
+                assert!(bh.max(bf) * unit <= 0.16 + 1e-12, "seed {seed} large {large} fault {n}: B_f {}", bh.max(bf) * unit);
+                assert!((df.beta_h - bh * kr).abs() < 1e-12 && (df.beta_f - bf * kr).abs() < 1e-12, "seed {seed} fault {n}: beta {} {}, want {} {} (lim {lim}, k {kr})", df.beta_h, df.beta_f, bh * kr, bf * kr);
                 let rec = d.clamps.iter().find(|c| c.fault == n);
                 if 0.30 * unit > 0.16 {
                     n_clamped += 1;
                     let c = rec.unwrap_or_else(|| panic!("seed {seed} fault {n} clamped but not recorded"));
                     assert_eq!(c.before, (0.30, 0.15));
-                    assert_eq!(c.after, (bh, bf));
+                    assert!((c.after.0 - bh).abs() < 1e-12 && (c.after.1 - bf).abs() < 1e-12, "{:?} vs {bh} {bf}", c.after);
+                    assert!((c.g_t + c.g_dp - c.g).abs() < 1e-12);
                     assert!((c.t - t).abs() < 1e-12 && (c.w_m - w).abs() < 1e-9 && (c.theta_deg - th).abs() < 1e-9);
                     assert!((c.g - gf).abs() < 1e-9, "seed {seed} fault {n}: recorded G_f {} vs {gf}", c.g);
                     assert!(d.summary().contains(&format!("fault {n}: B_f=")));
@@ -553,7 +697,12 @@ fn t12_per_fault_clamp() {
     eprintln!("T12: {n_faults} faults, {n_clamped} clamped, {n_cap} at the 400 m cap");
     g_ratio.sort_by(|a, b| a.partial_cmp(b).unwrap());
     eprintln!("T12: FD max |dD/dz| / G_f over the drag zone: min {:.3} median {:.3} max {:.3}", g_ratio[0], g_ratio[g_ratio.len() / 2], g_ratio[g_ratio.len() - 1]);
+    gt_ratio.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    eprintln!("T12: FD max |dA/dz| / G_t over the drag zone: min {:.3} median {:.3} max {:.3}", gt_ratio[0], gt_ratio[gt_ratio.len() / 2], gt_ratio[gt_ratio.len() - 1]);
+    ks.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    eprintln!("T12 D9: {n_clusters} clusters, {n_multi} with >1 fault, {n_k} with k<1 (k {ks:.3?}), {n_radius} pairs joined only at d in [W/2, W)");
     assert!(n_cap > 0, "no fault hits the 400 m cap");
+    assert!(n_k > 0, "no cluster scale fires");
     let m = random_model([64, 64, 96], 1, 4).with_drag(&DragParams {
         beta_h: 0.5,
         beta_f: 0.5,
@@ -580,4 +729,50 @@ fn drag_off_and_legacy_are_unchanged() {
         3,
     );
     assert!(legacy.with_drag(&DragParams::default()).drag().is_none());
+}
+
+/// D9 radius: two parallel planar faults whose drag zones are 0.75 W apart
+/// form one cluster (k = 0.16 / ΣB_f); 1.25 W apart they stay separate (k
+/// = 1 each). Kills a cluster radius of W/2 or 2W.
+#[test]
+fn d9_cluster_radius() {
+    let shape = [160, 4, 160];
+    let pl = Planar::new(shape);
+    // β = 1 so the D8 clamp sets each B_f = 0.16 and ΣB_f = 0.32.
+    let p = DragParams { beta_h: 1.0, beta_f: 1.0, ..DragParams::default() };
+    let gm = (pl.c / pl.bin).hypot(pl.s / pl.dz);
+    let base = pl.model(true);
+    let two = (1..2000u64)
+        .map(|s| random_model(shape, s, 2))
+        .find(|m| m.faults().len() == 2)
+        .expect("a two-fault model");
+    let build = |sep: f64| {
+        let mut m = two.clone();
+        for (n, off) in [(0usize, -0.5 * sep), (1, 0.5 * sep)] {
+            let mut f = base.faults()[0].clone();
+            f.geometry = FaultGeometry::from_parts(
+                [[pl.c, 0.0, -pl.s], [0.0, 1.0, 0.0], [pl.s, 0.0, pl.c]],
+                [pl.plane + off + 1.0e5, 0.0, 0.0],
+                [1.0e10, 1e14, 1e14],
+            );
+            m.faults_mut()[n] = f;
+        }
+        m.with_drag(&p)
+    };
+    let m0 = build(1.0e4);
+    let w = m0.drag().unwrap().faults.iter().fold(0f64, |a, f| a.max(f.w_m));
+    for (gap, joined) in [(0.75, true), (1.25, false)] {
+        let m = build((2.0 + gap) * w * gm);
+        let d = m.drag().unwrap();
+        eprintln!("gap {gap} W: {}", d.summary());
+        assert!(d.faults.iter().all(|f| (f.w_m - w).abs() < 1e-3));
+        if joined {
+            assert_eq!(d.clusters.len(), 1, "gap {gap} W: {:?}", d.clusters);
+            let sb = d.clusters[0].sum_b;
+            assert!((d.clusters[0].k - (0.16 / sb).min(1.0)).abs() < 1e-12 && sb > 0.16, "{:?}", d.clusters);
+        } else {
+            assert_eq!(d.clusters.len(), 2, "gap {gap} W: {:?}", d.clusters);
+            assert!(d.clusters.iter().all(|c| c.k == 1.0));
+        }
+    }
 }

@@ -66,7 +66,7 @@ fn t4(seed: u64, sense: DragSense) -> (usize, usize, usize) {
 }
 
 #[test]
-#[ignore = "slow: 20 seeds x 3 senses; FAILS at the branch head (drag-made inversions on seeds 4, 7, 15, 18 and more under reverse), reported on the PR"]
+#[ignore = "slow: 20 seeds x 3 senses; bar: drag-on inverted columns <= drag-off per seed and sense, zero tolerance (D9)"]
 fn t4_horizon_order_seeds_1_20() {
     let mut bad = Vec::new();
     for sense in [DragSense::Normal, DragSense::Reverse, DragSense::Auto] {
@@ -167,7 +167,7 @@ fn stretch_over2(r: &m::Run) -> f64 {
 }
 
 #[test]
-#[ignore = "slow: 20 seeds; FAILS on seeds 3, 4, 7, 10, 18 (seed 3 0.07 % -> 4.96 %); every stretched window is inside a drag zone, reported on the PR"]
+#[ignore = "slow: 20 seeds; bar unchanged (on <= off + 0.1 %), results on the PR"]
 fn t7_stretch_seeds_1_20() {
     let mut bad = Vec::new();
     for seed in 1u64..=20 {
@@ -327,4 +327,80 @@ fn t13_identical_outside_the_zones() {
     let (d, n) = t13(1);
     assert!(n > 0);
     assert_eq!(d, 0);
+}
+
+/// Inline ρ (metres) to fault `f`'s plane and whether `(x, y, k)` is in its
+/// support (tip/lateral weight × profile ≠ 0), as in `far_at`.
+fn rho_support(f: &synthoseis_geo::faults::ResolvedFault, bin_m: f64, dz_m: f64, x: f64, y: f64, k: usize) -> Option<f64> {
+    let z = k as f64;
+    let wt = match &f.tip {
+        Some(t) => t.factor(x, y, z),
+        None => f.lateral_at(x, y),
+    };
+    if wt * f.profile[k] == 0.0 {
+        return None;
+    }
+    let fv = f.geometry.value_at(x, y, z);
+    let g = f.geometry.gradient_at(x, y, z);
+    let gn = ((g[0] / bin_m).powi(2) + (g[1] / bin_m).powi(2) + (g[2] / dz_m).powi(2)).sqrt();
+    (gn > 0.0).then(|| (fv - 1.0).abs() / gn)
+}
+
+/// T14 (D8): read slope (source span / output span on T7's ±4 window,
+/// windows touching a fault skipped) on single-fault windows: the window
+/// centre is in fault n's zone (ρ_n < W_n, in support) and every other
+/// fault o is out of support or at ρ_o ≥ W_o + W_n (no other zone within
+/// W_n). Among windows with drag-off slope < 0.6, returns (count, count
+/// with drag-on slope < 0.5, count with off slope < 0.5, min on slope).
+fn t14(seed: u64) -> (usize, usize, usize, usize, f64) {
+    let c = base(seed, SHAPE);
+    let off = m::run(&c);
+    let cd = with_drag(&c, Some(DragSense::Auto));
+    let on = m::run(&cd);
+    let fm = synthoseis_core::fault_model(&cd).expect("faults");
+    let dm = fm.drag().expect("drag");
+    let w: Vec<f64> = dm.faults.iter().map(|f| f.w_m).collect();
+    let [ni, nj, nk] = SHAPE;
+    let (Some((_, lo_k)), Some((_, ln_k))) = (&off.src, &on.src) else { return (0, 0, 0, 0, 1.0) };
+    let (mut n, mut fail, mut off_lt5, mut single) = (0usize, 0usize, 0usize, 0usize);
+    let mut min_on = f64::INFINITY;
+    for q in 0..ni * nj {
+        let (x, y) = ((q / nj) as f64, (q % nj) as f64);
+        for k in 0..nk {
+            let (lo, hi) = (k.saturating_sub(4), (k + 4).min(nk - 1));
+            if (lo..=hi).any(|t| off.fault_id[q * nk + t] != 0 || on.fault_id[q * nk + t] != 0) {
+                continue;
+            }
+            let rs: Vec<Option<f64>> = fm.faults().iter().map(|f| rho_support(f, dm.bin_m, dm.dz_m, x, y, k)).collect();
+            let inz: Vec<usize> = (0..rs.len()).filter(|&i| rs[i].is_some_and(|r| r < w[i])).collect();
+            let [f0] = inz[..] else { continue };
+            if !(0..rs.len()).all(|o| o == f0 || rs[o].is_none_or(|r| r >= w[o] + w[f0])) {
+                continue;
+            }
+            single += 1;
+            let sl = |l: &Vec<f32>| (l[q * nk + hi] - l[q * nk + lo]) as f64 / (hi - lo) as f64;
+            let (so, sn) = (sl(lo_k), sl(ln_k));
+            if so < 0.6 {
+                n += 1;
+                off_lt5 += (so < 0.5) as usize;
+                fail += (sn < 0.5) as usize;
+                min_on = min_on.min(sn);
+            }
+        }
+    }
+    (single, n, fail, off_lt5, min_on)
+}
+
+#[test]
+#[ignore = "slow: 20 seeds; bar: on single-fault windows with drag-off read slope < 0.6, drag-on read slope >= 0.5"]
+fn t14_single_fault_read_slope_seeds_1_20() {
+    let mut bad = Vec::new();
+    for seed in 1u64..=20 {
+        let (single, n, fail, off_lt5, min_on) = t14(seed);
+        eprintln!("T14 seed {seed}: {single} single-fault windows, {n} with off slope < 0.6 ({off_lt5} already < 0.5 off), {fail} with on slope < 0.5, min on {min_on:.3}");
+        if fail > 0 {
+            bad.push((seed, n, fail, off_lt5, min_on));
+        }
+    }
+    assert!(bad.is_empty(), "{bad:?}");
 }
