@@ -90,11 +90,14 @@ fn t5(seed: u64) -> Option<usize> {
 }
 
 #[test]
-#[ignore = "slow: 128x128x256, seeds 1-6"]
+#[ignore = "slow: 128x128x256, seeds 1-20"]
 fn t5_exposed_is_zero() {
     let mut bad = Vec::new();
-    for seed in 1u64..=6 {
-        let Some(e) = t5(seed) else { continue };
+    for seed in 1u64..=20 {
+        let Some(e) = t5(seed) else {
+            eprintln!("T5 seed {seed}: no salt");
+            continue;
+        };
         eprintln!("T5 seed {seed}: exposed {e}");
         if e > 0 {
             bad.push((seed, e));
@@ -164,7 +167,7 @@ fn stretch_over2(r: &m::Run) -> f64 {
 }
 
 #[test]
-#[ignore = "slow: 20 seeds; FAILS on seeds 3, 4, 7, 10, 18 (seed 3 0.07 % -> 4.96 %), reported on the PR"]
+#[ignore = "slow: 20 seeds; FAILS on seeds 3, 4, 7, 10, 18 (seed 3 0.07 % -> 4.96 %); every stretched window is inside a drag zone, reported on the PR"]
 fn t7_stretch_seeds_1_20() {
     let mut bad = Vec::new();
     for seed in 1u64..=20 {

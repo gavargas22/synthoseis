@@ -85,7 +85,7 @@ fn in_zone(fm: &synthoseis_geo::faults::FaultModel, dm: &synthoseis_geo::faults:
 #[test]
 #[ignore = "diagnostic"]
 fn t7_diag() {
-    for seed in [2u64, 3, 7] {
+    for seed in [2u64, 3, 4, 7, 10, 13, 17, 18] {
         let c = m::cfg(seed, [32, 32, 128], 4, Mode::PostFault);
         let off = m::run(&c);
         let cd = with_drag(&c, Some(DragSense::Auto));
@@ -183,6 +183,57 @@ fn t4_diag() {
             thick.push(*runs.iter().min().unwrap());
         }
         thick.sort();
+        // where is the new inversion: distance (samples) to a plane voxel, and
+        // the lookup jump across it, drag off vs on
+        let (mut at_plane, mut far_plane) = (0, 0);
+        let mut jumps = Vec::new();
+        for q in 0..ni * nj {
+            let co = &off.labels[q * nk..(q + 1) * nk];
+            let cn = &on.labels[q * nk..(q + 1) * nk];
+            if !hard_inv(cn) || hard_inv(co) { continue; }
+            let mut run = 1;
+            for k in 1..nk {
+                if cn[k] == cn[k - 1] { run += 1; continue; }
+                if cn[k] < cn[k - 1] && run >= 2 && cn[k] != 255 && cn[k - 1] != 255 {
+                    let near = (k.saturating_sub(3)..(k + 3).min(nk)).any(|x| on.fault_id[q * nk + x] != 0 || off.fault_id[q * nk + x] != 0);
+                    if near { at_plane += 1 } else { far_plane += 1 }
+                    let (a, b) = (k.saturating_sub(3), (k + 2).min(nk - 1));
+                    jumps.push(((lo[q * nk + b] - lo[q * nk + a]) * 10.0).round() / 10.0);
+                    jumps.push(((l1[q * nk + b] - l1[q * nk + a]) * 10.0).round() / 10.0);
+                }
+                run = 1;
+            }
+        }
+        // was the column already inverted by a single cell (tolerated) with drag off,
+        // and does the gather column (i, j) move across the step?
+        let (mut was_soft, mut ij_moves, mut src_inv) = (0, 0, 0);
+        let ijo = &on.src.as_ref().unwrap().0;
+        let und = synthoseis_core::generate_labels(&{ let mut c0 = c.clone(); c0.faults = Default::default(); c0 }).0;
+        for q in 0..ni * nj {
+            let co = &off.labels[q * nk..(q + 1) * nk];
+            let cn = &on.labels[q * nk..(q + 1) * nk];
+            if !hard_inv(cn) || hard_inv(co) { continue; }
+            let mut soft = false;
+            for k in 1..nk { if co[k] < co[k - 1] && co[k] != 255 { soft = true } }
+            was_soft += soft as usize;
+            let mut run = 1;
+            for k in 1..nk {
+                if cn[k] == cn[k - 1] { run += 1; continue; }
+                if cn[k] < cn[k - 1] && run >= 2 && cn[k] != 255 {
+                    let (a, b) = (q * nk + k - 1, q * nk + k);
+                    let mv = ijo[a].0.round() != ijo[b].0.round() || ijo[a].1.round() != ijo[b].1.round();
+                    ij_moves += mv as usize;
+                    // undragged labels at the two sources (nearest)
+                    let at = |v: usize| { let (i, j) = (ijo[v].0.round() as usize, ijo[v].1.round() as usize); und[(i * nj + j) * nk + (l1[v].round() as usize).min(nk - 1)] };
+                    src_inv += (at(b) < at(a)) as usize;
+                }
+                run = 1;
+            }
+        }
+        eprintln!("T4D seed {seed} {sense:?}: new hard columns that had a 1-cell flip with drag off {was_soft}; inversion steps whose gather column (i,j) changes across the step {ij_moves}; steps where the unfaulted labels at the two sources are themselves inverted {src_inv}");
+        let pmin = fm.faults().iter().map(|f| f.profile.iter().cloned().fold(f64::INFINITY, f64::min)).collect::<Vec<_>>();
+        let th: Vec<_> = dm.faults.iter().map(|f| (f.s, (f.theta_deg * 10.0).round() / 10.0)).collect();
+        eprintln!("T4D seed {seed} {sense:?}: new inversion steps within 3 samples of a fault plane {at_plane}, away {far_plane}; lookup span over the 5-sample step window (off, on pairs) {:?}; fault profile min {pmin:?} (>=0: normal throw); drag (s, theta at peak) {th:?}", &jumps[..jumps.len().min(24)]);
         eprintln!("T4D seed {seed} {sense:?}: new inverted cols {cols}; zones overlapping the column {nzones:?}; combined drag-shift |grad| max {gmax_all:.3}, cols >0.5: {grad_gt}; cols where the drag-on lookup decreases off the planes {fold_cols} (lookup monotone with drag off there: {fold_offplane}); thinnest drag-off layer per col (samples) {thick:?}; beta_h {} beta_f {} B {:.3}", dm.beta_h, dm.beta_f, dm.b);
     }
 }

@@ -282,6 +282,9 @@ fn t8_tile_invariance() {
         let a = labels_of(&m, |k| k as u8, [ni, nj]);
         for tile in [[ni.div_ceil(3), nj.div_ceil(3)], [ni.div_ceil(4), nj.div_ceil(2)]] {
             let b = labels_of(&m, |k| k as u8, tile);
+            let d = a.iter().zip(&b).filter(|(x, y)| x != y).count();
+            let moved = a.iter().enumerate().filter(|(v, &x)| x as usize != v % shape[2]).count();
+            eprintln!("T8 seed {seed} tile {tile:?}: {d} of {} voxels differ from 1x1 ({moved} voxels moved by the faults)", a.len());
             assert!(a == b, "seed {seed} tile {tile:?}");
         }
     }
