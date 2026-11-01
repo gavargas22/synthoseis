@@ -339,13 +339,13 @@ Numbers:
 ## Deferred (follow-ups)
 
 - Salt-flank fragments under heave: done in roadmap 7d (drag after
-  faulting, `salt_fault_order.rs`). Open: stair index ≤ 1.2× faults-off
-  per seed misses on seed 15 (1.244; summed 0.971 ≤ 1.1 holds), a steep
-  but continuous flank dip in a hanging wall dropped by the fault; drag-band
-  Jaccard vs master outside master's exposed region is 0.8988 on seed 1
-  (bar 0.90; mean 0.963 ≥ 0.95 holds). Time-mode salt/fault label masks are
-  the depth masks through the new TWT
-  (`time_masks_are_depth_masks_through_new_twt`).
+  faulting, `salt_fault_order.rs`). The stair and Jaccard bars use the
+  references of the Strata ruling at e35b2b76 (see `salt-bodies.md`): stair
+  index against B = faults-off + faulted-undragged − flat (faults-off
+  ignores fault-made stairs; seed 15 0.989, sum 0.966), Jaccard against an
+  independent post-fault drag (master drags before faulting; min 0.9832,
+  mean 0.9956). Time-mode salt/fault label masks are the depth masks
+  through the new TWT (`time_masks_are_depth_masks_through_new_twt`).
 - Hockey-stick drag zone (throw ≥ 29.75). Faults are flagged
   `hockey_stick_deferred`, and the default throw range 5–29 avoids it.
 - Fault intersections volume and dilation; `fault_intersections` output.

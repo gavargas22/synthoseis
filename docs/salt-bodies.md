@@ -156,7 +156,32 @@ traveltime (depth-to-time §3.4). So:
   instead of clamping to the last sample, and columns with `|D| < ½`
   everywhere are left as they are (also in the partial-volume band). D is
   computed when needed, not cached, so the warp adds no resident cube
-  (RSS within master's at chunk 32). The salt body
+  (RSS within master's at chunk 32). Knots are made monotone bottom-up
+  (`b_r = min(a_r + D, b_{r+1})`, then ≥ 0), so a deeper uplift pushes the
+  shallower boundaries up and horizon order never inverts; the pad keeps the
+  label above in gaps between intervals, so it never returns to a
+  shallower label.
+
+  Bars (spec §5, Strata ruling on #61 at e35b2b76; seeds 1–20, 128×128×256,
+  4 faults; `salt_fault_order.rs`):
+  - *Stair index* ≤ 1.1× B summed and ≤ 1.2× B per seed, with the additive
+    baseline B = faults-off + faulted-undragged − flat. Faults-off alone
+    has no fault-made stairs, so it charged the drag for every stair the
+    faults make (seed 15: faulting alone adds 0.67×10⁻³, drag alone 1.70).
+    Measured sum 0.966, per seed 0.855–1.024 (seed 15 0.989); master/B
+    1.243, which fails. Post vs faults-off (seed 15 1.244) and master are
+    printed only.
+  - *Band Jaccard* ≥ 0.97 per seed and ≥ 0.98 mean against an independent
+    post-fault drag written in the test (per output column of the faulted
+    labels, knots `a → a + D(a)` at present depth, no push-up clamp, no pad;
+    not `drag_warp_labels`). Master drags in pre-fault coordinates, so it
+    disagrees with stationary salt by design and is no fair reference.
+    Measured min 0.9832 (seed 16), mean 0.9956; J vs master outside its
+    exposed region (seed 1 0.8959, mean 0.9644) is printed only.
+  - *Horizon order*, both directions: every faulted run top lands within 1
+    sample (the half-sample rounding) of its clamped target; no band column
+    is made non-monotone by the drag. 0 tops need more than ½ sample on
+    every seed. The salt body
   itself is not faulted, as in legacy. `--legacy-salt-fault-order` restores
   the pre-fault drag of master 481805cc byte for byte.
 - **Gaps come from the labels.** A column is a gap when the closure unit's
