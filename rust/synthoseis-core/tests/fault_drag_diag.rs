@@ -657,3 +657,18 @@ fn gap_term() {
     }
 }
 }
+
+/// D8 clamp / D9 cluster firing on the T4/T7 configs (32×32×128, seeds
+/// 1–20, auto sense): prints each run's drag summary.
+#[test]
+#[ignore = "diagnostic"]
+fn d8_d9_firing_seeds_1_20() {
+    for seed in 1u64..=20 {
+        let mut c = salt_order_metrics::cfg(seed, [32, 32, 128], 4, salt_order_metrics::Mode::PostFault);
+        c.faults.drag = Some(synthoseis_core::DragParams { sense: synthoseis_core::DragSense::Auto, ..synthoseis_core::DragParams::default() });
+        let fm = synthoseis_core::fault_model(&c.with_geometry_cache()).expect("faults");
+        let dm = fm.drag().expect("drag");
+        let cl: Vec<String> = dm.clusters.iter().map(|c| format!("{:?} sumB {:.3} k {:.4}", c.faults, c.sum_b, c.k)).collect();
+        eprintln!("D8D9 seed {seed}: faults {} clamped {} clusters {} [{}]", dm.faults.len(), dm.clamps.len(), dm.clusters.len(), cl.join("; "));
+    }
+}
