@@ -181,6 +181,15 @@ impl ResolvedFault {
         lg.rotated(ur, uc)
     }
 
+    /// Test hook: lateral weight 1 everywhere (a flat, laterally constant
+    /// throw for analytic tests).
+    #[cfg(test)]
+    pub(crate) fn test_flat_lateral(&mut self) {
+        self.lateral.vx = 1e30;
+        self.lateral.vy = 1e30;
+        self.lateral.norm = 1.0;
+    }
+
     /// `displacement_classification(i, j, k) = xy_dis(i, j) * z_shift(k)`.
     #[inline]
     pub fn displacement_classification(&self, i: usize, j: usize, k: usize) -> f64 {
