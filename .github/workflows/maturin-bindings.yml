@@ -21,6 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pin Python so pyo3-ffi / extension builds see 3.12. ubuntu-latest (26.04)
+      # defaults to 3.14, which pyo3 0.23.5 rejects (max 3.13). Matches nightlies.
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
