@@ -28,38 +28,7 @@ const HASH_SMALL: f32 = 1e-15;
 /// Sentinel written into the hash stream for every sub-threshold sample.
 const HASH_SMALL_SENTINEL: f32 = 0.0;
 
-/// Test-only: assert every sample classified as sub-threshold is strictly
-/// below [`HASH_SMALL`] (none sits at/above the cut). Positions still count
-/// in the hash via [`HASH_SMALL_SENTINEL`].
-fn assert_subthreshold_invariant(v: &[f32]) {
-    let mut max_small = 0.0f32;
-    let mut n_small = 0usize;
-    for &x in v {
-        let a = x.abs();
-        if a < HASH_SMALL {
-            n_small += 1;
-            assert!(
-                a < HASH_SMALL,
-                "sub-threshold sample {x:?} is not strictly below HASH_SMALL"
-            );
-            if a > max_small {
-                max_small = a;
-            }
-        } else {
-            assert!(
-                a >= HASH_SMALL,
-                "large sample {x:?} fell below HASH_SMALL"
-            );
-        }
-    }
-    assert!(
-        n_small == 0 || max_small < HASH_SMALL,
-        "max sub-threshold |x|={max_small} is not < HASH_SMALL"
-    );
-}
-
 fn ah(v: &[f32]) -> u64 {
-    assert_subthreshold_invariant(v);
     fnv(v.iter().flat_map(|&x| {
         let y = if x.abs() < HASH_SMALL {
             HASH_SMALL_SENTINEL
@@ -152,7 +121,8 @@ fn legacy_zoeppritz_reproduces_master_33a3a93() {
     // old == new (flush no-op on this arm)
     assert_eq!(ah(&v.angle_stack), 0x262f_9caa_ac02_c346);
     assert_eq!(ah(&generate_reflectivity(&a, 15.0)), 0x803c_6752_f97f_a3b5);
-    // old 0x013c_dec9_3d4e_3315 → new 0x8c00_3688_d6c9_8484 (24.04 derivation)
+    // old 0x013c_dec9_3d4e_3315 → new 0x8c00_3688_d6c9_8484 (24.04 derivation).
+    // Positional sentinel: any sample crossing 1e-15 changes the hash, so the hash covers threshold crossings.
     assert_eq!(
         ah(&generate_chunked_at_angle(&a, 30.0).0.angle_stack),
         0x8c00_3688_d6c9_8484
