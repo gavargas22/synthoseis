@@ -359,6 +359,12 @@ Numbers:
   overlap and multiprocess children; the library APIs already support these.
 - PyO3 exposure. The Python extension (`synthoseis_mdio`) is MDIO I/O only
   today and has no geology-parameter binding pattern yet.
+- Bump PyO3 (currently 0.23.5, max Python 3.13) to a release that supports
+  Python 3.14, so nightlies and `rust-ci.yml` can drop the
+  `actions/setup-python` 3.12 pin once ubuntu-latest's default is safe again.
+- `nightly.yml` runs only `--ignored` tests, so the non-ignored bit-exact
+  Zoeppritz hash test never ran on the stable job; add it to `nightly.yml`
+  after the Zoeppritz denormal-flush fix.
 - Faulting real geology once the toy three-layer horizons are replaced.
 
 ## How to run

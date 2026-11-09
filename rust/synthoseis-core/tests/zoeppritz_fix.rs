@@ -19,8 +19,24 @@ fn fnv(bytes: impl Iterator<Item = u8>) -> u64 {
     h
 }
 
+/// Real reflection coefficients matter to about 1e-4; values below 1e-12 are
+/// numerical zero; glibc/libm differences between runner images give 0 vs
+/// about 1e-33 at some samples. Samples with `|x| < HASH_SMALL` are replaced
+/// by the bits of `0.0f32` before hashing (test-only; production unchanged).
+const HASH_SMALL: f32 = 1e-15;
+
+/// Sentinel written into the hash stream for every sub-threshold sample.
+const HASH_SMALL_SENTINEL: f32 = 0.0;
+
 fn ah(v: &[f32]) -> u64 {
-    fnv(v.iter().flat_map(|x| x.to_bits().to_le_bytes()))
+    fnv(v.iter().flat_map(|&x| {
+        let y = if x.abs() < HASH_SMALL {
+            HASH_SMALL_SENTINEL
+        } else {
+            x
+        };
+        y.to_bits().to_le_bytes()
+    }))
 }
 
 fn demo(rock_physics: RockPhysicsConfig) -> E2eConfig {
@@ -83,17 +99,33 @@ fn legacy_z() -> RockPhysicsConfig {
 }
 
 /// Hashes recorded on master 33a3a93 (default rock physics, legacy
-/// Zoeppritz) with the same configurations.
+/// Zoeppritz), re-baselined under [`HASH_SMALL`] flush (test-only).
+///
+/// Derivation (ubuntu-24.04, rustc 1.83, glibc 2.39; run
+/// https://github.com/gavargas22/synthoseis/actions/runs/42642134154):
+/// 1. Unflushed arrays still matched the old goldens bit for bit
+///    (`stack30` raw `0x013c_dec9_3d4e_3315`, etc.).
+/// 2. New references = FNV over the same arrays with every sample
+///    `|x| < 1e-15` replaced by `0.0f32` bits (positions still count).
+///    Only `stack30` changed: old `0x013c_dec9_3d4e_3315` → new
+///    `0x8c00_3688_d6c9_8484`. Other arms kept their old values
+///    (flush was a no-op: sub-threshold samples were already exact zeros,
+///    or none existed).
+/// 3. ubuntu-26.04 MSRV must reproduce the same new hashes (see PR).
 #[test]
 fn legacy_zoeppritz_reproduces_master_33a3a93() {
     let a = demo(legacy_z());
     let (v, _) = generate_chunked(&a);
+    // Labels are integer FNV (no float flush).
     assert_eq!(fnv(v.labels.iter().copied()), 0x22fa_1389_4f70_0192);
+    // old == new (flush no-op on this arm)
     assert_eq!(ah(&v.angle_stack), 0x262f_9caa_ac02_c346);
     assert_eq!(ah(&generate_reflectivity(&a, 15.0)), 0x803c_6752_f97f_a3b5);
+    // old 0x013c_dec9_3d4e_3315 → new 0x8c00_3688_d6c9_8484 (24.04 derivation).
+    // Positional sentinel: any sample crossing 1e-15 changes the hash, so the hash covers threshold crossings.
     assert_eq!(
         ah(&generate_chunked_at_angle(&a, 30.0).0.angle_stack),
-        0x013c_dec9_3d4e_3315
+        0x8c00_3688_d6c9_8484
     );
     assert_eq!(
         ah(&generate_chunked(&rich(legacy_z())).0.angle_stack),
@@ -110,7 +142,7 @@ fn legacy_zoeppritz_reproduces_master_33a3a93() {
         0x7e4e_878d_f8b5_3e79
     );
 
-    // The corrected default differs at 15 / 30 degrees.
+    // The corrected default differs at 15 / 30 degrees (vs flushed legacy).
     let d = demo(RockPhysicsConfig::default());
     assert_ne!(ah(&generate_chunked(&d).0.angle_stack), 0x262f_9caa_ac02_c346);
     assert_ne!(ah(&generate_chunked(&rich(RockPhysicsConfig::default())).0.angle_stack), 0x7e27_0df1_f8c1_f40b);
@@ -127,6 +159,7 @@ fn legacy_toy_depth_implies_legacy_zoeppritz() {
     };
     assert_eq!(toy_only.zoeppritz_form(), ZoeppritzForm::Legacy);
     // master 10f4dcd raw reflectivity at 15 degrees, with or without the flag.
+    // Flush no-op on this arm (old == new 0xee47_4d76_0e21_eb09; 24.04 proof).
     for rp in [toy_only, RockPhysicsConfig::legacy_toy()] {
         assert_eq!(ah(&generate_reflectivity(&demo(rp), 15.0)), 0xee47_4d76_0e21_eb09);
     }
