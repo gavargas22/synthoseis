@@ -22,6 +22,12 @@ jobs:
         working-directory: rust
     steps:
       - uses: actions/checkout@v4
+      # Pin Python so pyo3-ffi sees 3.12. ubuntu-latest (26.04) defaults to
+      # 3.14, which pyo3 0.23.5 rejects (max 3.13). Matches ci.yml's 3.12 pin.
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       # Stable cargo (>= 1.84) provides the MSRV-aware resolver; Cargo.lock is
       # not committed, so resolve deps against rust-version (1.83) first.
       - name: Install stable Rust (resolver)
